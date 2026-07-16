@@ -286,49 +286,13 @@ public enum CCUsageDecoder {
   }
 }
 
-private actor CCUsageDetailedDailyLoader {
-  private var requiresByAgent = false
-
-  func load(
-    executable: URL,
-    runner: CCUsageProcessRunner,
-    arguments: [String]
-  ) async throws -> [CCUsageMetricRecord] {
-    if requiresByAgent {
-      return try await loadWithByAgent(executable: executable, runner: runner, arguments: arguments)
-    }
-
-    let result = try await runner.run(executable: executable, arguments: arguments)
-    do {
-      return try CCUsageDecoder.detailedDaily(from: result.stdout)
-    } catch CCUsageError.invalidJSON {
-      let records = try await loadWithByAgent(executable: executable, runner: runner, arguments: arguments)
-      requiresByAgent = true
-      return records
-    }
-  }
-
-  private func loadWithByAgent(
-    executable: URL,
-    runner: CCUsageProcessRunner,
-    arguments: [String]
-  ) async throws -> [CCUsageMetricRecord] {
-    var compatibleArguments = arguments
-    compatibleArguments.insert("--by-agent", at: 2)
-    let result = try await runner.run(executable: executable, arguments: compatibleArguments)
-    return try CCUsageDecoder.detailedDaily(from: result.stdout)
-  }
-}
-
 public struct CCUsageClient: Sendable {
   public let executable: URL
   public let runner: CCUsageProcessRunner
-  private let detailedDailyLoader: CCUsageDetailedDailyLoader
 
   public init(executable: URL, runner: CCUsageProcessRunner = CCUsageProcessRunner()) {
     self.executable = executable
     self.runner = runner
-    detailedDailyLoader = CCUsageDetailedDailyLoader()
   }
 
   public func blocks() async throws -> [CCUsageCostRecord] {
@@ -342,11 +306,11 @@ public struct CCUsageClient: Sendable {
   }
 
   public func detailedDaily(since: String? = nil, until: String? = nil) async throws -> [CCUsageMetricRecord] {
-    try await detailedDailyLoader.load(
+    let result = try await runner.run(
       executable: executable,
-      runner: runner,
       arguments: filteredArguments(command: "daily", since: since, until: until)
     )
+    return try CCUsageDecoder.detailedDaily(from: result.stdout)
   }
 
   public func detailedSessions(since: String? = nil, until: String? = nil) async throws -> [CCUsageSessionMetricRecord] {

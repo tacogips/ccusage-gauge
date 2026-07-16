@@ -3,9 +3,8 @@
 A cross-platform local dashboard and CLI, plus a macOS menu-bar cost gauge,
 backed exclusively by `ccusage --json`.
 
-ccusage-gauge supports ccusage 20.0.17 and later. It automatically uses the
-20.0.17 `--by-agent` daily report and the flag-free daily report introduced by
-ccusage 20.1.0.
+ccusage-gauge supports ccusage 20.1.0 and later. Earlier ccusage releases are
+not supported.
 
 The status item shows a budget-progress pie followed by cost in the selected
 aggregation period. Its menu supports budget editing, hourly/daily/weekly/
@@ -37,8 +36,7 @@ and dashboard controls.
 
 The SolidJS dashboard provides:
 
-- exact per-agent and per-model rows from `ccusage daily --json --by-agent` on
-  ccusage 20.0.17 and `ccusage daily --json` on ccusage 20.1.0 and later;
+- exact per-agent and per-model rows from `ccusage daily --json`;
 - left-side model and agent filters;
 - top-right Last 12 hours, Today, Yesterday, This week, This month, and Custom date controls;
 - cost-over-time graph with a rolling 12-hour Hourly default, 15-minute,

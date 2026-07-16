@@ -251,41 +251,6 @@ import Testing
     #expect(!arguments.contains("--by-agent"))
   }
 
-  @Test func detailedDailyFallsBackToAndCachesCCUsageTwentyZeroSeventeenArguments() async throws {
-    let root = try temporaryDirectory()
-    let executable = root.appendingPathComponent("ccusage")
-    let log = root.appendingPathComponent("arguments.log")
-    let unified = #"{"daily":[{"period":"2026-07-16","totalCost":2.5,"modelsUsed":["gpt-test"]}]}"#
-    let byAgent = #"""
-      {"daily":[{"period":"2026-07-16","agents":[{"agent":"codex","modelBreakdowns":[
-        {"modelName":"gpt-test","cost":2.5,"inputTokens":10,"outputTokens":3,
-         "cacheCreationTokens":0,"cacheReadTokens":20}
-      ]}]}]}
-      """#
-    let script = """
-      #!/bin/sh
-      printf '%s\n' "$*" >> '\(log.path)'
-      case " $* " in
-        *" --by-agent "*) printf '%s' '\(byAgent)' ;;
-        *) printf '%s' '\(unified)' ;;
-      esac
-      """
-    try Data(script.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-    let client = CCUsageClient(executable: executable)
-
-    let first = try await client.detailedDaily(since: "2026-07-16", until: "2026-07-16")
-    let second = try await client.detailedDaily(since: "2026-07-16", until: "2026-07-16")
-    let arguments = try String(contentsOf: log, encoding: .utf8).split(separator: "\n")
-
-    #expect(first == second)
-    #expect(first.first?.agent == "codex")
-    #expect(arguments.count == 3)
-    #expect(!arguments[0].contains("--by-agent"))
-    #expect(arguments[1].contains("--by-agent"))
-    #expect(arguments[2].contains("--by-agent"))
-  }
-
   @Test func snapshotUsesClosedBoundaryAndExcludesFuture() async throws {
     let root = try temporaryDirectory()
     let executable = root.appendingPathComponent("ccusage")
