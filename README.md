@@ -84,7 +84,7 @@ The generated defaults are:
   "defaultResetTerm": "daily",
   "dashboardPort": 18081,
   "dashboardAutostart": true,
-  "pollIntervalSeconds": 60
+  "pollIntervalSeconds": 20
 }
 ```
 
@@ -94,7 +94,7 @@ The generated defaults are:
 | `defaultResetTerm` | string; default `"daily"` | Initial reset cycle when mutable state has no selected cycle. Supported values are `"daily"`, `"weekly"`, and `"monthly"`. |
 | `dashboardPort` | integer; default `18081` | Loopback port in the range `1` through `65535`. The dashboard binds to `127.0.0.1`, and **Open dashboard** opens `http://127.0.0.1:<dashboardPort>/`. |
 | `dashboardAutostart` | boolean; default `true` | Starts the local dashboard server when the menu-bar application starts. |
-| `pollIntervalSeconds` | integer; default `60` | Usage refresh interval in seconds. It must be positive. |
+| `pollIntervalSeconds` | integer; default `20` | Usage refresh interval in seconds. It must be positive. |
 
 Configuration is loaded when the application starts. After changing any field,
 quit and relaunch `ccusage-gauge`; the menu's **Refresh** action refreshes usage
@@ -143,13 +143,13 @@ task build:homebrew -- darwin-arm64 darwin-x64
 Render a formula after both platform archives exist:
 
 ```bash
-task homebrew:formula -- 0.1.1
+task homebrew:formula -- 0.1.2
 ```
 
 Render directly into the default sibling tap checkout:
 
 ```bash
-task homebrew:tap-formula -- 0.1.1
+task homebrew:tap-formula -- 0.1.2
 ```
 
 Install from the tap after the formula is published:
@@ -182,14 +182,14 @@ kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID --
 Render a Cask:
 
 ```bash
-task homebrew:cask -- 0.1.1
+task homebrew:cask -- 0.1.2
 ```
 
 For a tagged release, build, upload, and render the tap Cask:
 
 ```bash
 kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID -- \
-  task release:homebrew-cask-local -- v0.1.1
+  task release:homebrew-cask-local -- v0.1.2
 ```
 
 See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.

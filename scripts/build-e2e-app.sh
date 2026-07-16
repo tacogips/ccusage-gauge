@@ -64,7 +64,7 @@ cat >"$config" <<JSON
   "defaultResetTerm": "daily",
   "dashboardPort": 18081,
   "dashboardAutostart": true,
-  "pollIntervalSeconds": 60
+  "pollIntervalSeconds": 20
 }
 JSON
 chmod 0600 "$config"

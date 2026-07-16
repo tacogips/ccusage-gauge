@@ -9,6 +9,7 @@ import Testing
     let store = ConfigStore(fileURL: file)
     let value = try store.loadOrCreate()
     #expect(value == AppConfiguration())
+    #expect(value.pollIntervalSeconds == 20)
     let original = try Data(contentsOf: file)
     _ = try store.loadOrCreate()
     #expect(try Data(contentsOf: file) == original)

@@ -56,6 +56,8 @@ public enum ResetCycle: Codable, Equatable, Sendable {
 }
 
 public struct AppConfiguration: Codable, Equatable, Sendable {
+  public static let defaultPollIntervalSeconds = 20
+
   public var ccusagePath: String?
   public var defaultResetTerm: String
   public var dashboardPort: Int
@@ -67,7 +69,7 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     defaultResetTerm: String = "daily",
     dashboardPort: Int = 18_081,
     dashboardAutostart: Bool = true,
-    pollIntervalSeconds: Int = 60
+    pollIntervalSeconds: Int = AppConfiguration.defaultPollIntervalSeconds
   ) {
     self.ccusagePath = ccusagePath
     self.defaultResetTerm = defaultResetTerm

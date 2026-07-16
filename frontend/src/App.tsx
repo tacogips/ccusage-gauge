@@ -46,6 +46,18 @@ function Bars(props: { rows: CostRow[]; granularity: Granularity; label: string 
   );
 }
 
+function LoadingState() {
+  return (
+    <section class="loading-state" role="status" aria-live="polite">
+      <div class="loading-spinner" aria-hidden="true" />
+      <div>
+        <strong>Loading usage data…</strong>
+        <p>Reading ccusage metrics and preparing the dashboard.</p>
+      </div>
+    </section>
+  );
+}
+
 export default function App() {
   const [range, setRange] = createSignal<Range>("today");
   const [customStart, setCustomStart] = createSignal(daysAgo(6));
@@ -85,6 +97,7 @@ export default function App() {
   const rangeLabel = createMemo(() => range() === "custom" ? `${customStart()} – ${customEnd()}` : quickRanges.find(([value]) => value === range())?.[1] ?? "Selected period");
   const filterLabel = createMemo(() => selectedModels().length === 0 ? "All models" : `${selectedModels().length} selected`);
   const errorMessage = createMemo(() => catalog.error?.message ?? period.error?.message ?? costSeries.error?.message ?? budget.error?.message);
+  const isLoading = createMemo(() => catalog.loading || period.loading || costSeries.loading || budget.loading);
   const toggle = (value: string, values: () => string[], setter: (next: string[]) => void) => setter(values().includes(value) ? values().filter((item) => item !== value) : [...values(), value]);
   const refresh = () => { void refreshCatalog(); void refreshPeriod(); void refreshCostSeries(); void refreshBudget(); };
 
@@ -95,7 +108,7 @@ export default function App() {
         <div><p class="eyebrow">FILTER USAGE</p><h2>Models</h2></div>
         <button classList={{ "model-choice": true, active: selectedModels().length === 0 }} onClick={() => setSelectedModels([])}><span>All models</span></button>
         <div class="model-list">
-          <For each={models()} fallback={<p class="muted">No models in the selected period.</p>}>{(model) => (
+          <For each={models()} fallback={<p class="muted">{period.loading ? "Loading models…" : "No models in the selected period."}</p>}>{(model) => (
             <label classList={{ "model-choice": true, active: selectedModels().includes(model) }}>
               <input type="checkbox" checked={selectedModels().includes(model)} onChange={() => toggle(model, selectedModels, setSelectedModels)} />
               <span title={model}>{model}</span>
@@ -108,7 +121,7 @@ export default function App() {
         <p class="filter-note">Each row is an exact ccusage daily agent/model breakdown. Costs and tokens are summed only from matching rows.</p>
       </aside>
 
-      <main class="content">
+      <main class="content" aria-busy={isLoading()}>
         <header>
           <div><p class="eyebrow">CCUSAGE DETAILED METRICS</p><h1>ccusage-gauge</h1></div>
           <div class="period-control" aria-label="Aggregation period">
@@ -126,14 +139,15 @@ export default function App() {
         </header>
 
         <Show when={!errorMessage()} fallback={<section class="error"><span>{errorMessage()}</span><button onClick={refresh}>Retry</button></section>}>
-          <section class="stats metric-stats">
+          <Show when={!isLoading()} fallback={<LoadingState />}>
+            <section class="stats metric-stats">
             <article><span>Selected cost</span><strong>{currency.format(total("costUSD"))}</strong><small>{rangeLabel()} · {filterLabel()}</small></article>
             <article><span>Total tokens</span><strong>{integer.format(total("totalTokens"))}</strong><small>All token categories</small></article>
             <article><span>Input / output</span><strong>{integer.format(total("inputTokens"))} / {integer.format(total("outputTokens"))}</strong><small>Prompt and generated</small></article>
             <article><span>Cache read / creation</span><strong>{integer.format(total("cacheReadTokens"))} / {integer.format(total("cacheCreationTokens"))}</strong><small>Reported by ccusage</small></article>
-          </section>
+            </section>
 
-          <section class="panel usage-panel">
+            <section class="panel usage-panel">
             <div class="panel-title"><div><p class="eyebrow">AGGREGATED COST</p><h2>Cost over time</h2></div>
               <div class="granularity-control" aria-label="Graph aggregation">
                 <div><button classList={{ active: granularity() === "hourly" }} onClick={() => setGranularity("hourly")}>Hourly</button><button classList={{ active: granularity() === "daily" }} onClick={() => setGranularity("daily")}>Daily</button></div>
@@ -141,9 +155,9 @@ export default function App() {
               </div>
             </div>
             <Bars rows={filteredCostRows()} granularity={granularity()} label={rangeLabel()} />
-          </section>
+            </section>
 
-          <section class="panel block-panel">
+            <section class="panel block-panel">
             <div class="panel-title"><div><p class="eyebrow">CCUSAGE BREAKDOWNS</p><h2>Daily agent and model detail</h2></div><strong>{filteredRows().length}</strong></div>
             <div class="metric-table" role="table">
               <div class="metric-row metric-head" role="row"><span>Date</span><span>Agent</span><span>Model</span><span>Cost</span><span>Total tokens</span></div>
@@ -151,11 +165,12 @@ export default function App() {
                 <div class="metric-row" role="row"><time>{row.date}</time><span class="agent-tag">{row.agent}</span><strong title={row.model}>{row.model}</strong><span>{currency.format(row.costUSD)}</span><span>{integer.format(row.totalTokens)}</span></div>
               )}</For>
             </div>
-          </section>
+            </section>
 
-          <section class="budget-note">
-            Menu budget: {currency.format(budget()?.spentUSD ?? 0)} since reset · {budget()?.usagePercentage == null ? "No budget set" : `${percentage.format(budget()!.usagePercentage!)}% used`} · {budget()?.remainingUSD == null ? "No remaining amount" : `${currency.format(budget()!.remainingUSD!)} remaining`}
-          </section>
+            <section class="budget-note">
+              Menu budget: {currency.format(budget()?.spentUSD ?? 0)} since reset · {budget()?.usagePercentage == null ? "No budget set" : `${percentage.format(budget()!.usagePercentage!)}% used`} · {budget()?.remainingUSD == null ? "No remaining amount" : `${currency.format(budget()!.remainingUSD!)} remaining`}
+            </section>
+          </Show>
         </Show>
       </main>
     </div>

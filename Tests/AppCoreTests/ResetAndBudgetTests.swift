@@ -47,3 +47,43 @@ import Testing
     #expect(BudgetSummary(spentUSD: 10, budgetUSD: 0).usagePercentage == nil)
   }
 }
+
+@Suite("CostSnapshotMutationTests") struct CostSnapshotMutationTests {
+  @Test func immediatelyAppliesResetBoundaryAndBudgetWithoutReloadingUsage() throws {
+    let formatter = ISO8601DateFormatter()
+    let now = formatter.date(from: "2026-07-15T12:30:00Z")!
+    let beforeReset = now.addingTimeInterval(-300)
+    let afterReset = now.addingTimeInterval(1)
+    let snapshot = CostSnapshot(
+      generatedAt: now,
+      activeBoundaryAt: beforeReset,
+      costSinceResetUSD: 7,
+      budget: BudgetSummary(spentUSD: 7, budgetUSD: 10),
+      resetCycle: .daily,
+      points: [
+        CCUsageCostRecord(timestamp: beforeReset, costUSD: 7, models: ["gpt"]),
+        CCUsageCostRecord(timestamp: afterReset, costUSD: 2, models: ["gpt"])
+      ]
+    )
+    let baseline = ResetBaseline(
+      scheduledBoundaryAt: beforeReset,
+      manualResetAtConsidered: now,
+      activeBoundaryAt: now,
+      boundaryKind: .manual,
+      cycle: .daily,
+      calendarIdentifier: "gregorian",
+      timeZoneIdentifier: "UTC",
+      computedAt: now
+    )
+
+    let updated = try #require(snapshot.applying(
+      state: AppState(budgetUSD: 20, resetCycle: .daily, lastManualResetAt: now, baseline: baseline),
+      now: afterReset
+    ))
+
+    #expect(updated.costSinceResetUSD == 2)
+    #expect(updated.budget.spentUSD == 2)
+    #expect(updated.budget.budgetUSD == 20)
+    #expect(updated.activeBoundaryAt == now)
+  }
+}

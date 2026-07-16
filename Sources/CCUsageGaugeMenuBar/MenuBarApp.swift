@@ -9,6 +9,15 @@ private func formatPercentage(_ value: Decimal) -> String {
   return "\(formatter.string(from: value as NSDecimalNumber) ?? String(describing: value))%"
 }
 
+private func formatUSDCurrency(_ value: Decimal, minimumFractionDigits: Int = 0) -> String {
+  let formatter = NumberFormatter()
+  formatter.numberStyle = .currency
+  formatter.currencyCode = "USD"
+  formatter.minimumFractionDigits = minimumFractionDigits
+  formatter.maximumFractionDigits = 2
+  return formatter.string(from: value as NSDecimalNumber) ?? "$\(value)"
+}
+
 @main
 @MainActor
 struct CCUsageGaugeMenuBarApp {
@@ -38,6 +47,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   private var errorMessage: String?
   private var isUsageUnavailable = false
   private var launchAtLoginError: String?
+  private var stateMutationGeneration = 0
   private var e2eWindow: NSWindow?
   private var e2eIconView: NSImageView?
   private var e2eStatusLabel: NSTextField?
@@ -108,17 +118,22 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func refresh() async {
+    let refreshGeneration = stateMutationGeneration
     guard let snapshotService else {
       rebuildMenu()
       return
     }
     do {
-      latestSnapshot = try await snapshotService.snapshot(defaultCycle: defaultResetCycle)
-      currentState = try await stateStore?.load(defaultCycle: defaultResetCycle)
+      let snapshot = try await snapshotService.snapshot(defaultCycle: defaultResetCycle)
+      let state = try await stateStore?.load(defaultCycle: defaultResetCycle)
+      guard refreshGeneration == stateMutationGeneration else { return }
+      latestSnapshot = snapshot
+      currentState = state
       errorMessage = nil
       isUsageUnavailable = false
       updateStatusTitle(latestSnapshot.map(Self.statusTitle) ?? "$—")
     } catch {
+      guard refreshGeneration == stateMutationGeneration else { return }
       errorMessage = String(describing: error)
       isUsageUnavailable = true
       updateStatusTitle(latestSnapshot.map { Self.statusTitle($0) + " !" } ?? "$!")
@@ -133,7 +148,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       budgetItem.view = BudgetMenuView(summary: snapshot.budget)
       menu.addItem(budgetItem)
     } else if let budget = currentState?.budgetUSD {
-      let item = NSMenuItem(title: "Budget: \(Self.currency(budget)) (usage unavailable)", action: nil, keyEquivalent: "")
+      let item = NSMenuItem(title: "Budget: \(formatUSDCurrency(budget)) (usage unavailable)", action: nil, keyEquivalent: "")
       item.isEnabled = false
       menu.addItem(item)
     } else {
@@ -239,7 +254,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   }
 
   private var effectiveRefreshIntervalSeconds: Int {
-    currentState?.refreshIntervalSeconds ?? configuration?.pollIntervalSeconds ?? 60
+    currentState?.refreshIntervalSeconds ?? configuration?.pollIntervalSeconds ?? AppConfiguration.defaultPollIntervalSeconds
   }
 
   @objc private func setBudget() {
@@ -270,7 +285,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   @objc private func resetRefreshInterval() {
     Task {
       if await mutateState({ $0.refreshIntervalSeconds = nil }) {
-        startPolling(interval: configuration?.pollIntervalSeconds ?? 60)
+        startPolling(interval: configuration?.pollIntervalSeconds ?? AppConfiguration.defaultPollIntervalSeconds)
       }
     }
   }
@@ -302,13 +317,14 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       var state = try await stateStore.load(defaultCycle: defaultResetCycle)
       try mutation(&state)
       try await stateStore.save(state)
+      stateMutationGeneration += 1
       currentState = state
-      updateStatusIcon()
-      if snapshotService == nil {
-        rebuildMenu()
-      } else {
-        await refresh()
+      if let projectedSnapshot = latestSnapshot?.applying(state: state) {
+        latestSnapshot = projectedSnapshot
+        updateStatusTitle(Self.statusTitle(projectedSnapshot))
       }
+      rebuildMenu()
+      if snapshotService != nil { Task { await refresh() } }
       return true
     } catch {
       showError(String(describing: error))
@@ -379,16 +395,8 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     alert.runModal()
   }
 
-  private static func currency(_ value: Decimal) -> String {
-    let formatter = NumberFormatter()
-    formatter.numberStyle = .currency
-    formatter.currencyCode = "USD"
-    formatter.maximumFractionDigits = 2
-    return formatter.string(from: value as NSDecimalNumber) ?? "$\(value)"
-  }
-
   private static func statusTitle(_ snapshot: CostSnapshot) -> String {
-    let cost = currency(snapshot.costSinceResetUSD)
+    let cost = formatUSDCurrency(snapshot.costSinceResetUSD)
     guard let usagePercentage = snapshot.budget.usagePercentage else { return cost }
     return "\(cost) · \(formatPercentage(usagePercentage))"
   }
@@ -473,7 +481,10 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     let launchAtLoginButton = e2eButton(title: "Launch at Login: Off", action: #selector(toggleLaunchAtLogin))
     launchAtLoginButton.setAccessibilityLabel("Launch at Login")
     e2eLaunchAtLoginButton = launchAtLoginButton
-    let refreshIntervalButton = e2eButton(title: "Refresh interval: 60 seconds", action: #selector(setRefreshInterval))
+    let refreshIntervalButton = e2eButton(
+      title: "Refresh interval: \(AppConfiguration.defaultPollIntervalSeconds) seconds",
+      action: #selector(setRefreshInterval)
+    )
     refreshIntervalButton.setAccessibilityLabel("Refresh interval")
     e2eRefreshIntervalButton = refreshIntervalButton
     let openDashboardButton = e2eButton(title: "Open dashboard", action: #selector(openDashboard))
@@ -525,11 +536,11 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     e2eIconView?.setAccessibilityLabel(isUsageUnavailable ? "Warning: ccusage unavailable" : "Budget usage pie chart")
     e2eStatusLabel?.stringValue = statusItem.button?.title ?? "$—"
     if let snapshot = latestSnapshot {
-      let budget = snapshot.budget.budgetUSD.map(Self.currency) ?? "not set"
+      let budget = snapshot.budget.budgetUSD.map { formatUSDCurrency($0) } ?? "not set"
       let usage = snapshot.budget.usagePercentage.map(formatPercentage) ?? "unavailable"
-      e2eBudgetLabel?.stringValue = "Spent \(Self.currency(snapshot.budget.spentUSD)) · Budget \(budget) · Usage \(usage) · \(snapshot.resetCycle.label)"
+      e2eBudgetLabel?.stringValue = "Spent \(formatUSDCurrency(snapshot.budget.spentUSD, minimumFractionDigits: 2)) · Budget \(budget) · Usage \(usage) · \(snapshot.resetCycle.label)"
     } else if let budget = currentState?.budgetUSD {
-      e2eBudgetLabel?.stringValue = "Spent unavailable · Budget \(Self.currency(budget)) · \(currentState?.resetCycle.label ?? defaultResetCycle.label)"
+      e2eBudgetLabel?.stringValue = "Spent unavailable · Budget \(formatUSDCurrency(budget)) · \(currentState?.resetCycle.label ?? defaultResetCycle.label)"
     } else {
       e2eBudgetLabel?.stringValue = "Budget not set · \(currentState?.resetCycle.label ?? defaultResetCycle.label)"
     }
@@ -576,7 +587,7 @@ final class BudgetMenuView: NSView {
     }
     let budget = summary.budgetUSD.map { "$\($0)" } ?? "not set"
     let usage = summary.usagePercentage.map(formatPercentage) ?? "unavailable"
-    let text = "Spent $\(summary.spentUSD) (\(usage))\nBudget \(budget)"
+    let text = "Spent \(formatUSDCurrency(summary.spentUSD, minimumFractionDigits: 2)) (\(usage))\nBudget \(budget)"
     text.draw(at: NSPoint(x: 72, y: 20), withAttributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
   }
 }

@@ -29,6 +29,23 @@ public struct CostSnapshot: Codable, Equatable, Sendable {
     self.dashboardMetrics = dashboardMetrics
     self.dashboardSessions = dashboardSessions
   }
+
+  public func applying(state: AppState, now: Date = Date()) -> CostSnapshot? {
+    guard let baseline = state.baseline else { return nil }
+    let cost = points
+      .filter { $0.timestamp >= baseline.activeBoundaryAt && $0.timestamp <= now }
+      .reduce(Decimal.zero) { $0 + $1.costUSD }
+    return CostSnapshot(
+      generatedAt: now,
+      activeBoundaryAt: baseline.activeBoundaryAt,
+      costSinceResetUSD: cost,
+      budget: BudgetSummary(spentUSD: cost, budgetUSD: state.budgetUSD),
+      resetCycle: state.resetCycle,
+      points: points,
+      dashboardMetrics: dashboardMetrics,
+      dashboardSessions: dashboardSessions
+    )
+  }
 }
 
 public struct SnapshotService: Sendable {

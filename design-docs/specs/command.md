@@ -26,7 +26,7 @@ environment- or argument-injected base paths, but production defaults remain
 
 The generated configuration defaults are `ccusagePath: null`,
 `defaultResetTerm: daily`, `dashboardPort: 18081`,
-`dashboardAutostart: true`, and `pollIntervalSeconds: 60`. `config-check` reports
+`dashboardAutostart: true`, and `pollIntervalSeconds: 20`. `config-check` reports
 these effective values but does not rewrite an existing configuration file.
 
 `usage-snapshot` performs one asynchronous `ccusage --json` collection through

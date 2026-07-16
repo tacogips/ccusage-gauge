@@ -81,7 +81,7 @@ defaults:
   state has no selected cycle.
 - `dashboardPort`: loopback port, default `18081`.
 - `dashboardAutostart`: `true`; whether to start the service during app startup.
-- `pollIntervalSeconds`: `60`; polling cadence in whole seconds.
+- `pollIntervalSeconds`: `20`; polling cadence in whole seconds.
 
 Accordingly, a newly created file is equivalent to:
 
@@ -91,7 +91,7 @@ Accordingly, a newly created file is equivalent to:
   "defaultResetTerm": "daily",
   "dashboardPort": 18081,
   "dashboardAutostart": true,
-  "pollIntervalSeconds": 60
+  "pollIntervalSeconds": 20
 }
 ```
 
