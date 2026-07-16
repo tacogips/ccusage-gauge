@@ -34,7 +34,7 @@ export CCUSAGE_GAUGE_CONFIG_HOME="$root/config" CCUSAGE_GAUGE_STATE_HOME="$root/
 probe() {
   local name="$1" binary="$2" asset_root="$3"
   if ! $missing; then mkdir -p "$asset_root"; cp -R "$source_assets"/. "$asset_root"/; else rm -rf "$asset_root"; fi
-  "$binary" dashboard --port 18082 >"$root/$name.log" 2>&1 & pid=$!
+  "$binary" serve --port 18082 >"$root/$name.log" 2>&1 & pid=$!
   for _ in {1..80}; do curl -fsS http://127.0.0.1:18082/api/health >/dev/null 2>&1 && break; sleep .1; done
   if $missing; then
     code="$(curl -sS -o "$root/body" -w '%{http_code}' http://127.0.0.1:18082/)"

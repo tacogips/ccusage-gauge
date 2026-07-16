@@ -11,7 +11,7 @@ ccusage-gauge --help
 ccusage-gauge --version
 ccusage-gauge config-check
 ccusage-gauge usage-snapshot [--json]
-ccusage-gauge dashboard [--port <port>] [--assets <directory>]
+ccusage-gauge serve [--port <port>] [--assets <directory>]
 ```
 
 `--help` documents commands without creating configuration or state. `--version`
@@ -36,7 +36,7 @@ summary. It validates or refreshes the persisted reset baseline first and uses
 never treated as monetary usage. `--json` emits a stable machine-readable
 object. The command never parses raw usage JSONL.
 
-`dashboard` is a foreground diagnostic host for the same loopback service used
+`serve` is a foreground host for the same loopback service used
 by the menu-bar app. It binds only to `127.0.0.1`. `--port` must be in
 `1...65535`; `--assets` must name a readable compiled frontend directory and is
 intended for development and verification. SIGINT or SIGTERM stops the service

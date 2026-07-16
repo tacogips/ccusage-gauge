@@ -23,7 +23,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build Release CLI In Swift amd64 Container
+      - name: Build And Verify Linux amd64 CLI
         env:
           SWIFT_IMAGE: swift@sha256:4c6af6663ed2316002a3b38ff5505a1fc1f2749ec31e84936c32dd336713c569
           EXECUTABLE_NAME: "ccusage-gauge"
@@ -37,7 +37,32 @@ jobs:
             "$SWIFT_IMAGE" \
             bash -lc '
               set -euo pipefail
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl libsqlite3-dev
+              rm -rf /var/lib/apt/lists/*
               test "$(uname -m)" = "x86_64"
               swift --version
+              swift test --triple x86_64-unknown-linux-gnu
               swift build -c release --product "$EXECUTABLE_NAME" --triple x86_64-unknown-linux-gnu
+
+              bin_dir="$(swift build -c release --show-bin-path --triple x86_64-unknown-linux-gnu)"
+              stage="dist/linux-amd64"
+              rm -rf "$stage"
+              mkdir -p "$stage/bin" "$stage/share/ccusage-gauge/web"
+              install -m 0755 "$bin_dir/$EXECUTABLE_NAME" "$stage/bin/$EXECUTABLE_NAME"
+              cp -R Sources/AppCore/Resources/Web/. "$stage/share/ccusage-gauge/web/"
+              cp LICENSE README.md "$stage/"
+
+              scripts/smoke-dashboard.sh \
+                --port 18083 \
+                --binary "$stage/bin/$EXECUTABLE_NAME" \
+                --installed-assets
+              tar -C "$stage" -czf "dist/$EXECUTABLE_NAME-linux-amd64.tar.gz" .
             '
+
+      - name: Upload Linux amd64 Archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ccusage-gauge-linux-amd64
+          path: dist/ccusage-gauge-linux-amd64.tar.gz
+          if-no-files-found: error

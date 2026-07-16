@@ -147,11 +147,13 @@ are passed to `Process`; no shell command interpolation is used. A nonzero exit,
 timeout, invalid JSON, or unsupported payload is a typed error suitable for UI
 guidance and HTTP error mapping.
 
-Decoders follow the observed v20.0.17 `blocks --json`, `daily --json`, and
-`daily --json --by-agent` shapes. Detailed daily agent/model breakdowns are the
+Decoders follow the ccusage 20.0.17+ `blocks --json`, `daily --json`, and
+`session --json` shapes. Detailed daily loading first accepts the flag-free
+ccusage 20.1+ shape, then falls back to and caches the 20.0.17
+`daily --json --by-agent` shape when necessary. Agent/model breakdowns are the
 source of truth for calendar-day, Monday-through-Sunday week, and calendar-month
 gauge totals across supported agents, including Claude Code and Codex.
-`session --json --by-agent` supplies model cost and session last-activity
+`session --json` supplies model cost and session last-activity
 timestamps for hourly/custom-hour gauge totals and the dashboard's hourly graph.
 They ignore unknown fields and tolerate additive schema evolution, while
 requiring the time and cost fields necessary for a query. Cost is aggregated by

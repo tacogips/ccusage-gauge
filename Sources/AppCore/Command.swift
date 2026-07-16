@@ -11,7 +11,7 @@ public struct AppCommand: Sendable {
     case version
     case configCheck
     case usageSnapshot(json: Bool)
-    case dashboard(port: Int?, assets: String?)
+    case serve(port: Int?, assets: String?)
   }
 
   public let arguments: [String]
@@ -40,12 +40,12 @@ public struct AppCommand: Sendable {
       let options = Array(arguments.dropFirst())
       guard options.allSatisfy({ $0 == "--json" }) else { throw Error.unknownArgument(options.first { $0 != "--json" }!) }
       return .usageSnapshot(json: options.contains("--json"))
-    case "dashboard": return try parseDashboard(Array(arguments.dropFirst()))
+    case "serve": return try parseServe(Array(arguments.dropFirst()))
     default: throw Error.unknownArgument(command)
     }
   }
 
-  private func parseDashboard(_ options: [String]) throws -> Invocation {
+  private func parseServe(_ options: [String]) throws -> Invocation {
     var port: Int?
     var assets: String?
     var index = 0
@@ -62,7 +62,7 @@ public struct AppCommand: Sendable {
       }
       index += 2
     }
-    return .dashboard(port: port, assets: assets)
+    return .serve(port: port, assets: assets)
   }
 
   public var usage: String {
@@ -73,7 +73,7 @@ public struct AppCommand: Sendable {
       ccusage-gauge --version
       ccusage-gauge config-check
       ccusage-gauge usage-snapshot [--json]
-      ccusage-gauge dashboard [--port <port>] [--assets <directory>]
+      ccusage-gauge serve [--port <port>] [--assets <directory>]
     """
   }
 }

@@ -1,7 +1,11 @@
 # ccusage-gauge
 
-A macOS menu-bar cost gauge and local dashboard backed exclusively by
-`ccusage --json`.
+A cross-platform local dashboard and CLI, plus a macOS menu-bar cost gauge,
+backed exclusively by `ccusage --json`.
+
+ccusage-gauge supports ccusage 20.0.17 and later. It automatically uses the
+20.0.17 `--by-agent` daily report and the flag-free daily report introduced by
+ccusage 20.1.0.
 
 The status item shows a budget-progress pie followed by cost in the selected
 aggregation period. Its menu supports budget editing, hourly/daily/weekly/
@@ -33,7 +37,8 @@ and dashboard controls.
 
 The SolidJS dashboard provides:
 
-- exact per-agent and per-model rows from `ccusage daily --json --by-agent`;
+- exact per-agent and per-model rows from `ccusage daily --json --by-agent` on
+  ccusage 20.0.17 and `ccusage daily --json` on ccusage 20.1.0 and later;
 - left-side model and agent filters;
 - top-right Last 12 hours, Today, Yesterday, This week, This month, and Custom date controls;
 - cost-over-time graph with a rolling 12-hour Hourly default, 15-minute,
@@ -61,7 +66,7 @@ Codex JSONL logs. Claude streaming snapshots are deduplicated by session,
 request, and message ID; Codex token events are deduplicated by session and
 cumulative token watermark while retaining the active turn model. Each
 agent/model/day is reconciled to the authoritative
-`ccusage daily --json --by-agent` cost using weighted input, output, cache-read,
+ccusage detailed daily cost using weighted input, output, cache-read,
 and cache-creation usage, so its 15-minute buckets preserve the reported daily
 total. The timestamp and token counts are taken from the raw event; the
 sub-daily cost is a reconciled allocation rather than an amount reported
@@ -88,6 +93,27 @@ Only the active period's metric and graph rows are requested by the frontend.
 The Models menu omits models with no data in that period. If period data exists
 but the selected graph granularity has no usable timestamped source, the model
 remains visible but is disabled and struck through.
+
+## Dashboard server (macOS and Linux)
+
+The `ccusage-gauge` CLI runs the dashboard on both macOS and Linux. Only the
+menu-bar application is macOS-specific.
+
+Start the loopback server with:
+
+```bash
+ccusage-gauge serve
+```
+
+It binds to `127.0.0.1` and uses the configured `dashboardPort`, which defaults
+to `18081`. Override the port or use a development frontend build with:
+
+```bash
+ccusage-gauge serve --port 19090 --assets frontend/dist
+```
+
+The installed Linux layout places the executable at `bin/ccusage-gauge` and
+the dashboard files under `share/ccusage-gauge/web`.
 
 ## Installation with Nix (nix-darwin)
 

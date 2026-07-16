@@ -189,7 +189,7 @@ budget query services with injected calendar/time zone and stable response DTOs.
 **Parallelizable**: No
 
 Implement side-effect-free help/version and the accepted `config-check`,
-`usage-snapshot [--json]`, and foreground `dashboard` command parsing. Reuse
+`usage-snapshot [--json]`, and foreground `serve` command parsing. Reuse
 AppCore services, stable exit codes, injected development/test paths, JSON error
 codes, and non-sensitive diagnostics.
 
@@ -214,7 +214,7 @@ codes, and non-sensitive diagnostics.
 **Write Scope**: HTTP/service/resource files in `Sources/AppCore/`; service tests
 **Parallelizable**: No
 
-Implement a macOS-native loopback listener with deterministic start/stop and no
+Implement a portable POSIX loopback listener with deterministic start/stop and no
 extra service process. Bind only `127.0.0.1`, serve immutable assets with the
 accepted resolution order, and expose the accepted read-only routes. Validate
 query parameters and return stable JSON or machine-readable, non-sensitive

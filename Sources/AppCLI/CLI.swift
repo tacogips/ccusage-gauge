@@ -1,5 +1,10 @@
 import AppCore
+@preconcurrency import Dispatch
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 @main
@@ -12,7 +17,7 @@ struct CCUsageGaugeCLI {
       case .version: print(Version.current)
       case .configCheck: try await configCheck()
       case .usageSnapshot(let json): try await usageSnapshot(json: json)
-      case .dashboard(let port, let assets): try await dashboard(port: port, assets: assets)
+      case .serve(let port, let assets): try await serve(port: port, assets: assets)
       }
     } catch AppCommand.Error.unknownArgument(let value) {
       fail("Unknown argument: \(value)", code: 2)
@@ -54,7 +59,7 @@ struct CCUsageGaugeCLI {
     }
   }
 
-  static func dashboard(port: Int?, assets: String?) async throws {
+  static func serve(port: Int?, assets: String?) async throws {
     let paths = AppPaths.production()
     let config = try ConfigStore(fileURL: paths.configFile).loadOrCreate()
     let service = try makeSnapshotService(configuration: config, paths: paths)

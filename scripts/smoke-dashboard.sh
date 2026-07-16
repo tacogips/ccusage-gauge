@@ -4,14 +4,18 @@ set -euo pipefail
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 port=18081
 assets="$project_root/frontend/dist"
+binary=""
 while (($#)); do
   case "$1" in
     --port) port="$2"; shift 2 ;;
     --assets) assets="$2"; shift 2 ;;
+    --binary) binary="$2"; shift 2 ;;
+    --installed-assets) assets=""; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
-[[ "$assets" = /* ]] || assets="$project_root/$assets"
+if [[ -n "$assets" && "$assets" != /* ]]; then assets="$project_root/$assets"; fi
+if [[ -n "$binary" && "$binary" != /* ]]; then binary="$project_root/$binary"; fi
 
 root="$(mktemp -d)"
 pid=""
@@ -25,8 +29,12 @@ fake="$root/ccusage"
 cat >"$fake" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
-timestamp="$(/bin/date -u -v-5M '+%Y-%m-%dT%H:%M:%SZ')"
-period="$(/bin/date '+%Y-%m-%d')"
+if date -u -d '5 minutes ago' '+%Y-%m-%dT%H:%M:%SZ' >/dev/null 2>&1; then
+  timestamp="$(date -u -d '5 minutes ago' '+%Y-%m-%dT%H:%M:%SZ')"
+else
+  timestamp="$(date -u -v-5M '+%Y-%m-%dT%H:%M:%SZ')"
+fi
+period="$(date '+%Y-%m-%d')"
 case "${1:-}" in
   blocks) printf '{"blocks":[{"startTime":"%s","costUSD":1.25,"models":["claude-opus-4-8"]},{"startTime":"%s","costUSD":2.25,"models":["gpt-5.6-sol"]}]}' "$timestamp" "$timestamp" ;;
   daily) printf '{"daily":[{"period":"%s","agent":"all","agents":[{"agent":"claude","modelBreakdowns":[{"modelName":"claude-opus-4-8","cost":1.25,"inputTokens":100,"outputTokens":20,"cacheCreationTokens":40,"cacheReadTokens":200}]},{"agent":"codex","modelBreakdowns":[{"modelName":"gpt-5.6-sol","cost":2.25,"inputTokens":300,"outputTokens":60,"cacheCreationTokens":0,"cacheReadTokens":500}]}]}]}' "$period" ;;
@@ -42,8 +50,8 @@ JSON
 
 export CCUSAGE_GAUGE_CONFIG_HOME="$root/config"
 export CCUSAGE_GAUGE_STATE_HOME="$root/state"
-binary="$(swift build --show-bin-path)/ccusage-gauge"
-today="$(/bin/date '+%Y-%m-%d')"
+binary="${binary:-$(swift build --show-bin-path)/ccusage-gauge}"
+today="$(date '+%Y-%m-%d')"
 
 wait_ready() {
   for _ in {1..80}; do curl -fsS "http://127.0.0.1:$port/api/health" >/dev/null 2>&1 && return 0; sleep 0.1; done
@@ -53,7 +61,9 @@ wait_ready() {
 }
 
 run_once() {
-  "$binary" dashboard --port "$port" --assets "$assets" >"$root/server.log" 2>&1 &
+  local arguments=(serve --port "$port")
+  if [[ -n "$assets" ]]; then arguments+=(--assets "$assets"); fi
+  "$binary" "${arguments[@]}" >"$root/server.log" 2>&1 &
   pid=$!
   wait_ready
   curl -fsS "http://127.0.0.1:$port/" | grep -q 'ccusage-gauge'

@@ -1,5 +1,9 @@
 import Foundation
-@preconcurrency import Network
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 public struct StaticAssetResolver: Sendable {
   public let explicitRoot: URL?
@@ -184,7 +188,7 @@ public struct DashboardRouter: Sendable {
       } catch DashboardQueryError.invalidCustomRange {
         return errorResponse(status: 400, code: "invalid_custom_range", message: "custom range start must not be after end")
       } catch DashboardQueryError.invalidGranularity {
-        return errorResponse(status: 400, code: "invalid_granularity", message: "granularity must be 15min, hourly, or daily")
+        return errorResponse(status: 400, code: "invalid_granularity", message: "granularity must be 15min, hourly, 6hour, or daily")
       } catch {
         return errorResponse(status: 503, code: "usage_unavailable", message: "Usage data is temporarily unavailable")
       }
@@ -220,64 +224,155 @@ public struct DashboardRouter: Sendable {
 
 public final class DashboardHTTPServer: @unchecked Sendable {
   private let router: DashboardRouter
-  private let queue = DispatchQueue(label: "ccusage-gauge.http")
+  private let acceptQueue = DispatchQueue(label: "ccusage-gauge.http.accept")
+  private let clientQueue = DispatchQueue(label: "ccusage-gauge.http.client", attributes: .concurrent)
   private let lock = NSLock()
-  private var listener: NWListener?
+  private var listener: Int32 = -1
+  private var listenerGeneration: UInt64 = 0
 
   public init(router: DashboardRouter) { self.router = router }
 
   public func start(port: UInt16) throws {
     lock.lock()
     defer { lock.unlock() }
-    guard listener == nil else { return }
-    guard let networkPort = NWEndpoint.Port(rawValue: port) else { throw HTTPServerError.invalidPort }
-    let parameters = NWParameters.tcp
-    parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: networkPort)
-    let created = try NWListener(using: parameters)
-    created.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
-    created.stateUpdateHandler = { state in
-      if case .failed = state { created.cancel() }
+    guard listener < 0 else { return }
+    guard port > 0 else { throw HTTPServerError.invalidPort }
+
+    let descriptor = socket(AF_INET, Self.streamSocketType, 0)
+    guard descriptor >= 0 else { throw HTTPServerError.socketFailure(errno) }
+    var reuseAddress: Int32 = 1
+    guard setsockopt(
+      descriptor,
+      SOL_SOCKET,
+      SO_REUSEADDR,
+      &reuseAddress,
+      socklen_t(MemoryLayout<Int32>.size)
+    ) == 0 else {
+      Self.closeSocket(descriptor)
+      throw HTTPServerError.socketFailure(errno)
     }
-    created.start(queue: queue)
-    listener = created
+
+    var address = sockaddr_in()
+    #if canImport(Darwin)
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    #endif
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = port.bigEndian
+    address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+    let bindResult = withUnsafePointer(to: &address) { pointer in
+      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+      }
+    }
+    guard bindResult == 0, listen(descriptor, SOMAXCONN) == 0 else {
+      let code = errno
+      Self.closeSocket(descriptor)
+      throw HTTPServerError.socketFailure(code)
+    }
+
+    listenerGeneration &+= 1
+    let generation = listenerGeneration
+    listener = descriptor
+    acceptQueue.async { [weak self] in self?.acceptConnections(from: descriptor, generation: generation) }
     Task { await router.preloadSnapshot() }
   }
 
   public func stop() {
     lock.lock()
-    let current = listener
-    listener = nil
+    let descriptor = listener
+    listener = -1
+    listenerGeneration &+= 1
     lock.unlock()
-    current?.cancel()
+    guard descriptor >= 0 else { return }
+    Self.closeSocket(descriptor)
   }
 
   public var isRunning: Bool {
     lock.lock()
     defer { lock.unlock() }
-    return listener != nil
+    return listener >= 0
   }
 
-  private func accept(_ connection: NWConnection) {
-    connection.start(queue: queue)
-    connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self] data, _, _, error in
-      guard let self, let data, error == nil,
-            let request = String(data: data, encoding: .utf8),
-            let firstLine = request.split(separator: "\r\n").first else {
-        connection.cancel()
+  private func acceptConnections(from descriptor: Int32, generation: UInt64) {
+    while true {
+      guard isCurrentListener(descriptor, generation: generation) else { return }
+      let client = accept(descriptor, nil, nil)
+      if client < 0 {
+        if errno == EINTR { continue }
+        clearListener(descriptor, generation: generation)
         return
       }
-      let parts = firstLine.split(separator: " ")
-      guard parts.count >= 2 else { connection.cancel(); return }
-      let method = String(parts[0])
-      let target = String(parts[1])
-      Task {
-        let response = await self.router.route(target: target, method: method)
-        self.send(response, through: connection)
+      Self.configureClient(client)
+      clientQueue.async { [weak self] in
+        guard let self else {
+          Self.closeSocket(client)
+          return
+        }
+        self.receiveRequest(from: client)
       }
     }
   }
 
-  private func send(_ response: HTTPResponse, through connection: NWConnection) {
+  private func isCurrentListener(_ descriptor: Int32, generation: UInt64) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return listener == descriptor && listenerGeneration == generation
+  }
+
+  private func clearListener(_ descriptor: Int32, generation: UInt64) {
+    lock.lock()
+    let ownsListener = listener == descriptor && listenerGeneration == generation
+    if ownsListener {
+      listener = -1
+      listenerGeneration &+= 1
+    }
+    lock.unlock()
+    if ownsListener { Self.closeSocket(descriptor) }
+  }
+
+  private func receiveRequest(from descriptor: Int32) {
+    guard let request = Self.readRequest(from: descriptor) else {
+      Self.closeSocket(descriptor)
+      return
+    }
+    let parts = request.split(separator: " ")
+    guard parts.count >= 2 else {
+      Self.closeSocket(descriptor)
+      return
+    }
+    let method = String(parts[0])
+    let target = String(parts[1])
+    let router = router
+    Task {
+      let response = await router.route(target: target, method: method)
+      Self.send(response, through: descriptor)
+      Self.closeSocket(descriptor)
+    }
+  }
+
+  private static func readRequest(from descriptor: Int32) -> String? {
+    let headerTerminator = Data("\r\n\r\n".utf8)
+    var received = Data()
+    var buffer = [UInt8](repeating: 0, count: 4_096)
+    while received.count < 16_384 {
+      let count = buffer.withUnsafeMutableBytes { bytes in
+        recv(descriptor, bytes.baseAddress, bytes.count, 0)
+      }
+      if count > 0 {
+        received.append(contentsOf: buffer.prefix(count))
+        if received.range(of: headerTerminator) != nil { break }
+      } else if count == 0 {
+        return nil
+      } else if errno != EINTR {
+        return nil
+      }
+    }
+    guard received.range(of: headerTerminator) != nil,
+          let request = String(data: received, encoding: .utf8) else { return nil }
+    return request.components(separatedBy: "\r\n")[0]
+  }
+
+  private static func send(_ response: HTTPResponse, through descriptor: Int32) {
     let reason: String = switch response.status {
     case 200: "OK"
     case 400: "Bad Request"
@@ -289,8 +384,98 @@ public final class DashboardHTTPServer: @unchecked Sendable {
     let header = "HTTP/1.1 \(response.status) \(reason)\r\nContent-Type: \(response.contentType)\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n"
     var data = Data(header.utf8)
     data.append(response.body)
-    connection.send(content: data, completion: .contentProcessed { _ in connection.cancel() })
+    data.withUnsafeBytes { bytes in
+      guard let baseAddress = bytes.baseAddress else { return }
+      var offset = 0
+      while offset < bytes.count {
+        let count = systemSend(descriptor, baseAddress.advanced(by: offset), bytes.count - offset)
+        if count > 0 {
+          offset += count
+        } else if count < 0, errno == EINTR {
+          continue
+        } else {
+          return
+        }
+      }
+    }
+  }
+
+  private static func configureClient(_ descriptor: Int32) {
+    var timeout = timeval(tv_sec: 5, tv_usec: 0)
+    _ = setsockopt(
+      descriptor,
+      SOL_SOCKET,
+      SO_RCVTIMEO,
+      &timeout,
+      socklen_t(MemoryLayout<timeval>.size)
+    )
+    _ = setsockopt(
+      descriptor,
+      SOL_SOCKET,
+      SO_SNDTIMEO,
+      &timeout,
+      socklen_t(MemoryLayout<timeval>.size)
+    )
+    #if canImport(Darwin)
+    var noSigPipe: Int32 = 1
+    _ = setsockopt(
+      descriptor,
+      SOL_SOCKET,
+      SO_NOSIGPIPE,
+      &noSigPipe,
+      socklen_t(MemoryLayout<Int32>.size)
+    )
+    #endif
+  }
+
+  private static func closeSocket(_ descriptor: Int32) {
+    guard descriptor >= 0 else { return }
+    _ = systemShutdown(descriptor)
+    systemClose(descriptor)
+  }
+
+  private static var streamSocketType: Int32 {
+    #if canImport(Glibc)
+    Int32(SOCK_STREAM.rawValue)
+    #else
+    SOCK_STREAM
+    #endif
   }
 }
 
-public enum HTTPServerError: Error, Sendable { case invalidPort }
+public enum HTTPServerError: Error, Sendable {
+  case invalidPort
+  case socketFailure(Int32)
+}
+
+private var shutdownBoth: Int32 {
+  #if canImport(Glibc)
+  Int32(SHUT_RDWR)
+  #else
+  SHUT_RDWR
+  #endif
+}
+
+private func systemSend(_ descriptor: Int32, _ buffer: UnsafeRawPointer, _ count: Int) -> Int {
+  #if canImport(Glibc)
+  Glibc.send(descriptor, buffer, count, Int32(MSG_NOSIGNAL))
+  #else
+  Darwin.send(descriptor, buffer, count, 0)
+  #endif
+}
+
+private func systemShutdown(_ descriptor: Int32) -> Int32 {
+  #if canImport(Glibc)
+  Glibc.shutdown(descriptor, shutdownBoth)
+  #else
+  Darwin.shutdown(descriptor, shutdownBoth)
+  #endif
+}
+
+private func systemClose(_ descriptor: Int32) {
+  #if canImport(Glibc)
+  _ = Glibc.close(descriptor)
+  #else
+  _ = Darwin.close(descriptor)
+  #endif
+}
