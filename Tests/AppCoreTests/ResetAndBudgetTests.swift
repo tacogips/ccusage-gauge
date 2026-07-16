@@ -82,7 +82,7 @@ import Testing
     )
 
     let updated = try #require(snapshot.applying(
-      state: AppState(budgetUSD: 20, resetCycle: .hourly, baseline: baseline),
+      state: AppState(budgetUSD: 20, resetCycle: .hourly, baseline: baseline, refreshIntervalSeconds: 9),
       now: afterBoundary
     ))
 
@@ -90,5 +90,6 @@ import Testing
     #expect(updated.budget.spentUSD == 2)
     #expect(updated.budget.budgetUSD == 20)
     #expect(updated.activeBoundaryAt == now.addingTimeInterval(-1800))
+    #expect(updated.refreshIntervalSeconds == 9)
   }
 }

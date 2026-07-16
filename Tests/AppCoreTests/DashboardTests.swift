@@ -2,6 +2,12 @@ import Foundation
 import Testing
 @testable import AppCore
 
+private actor SnapshotLoadCounter {
+  private(set) var value = 0
+
+  func increment() { value += 1 }
+}
+
 @Suite("DashboardQueryTests") struct DashboardQueryTests {
   @Test func groupsSelectedDayAndBudget() {
     var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -12,6 +18,7 @@ import Testing
     #expect(query.day(snapshot: snapshot, date: now).totalUSD == 2)
     #expect(query.budget(snapshot: snapshot).remainingUSD == 8)
     #expect(query.budget(snapshot: snapshot).usagePercentage == 20)
+    #expect(query.budget(snapshot: snapshot).refreshIntervalSeconds == 20)
   }
 
   @Test func aggregatesDetailedMetricsForExactAgentAndModelRows() throws {
@@ -33,7 +40,16 @@ import Testing
     var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
     let now = ISO8601DateFormatter().date(from: "2026-07-16T12:00:00Z")!
     let metrics = [CCUsageMetricRecord(date: "2026-07-16", agent: "codex", model: "gpt-5.6-sol", costUSD: 4, inputTokens: 1, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0)]
-    let sessions = [CCUsageSessionMetricRecord(timestamp: now.addingTimeInterval(-3_600), agent: "codex", model: "gpt-5.6-sol", costUSD: 2.5)]
+    let sessions = [CCUsageSessionMetricRecord(
+      timestamp: now.addingTimeInterval(-3_600),
+      agent: "codex",
+      model: "gpt-5.6-sol",
+      costUSD: 2.5,
+      inputTokens: 10,
+      outputTokens: 3,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 20
+    )]
     let snapshot = CostSnapshot(
       generatedAt: now,
       activeBoundaryAt: now,
@@ -45,11 +61,81 @@ import Testing
       dashboardSessions: sessions
     )
     let query = DashboardQueryService(calendar: calendar)
-    #expect(try query.costSeries(snapshot: snapshot, granularity: "hourly", range: "today", now: now).totalUSD == Decimal(string: "2.5"))
-    #expect(try query.costSeries(snapshot: snapshot, granularity: "daily", range: "today", now: now).totalUSD == 4)
+    let hourly = try query.costSeries(snapshot: snapshot, granularity: "hourly", range: "today", now: now)
+    let quarterHourly = try query.costSeries(snapshot: snapshot, granularity: "15min", range: "today", now: now)
+    let daily = try query.costSeries(snapshot: snapshot, granularity: "daily", range: "today", now: now)
+    #expect(hourly.totalUSD == Decimal(string: "2.5"))
+    #expect(hourly.timelineStart == calendar.startOfDay(for: now))
+    #expect(hourly.timelineEndExclusive == now)
+    #expect(quarterHourly.rows == hourly.rows)
+    #expect(hourly.rows.first?.totalTokens == 33)
+    #expect(daily.totalUSD == 4)
+    #expect(daily.rows.first?.totalTokens == 2)
     #expect(throws: DashboardQueryError.invalidGranularity) {
       try query.costSeries(snapshot: snapshot, granularity: "weekly", range: "today", now: now)
     }
+  }
+
+  @Test func monthCostSeriesIncludesContinuousTimelineBoundsThroughNow() throws {
+    var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let now = ISO8601DateFormatter().date(from: "2026-07-16T12:34:56Z")!
+    let snapshot = CostSnapshot(
+      generatedAt: now,
+      activeBoundaryAt: now,
+      costSinceResetUSD: 0,
+      budget: BudgetSummary(spentUSD: 0, budgetUSD: nil),
+      resetCycle: .daily,
+      points: []
+    )
+
+    let response = try DashboardQueryService(calendar: calendar).costSeries(
+      snapshot: snapshot,
+      granularity: "hourly",
+      range: "month",
+      now: now
+    )
+
+    #expect(response.timelineStart == ISO8601DateFormatter().date(from: "2026-07-01T00:00:00Z"))
+    #expect(response.timelineEndExclusive == now)
+    #expect(response.rows.isEmpty)
+  }
+
+  @Test func recentTwelveHoursUsesOnlySessionsInsideRollingWindow() throws {
+    var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let now = ISO8601DateFormatter().date(from: "2026-07-16T12:00:00Z")!
+    let sessions = [
+      CCUsageSessionMetricRecord(
+        timestamp: now.addingTimeInterval(-11 * 3_600),
+        agent: "codex",
+        model: "recent-model",
+        costUSD: 2,
+        inputTokens: 3,
+        outputTokens: 4
+      ),
+      CCUsageSessionMetricRecord(
+        timestamp: now.addingTimeInterval(-13 * 3_600),
+        agent: "claude",
+        model: "old-model",
+        costUSD: 9,
+        inputTokens: 10
+      )
+    ]
+    let snapshot = CostSnapshot(
+      generatedAt: now,
+      activeBoundaryAt: now,
+      costSinceResetUSD: 0,
+      budget: BudgetSummary(spentUSD: 0, budgetUSD: nil),
+      resetCycle: .daily,
+      points: [],
+      dashboardSessions: sessions
+    )
+    let query = DashboardQueryService(calendar: calendar)
+    let metrics = try query.metrics(snapshot: snapshot, range: "recent12h", now: now)
+    let hourly = try query.costSeries(snapshot: snapshot, granularity: "hourly", range: "recent12h", now: now)
+    #expect(metrics.rows.map(\.model) == ["recent-model"])
+    #expect(metrics.totals.costUSD == 2)
+    #expect(metrics.totals.totalTokens == 7)
+    #expect(hourly.rows.map(\.model) == ["recent-model"])
   }
 
   @Test func yesterdayExcludesRowsAtTodayBoundary() throws {
@@ -133,6 +219,37 @@ import Testing
 }
 
 @Suite("APIRouteTests") struct APIRouteTests {
+  @Test func coalescesConcurrentSnapshotRequests() async throws {
+    let root = try temporaryDirectory()
+    try Data("<h1>dashboard</h1>".utf8).write(to: root.appendingPathComponent("index.html"))
+    let now = Date()
+    let snapshot = CostSnapshot(
+      generatedAt: now,
+      activeBoundaryAt: now,
+      costSinceResetUSD: 0,
+      budget: BudgetSummary(spentUSD: 0, budgetUSD: nil),
+      resetCycle: .daily,
+      points: []
+    )
+    let counter = SnapshotLoadCounter()
+    let router = DashboardRouter(
+      snapshotProvider: {
+        await counter.increment()
+        try await Task.sleep(for: .milliseconds(50))
+        return snapshot
+      },
+      assetResolver: StaticAssetResolver(explicitRoot: root)
+    )
+    async let metrics = router.route(target: "/api/metrics?range=today")
+    async let cost = router.route(target: "/api/cost-series?range=today&granularity=hourly")
+    async let budget = router.route(target: "/api/budget")
+    let responses = await [metrics, cost, budget]
+    #expect(responses.allSatisfy { $0.status == 200 })
+    #expect(await counter.value == 1)
+    #expect(await router.route(target: "/api/refresh").status == 200)
+    #expect(await counter.value == 2)
+  }
+
   @Test func servesRoutesAndValidatesInput() async throws {
     let root = try temporaryDirectory()
     try Data("<h1>dashboard</h1>".utf8).write(to: root.appendingPathComponent("index.html"))
@@ -141,10 +258,13 @@ import Testing
     let router = DashboardRouter(snapshotProvider: { snapshot }, assetResolver: StaticAssetResolver(explicitRoot: root))
     #expect(await router.route(target: "/").status == 200)
     #expect(await router.route(target: "/api/recent").status == 200)
+    #expect(await router.route(target: "/api/refresh").status == 200)
     #expect(await router.route(target: "/api/day?date=bad").status == 400)
     #expect(await router.route(target: "/api/period?range=custom&start=2026-07-16&end=2026-07-15").status == 400)
     #expect(await router.route(target: "/api/metrics?range=today").status == 200)
+    #expect(await router.route(target: "/api/metrics?range=recent12h").status == 200)
     #expect(await router.route(target: "/api/cost-series?range=today&granularity=hourly").status == 200)
+    #expect(await router.route(target: "/api/cost-series?range=today&granularity=15min").status == 200)
     #expect(await router.route(target: "/api/cost-series?range=today&granularity=weekly").status == 400)
     #expect(await router.route(target: "/api/missing").status == 404)
   }

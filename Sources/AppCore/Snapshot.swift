@@ -32,6 +32,7 @@ public struct CostSnapshot: Codable, Equatable, Sendable {
   public let costSinceResetUSD: Decimal
   public let budget: BudgetSummary
   public let resetCycle: ResetCycle
+  public let refreshIntervalSeconds: Int
   public let points: [CCUsageCostRecord]
   public let dashboardMetrics: [CCUsageMetricRecord]
   public let dashboardSessions: [CCUsageSessionMetricRecord]
@@ -42,6 +43,7 @@ public struct CostSnapshot: Codable, Equatable, Sendable {
     costSinceResetUSD: Decimal,
     budget: BudgetSummary,
     resetCycle: ResetCycle,
+    refreshIntervalSeconds: Int = AppConfiguration.defaultPollIntervalSeconds,
     points: [CCUsageCostRecord],
     dashboardMetrics: [CCUsageMetricRecord] = [],
     dashboardSessions: [CCUsageSessionMetricRecord] = []
@@ -51,6 +53,7 @@ public struct CostSnapshot: Codable, Equatable, Sendable {
     self.costSinceResetUSD = costSinceResetUSD
     self.budget = budget
     self.resetCycle = resetCycle
+    self.refreshIntervalSeconds = refreshIntervalSeconds
     self.points = points
     self.dashboardMetrics = dashboardMetrics
     self.dashboardSessions = dashboardSessions
@@ -73,6 +76,7 @@ public struct CostSnapshot: Codable, Equatable, Sendable {
       costSinceResetUSD: cost,
       budget: BudgetSummary(spentUSD: cost, budgetUSD: state.budgetUSD),
       resetCycle: state.resetCycle,
+      refreshIntervalSeconds: state.refreshIntervalSeconds ?? refreshIntervalSeconds,
       points: points,
       dashboardMetrics: dashboardMetrics,
       dashboardSessions: dashboardSessions
@@ -84,11 +88,21 @@ public struct SnapshotService: Sendable {
   public let stateStore: StateStore
   public let client: CCUsageClient
   public let calculator: ResetWindowCalculator
+  public let defaultRefreshIntervalSeconds: Int
+  public let aggregationCache: UsageAggregationCache?
 
-  public init(stateStore: StateStore, client: CCUsageClient, calculator: ResetWindowCalculator = ResetWindowCalculator()) {
+  public init(
+    stateStore: StateStore,
+    client: CCUsageClient,
+    calculator: ResetWindowCalculator = ResetWindowCalculator(),
+    defaultRefreshIntervalSeconds: Int = AppConfiguration.defaultPollIntervalSeconds,
+    aggregationCache: UsageAggregationCache? = nil
+  ) {
     self.stateStore = stateStore
     self.client = client
     self.calculator = calculator
+    self.defaultRefreshIntervalSeconds = defaultRefreshIntervalSeconds
+    self.aggregationCache = aggregationCache
   }
 
   public func snapshot(now: Date = Date(), defaultCycle: ResetCycle = .daily) async throws -> CostSnapshot {
@@ -96,12 +110,39 @@ public struct SnapshotService: Sendable {
     let state = try calculator.validatedState(loaded, now: now)
     if state != loaded { try await stateStore.save(state) }
     guard let baseline = state.baseline else { throw SnapshotError.missingBaseline }
+    let todayStart = calculator.calendar.startOfDay(for: now)
+    let today = formatDay(todayStart)
+    var cached = await aggregationCache?.load(now: now)
+    if let cachedThrough = cached?.cachedThrough, parseDay(cachedThrough) == nil {
+      await aggregationCache?.purge()
+      cached = nil
+    }
+    let since = cached.flatMap { nextUncachedDay(after: $0.cachedThrough, today: todayStart) }
     async let blockRecords = client.blocks()
-    async let metricRecords = client.detailedDaily()
-    async let sessionRecords = client.detailedSessions()
+    async let metricRecords = client.detailedDaily(since: since, until: since == nil ? nil : today)
+    async let sessionRecords = client.detailedSessions(since: since, until: since == nil ? nil : today)
     let points = try await blockRecords
-    let dashboardMetrics = try await metricRecords
-    let dashboardSessions = try await sessionRecords
+    let freshMetrics = try await metricRecords
+    let freshSessions = try await sessionRecords
+    let historicalMetrics = (cached?.metrics ?? []) + freshMetrics.filter { $0.date < today }
+    let historicalSessions = (cached?.sessions ?? []) + freshSessions.filter { $0.timestamp < todayStart }
+    let dashboardMetrics = (cached == nil ? freshMetrics : historicalMetrics + freshMetrics.filter { $0.date >= today })
+      .sorted { ($0.date, $0.agent, $0.model) < ($1.date, $1.agent, $1.model) }
+    let dashboardSessions = (cached == nil ? freshSessions : historicalSessions + freshSessions.filter { $0.timestamp >= todayStart })
+      .sorted { $0.timestamp < $1.timestamp }
+    if let aggregationCache,
+       let yesterday = calculator.calendar.date(byAdding: .day, value: -1, to: todayStart) {
+      let cachedThrough = formatDay(yesterday)
+      if cached == nil || cached?.cachedThrough != cachedThrough {
+        try? await aggregationCache.save(
+          metrics: historicalMetrics,
+          sessions: historicalSessions,
+          cachedThrough: cachedThrough,
+          createdAt: cached?.createdAt,
+          now: now
+        )
+      }
+    }
     let interval = try calculator.aggregationInterval(for: state.resetCycle, now: now)
     let cost = selectedPeriodCost(
       cycle: state.resetCycle,
@@ -116,10 +157,29 @@ public struct SnapshotService: Sendable {
       costSinceResetUSD: cost,
       budget: BudgetSummary(spentUSD: cost, budgetUSD: state.budgetUSD),
       resetCycle: state.resetCycle,
+      refreshIntervalSeconds: state.refreshIntervalSeconds ?? defaultRefreshIntervalSeconds,
       points: points,
       dashboardMetrics: dashboardMetrics,
       dashboardSessions: dashboardSessions
     )
+  }
+
+  private func nextUncachedDay(after text: String, today: Date) -> String? {
+    guard let cachedThrough = parseDay(text),
+          let next = calculator.calendar.date(byAdding: .day, value: 1, to: cachedThrough) else { return nil }
+    return formatDay(min(next, today))
+  }
+
+  private func parseDay(_ text: String) -> Date? { dayFormatter.date(from: text) }
+  private func formatDay(_ date: Date) -> String { dayFormatter.string(from: date) }
+
+  private var dayFormatter: DateFormatter {
+    let formatter = DateFormatter()
+    formatter.calendar = calculator.calendar
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = calculator.calendar.timeZone
+    formatter.dateFormat = "yyyy-MM-dd"
+    return formatter
   }
 }
 
@@ -191,6 +251,7 @@ public struct BudgetResponse: Codable, Equatable, Sendable {
   public let visualFraction: Decimal?
   public let resetCycle: String
   public let activeBoundaryAt: Date
+  public let refreshIntervalSeconds: Int
 }
 
 public struct DashboardMetricTotals: Codable, Equatable, Sendable {
@@ -213,11 +274,18 @@ public struct DashboardCostRow: Codable, Equatable, Sendable {
   public let agent: String
   public let model: String
   public let costUSD: Decimal
+  public let inputTokens: Int
+  public let outputTokens: Int
+  public let cacheCreationTokens: Int
+  public let cacheReadTokens: Int
+  public let totalTokens: Int
 }
 
 public struct DashboardCostResponse: Codable, Equatable, Sendable {
   public let range: String
   public let granularity: String
+  public let timelineStart: Date?
+  public let timelineEndExclusive: Date?
   public let rows: [DashboardCostRow]
   public let totalUSD: Decimal
 }
@@ -281,7 +349,8 @@ public struct DashboardQueryService: Sendable {
       usagePercentage: snapshot.budget.usagePercentage,
       visualFraction: snapshot.budget.visualFraction,
       resetCycle: snapshot.resetCycle.label,
-      activeBoundaryAt: snapshot.activeBoundaryAt
+      activeBoundaryAt: snapshot.activeBoundaryAt,
+      refreshIntervalSeconds: snapshot.refreshIntervalSeconds
     )
   }
 
@@ -292,26 +361,10 @@ public struct DashboardQueryService: Sendable {
     endDate: Date? = nil,
     now: Date = Date()
   ) throws -> DashboardMetricsResponse {
-    let interval: DateInterval?
-    switch range {
-    case "all": interval = nil
-    case "today": interval = DateInterval(start: calendar.startOfDay(for: now), end: now)
-    case "yesterday":
-      let today = calendar.startOfDay(for: now)
-      guard let start = calendar.date(byAdding: .day, value: -1, to: today) else { throw DashboardQueryError.invalidRange }
-      interval = DateInterval(start: start, end: today)
-    case "week": interval = calendar.dateInterval(of: .weekOfYear, for: now)
-    case "month": interval = calendar.dateInterval(of: .month, for: now)
-    case "custom":
-      guard let startDate, let endDate else { throw DashboardQueryError.invalidCustomRange }
-      let start = calendar.startOfDay(for: startDate)
-      let endDay = calendar.startOfDay(for: endDate)
-      guard start <= endDay,
-            let end = calendar.date(byAdding: .day, value: 1, to: endDay) else {
-        throw DashboardQueryError.invalidCustomRange
-      }
-      interval = DateInterval(start: start, end: end)
-    default: throw DashboardQueryError.invalidRange
+    let interval = try queryInterval(range: range, startDate: startDate, endDate: endDate, now: now)
+    if range == "recent12h" {
+      let rows = aggregateSessions(snapshot.dashboardSessions, interval: interval)
+      return DashboardMetricsResponse(range: range, rows: rows, totals: metricTotals(rows))
     }
     let rows = snapshot.dashboardMetrics.filter { row in
       guard let interval, let date = parseDay(row.date) else { return interval == nil }
@@ -331,21 +384,43 @@ public struct DashboardQueryService: Sendable {
     let interval = try queryInterval(range: range, startDate: startDate, endDate: endDate, now: now)
     let rows: [DashboardCostRow]
     switch granularity {
-    case "hourly":
+    case "15min", "hourly":
       rows = snapshot.dashboardSessions.compactMap { record in
         guard isWithin(record.timestamp, interval: interval) else { return nil }
-        return DashboardCostRow(timestamp: record.timestamp, agent: record.agent, model: record.model, costUSD: record.costUSD)
+        return DashboardCostRow(
+          timestamp: record.timestamp,
+          agent: record.agent,
+          model: record.model,
+          costUSD: record.costUSD,
+          inputTokens: record.inputTokens,
+          outputTokens: record.outputTokens,
+          cacheCreationTokens: record.cacheCreationTokens,
+          cacheReadTokens: record.cacheReadTokens,
+          totalTokens: record.totalTokens
+        )
       }
     case "daily":
       rows = snapshot.dashboardMetrics.compactMap { record in
         guard let timestamp = parseDay(record.date), isWithin(timestamp, interval: interval) else { return nil }
-        return DashboardCostRow(timestamp: timestamp, agent: record.agent, model: record.model, costUSD: record.costUSD)
+        return DashboardCostRow(
+          timestamp: timestamp,
+          agent: record.agent,
+          model: record.model,
+          costUSD: record.costUSD,
+          inputTokens: record.inputTokens,
+          outputTokens: record.outputTokens,
+          cacheCreationTokens: record.cacheCreationTokens,
+          cacheReadTokens: record.cacheReadTokens,
+          totalTokens: record.totalTokens
+        )
       }
     default: throw DashboardQueryError.invalidGranularity
     }
     return DashboardCostResponse(
       range: range,
       granularity: granularity,
+      timelineStart: interval?.start ?? rows.map(\.timestamp).min(),
+      timelineEndExclusive: interval.map { max($0.start, min($0.end, now)) } ?? rows.map(\.timestamp).max(),
       rows: rows,
       totalUSD: rows.reduce(0) { $0 + $1.costUSD }
     )
@@ -371,6 +446,43 @@ public struct DashboardQueryService: Sendable {
     )
   }
 
+  private func aggregateSessions(
+    _ sessions: [CCUsageSessionMetricRecord],
+    interval: DateInterval?
+  ) -> [CCUsageMetricRecord] {
+    struct Key: Hashable { let date: String; let agent: String; let model: String }
+    struct Values {
+      var costUSD = Decimal.zero
+      var inputTokens = 0
+      var outputTokens = 0
+      var cacheCreationTokens = 0
+      var cacheReadTokens = 0
+    }
+    var groups: [Key: Values] = [:]
+    for session in sessions where isWithin(session.timestamp, interval: interval) {
+      let key = Key(date: formatDay(session.timestamp), agent: session.agent, model: session.model)
+      var values = groups[key, default: Values()]
+      values.costUSD += session.costUSD
+      values.inputTokens += session.inputTokens
+      values.outputTokens += session.outputTokens
+      values.cacheCreationTokens += session.cacheCreationTokens
+      values.cacheReadTokens += session.cacheReadTokens
+      groups[key] = values
+    }
+    return groups.map { key, values in
+      CCUsageMetricRecord(
+        date: key.date,
+        agent: key.agent,
+        model: key.model,
+        costUSD: values.costUSD,
+        inputTokens: values.inputTokens,
+        outputTokens: values.outputTokens,
+        cacheCreationTokens: values.cacheCreationTokens,
+        cacheReadTokens: values.cacheReadTokens
+      )
+    }.sorted { ($0.date, $0.agent, $0.model) < ($1.date, $1.agent, $1.model) }
+  }
+
   private func queryInterval(
     range: String,
     startDate: Date?,
@@ -379,6 +491,7 @@ public struct DashboardQueryService: Sendable {
   ) throws -> DateInterval? {
     switch range {
     case "all": return nil
+    case "recent12h": return DateInterval(start: now.addingTimeInterval(-12 * 3_600), end: now)
     case "today": return DateInterval(start: calendar.startOfDay(for: now), end: now)
     case "yesterday":
       let today = calendar.startOfDay(for: now)

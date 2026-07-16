@@ -105,7 +105,15 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
         configuredPath: loaded.ccusagePath,
         additionalSearchDirectories: ["/opt/homebrew/bin", "/usr/local/bin"]
       )
-      let service = SnapshotService(stateStore: store, client: CCUsageClient(executable: executable))
+      let service = SnapshotService(
+        stateStore: store,
+        client: CCUsageClient(executable: executable),
+        defaultRefreshIntervalSeconds: loaded.pollIntervalSeconds,
+        aggregationCache: UsageAggregationCache(
+          fileURL: paths.aggregationCacheFile,
+          retentionDays: loaded.cacheRetentionDays
+        )
+      )
       snapshotService = service
       errorMessage = nil
       isUsageUnavailable = false

@@ -62,12 +62,31 @@ public struct CCUsageSessionMetricRecord: Codable, Equatable, Sendable {
   public let agent: String
   public let model: String
   public let costUSD: Decimal
+  public let inputTokens: Int
+  public let outputTokens: Int
+  public let cacheCreationTokens: Int
+  public let cacheReadTokens: Int
+  public let totalTokens: Int
 
-  public init(timestamp: Date, agent: String, model: String, costUSD: Decimal) {
+  public init(
+    timestamp: Date,
+    agent: String,
+    model: String,
+    costUSD: Decimal,
+    inputTokens: Int = 0,
+    outputTokens: Int = 0,
+    cacheCreationTokens: Int = 0,
+    cacheReadTokens: Int = 0
+  ) {
     self.timestamp = timestamp
     self.agent = agent
     self.model = model
     self.costUSD = costUSD
+    self.inputTokens = inputTokens
+    self.outputTokens = outputTokens
+    self.cacheCreationTokens = cacheCreationTokens
+    self.cacheReadTokens = cacheReadTokens
+    totalTokens = inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
   }
 }
 
@@ -231,7 +250,11 @@ public enum CCUsageDecoder {
             timestamp: timestamp,
             agent: session.agent,
             model: breakdown.modelName,
-            costUSD: breakdown.cost
+            costUSD: breakdown.cost,
+            inputTokens: breakdown.inputTokens,
+            outputTokens: breakdown.outputTokens,
+            cacheCreationTokens: breakdown.cacheCreationTokens,
+            cacheReadTokens: breakdown.cacheReadTokens
           )
         }
       }
@@ -274,14 +297,27 @@ public struct CCUsageClient: Sendable {
     return try CCUsageDecoder.daily(from: result.stdout)
   }
 
-  public func detailedDaily() async throws -> [CCUsageMetricRecord] {
-    let result = try await runner.run(executable: executable, arguments: ["daily", "--json", "--by-agent"])
+  public func detailedDaily(since: String? = nil, until: String? = nil) async throws -> [CCUsageMetricRecord] {
+    let result = try await runner.run(
+      executable: executable,
+      arguments: filteredArguments(command: "daily", since: since, until: until)
+    )
     return try CCUsageDecoder.detailedDaily(from: result.stdout)
   }
 
-  public func detailedSessions() async throws -> [CCUsageSessionMetricRecord] {
-    let result = try await runner.run(executable: executable, arguments: ["session", "--json", "--by-agent"])
+  public func detailedSessions(since: String? = nil, until: String? = nil) async throws -> [CCUsageSessionMetricRecord] {
+    let result = try await runner.run(
+      executable: executable,
+      arguments: filteredArguments(command: "session", since: since, until: until)
+    )
     return try CCUsageDecoder.detailedSessions(from: result.stdout)
+  }
+
+  private func filteredArguments(command: String, since: String?, until: String?) -> [String] {
+    var arguments = [command, "--json", "--by-agent"]
+    if let since { arguments += ["--since", since] }
+    if let until { arguments += ["--until", until] }
+    return arguments
   }
 }
 

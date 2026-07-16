@@ -82,6 +82,7 @@ defaults:
 - `dashboardPort`: loopback port, default `18081`.
 - `dashboardAutostart`: `true`; whether to start the service during app startup.
 - `pollIntervalSeconds`: `20`; polling cadence in whole seconds.
+- `cacheRetentionDays`: `365`; aggregate-cache lifetime in days from creation.
 
 Accordingly, a newly created file is equivalent to:
 
@@ -91,13 +92,32 @@ Accordingly, a newly created file is equivalent to:
   "defaultResetTerm": "daily",
   "dashboardPort": 18081,
   "dashboardAutostart": true,
-  "pollIntervalSeconds": 20
+  "pollIntervalSeconds": 20,
+  "cacheRetentionDays": 365
 }
 ```
 
 Validation requires an executable `ccusage`, a port in `1...65535`, a positive
-poll interval, and a supported default reset term. Decode and validation errors
-are reported with the config path and do not mutate the file.
+poll interval, a positive cache-retention day count, and a supported default
+reset term. Decode and validation errors are reported with the config path and
+do not mutate the file.
+
+### Aggregate cache
+
+Path: `~/.cache/ccusage-gauge/aggregates-v1.sqlite3`, or the equivalent root set by
+`CCUSAGE_GAUGE_CACHE_HOME`.
+
+The cache stores completed historical daily and session aggregates. Snapshot
+loading checks expiry on every regular polling pass, using `createdAt` and
+`cacheRetentionDays`. An expired or corrupt cache is removed and rebuilt once.
+With a valid cache, only dates after `cachedThrough` through the current local
+day are requested from `ccusage`; block, daily, and session commands execute in
+parallel, and the results are merged with cached history.
+
+The cache uses the macOS system SQLite library with separate metadata, daily
+metric, and session metric tables. Decimal costs are stored as text to preserve
+exact values, writes use a transaction, and the legacy JSON cache is removed
+when the SQLite store initializes.
 
 ### Mutable state
 
@@ -244,11 +264,42 @@ Version-one routes are:
   agent/model cost and token breakdowns for the selected period;
 - `GET /api/metrics?range=custom&start=YYYY-MM-DD&end=YYYY-MM-DD`: the same
   detailed metrics for inclusive whole local days;
-- `GET /api/cost-series?granularity=hourly|daily&range=...`: filtered graph
-  source rows; hourly uses session last-activity timestamps and daily uses
-  exact daily agent/model breakdowns;
+- `GET /api/cost-series?granularity=15min|hourly|daily&range=...`: filtered
+  graph source rows; 15-minute and hourly views use session last-activity
+  timestamps while daily uses exact daily agent/model breakdowns;
 - `GET /api/budget`: budget, selected-period cost, remaining amount, aggregation period,
-  and active boundary.
+  active boundary, and the effective menu-bar refresh interval.
+
+The dashboard defaults to a rolling last-12-hours hourly query. It requests only
+the selected period, so Today, Yesterday, This Week, This Month, and custom
+historical data are loaded lazily rather than through an all-history catalog.
+It automatically refetches the selected-period metrics, cost series, and budget
+at the effective menu-bar refresh interval. A changed menu-bar interval is
+returned by `/api/budget` and reschedules dashboard polling without requiring a
+page reload. Background refreshes retain the last completed dashboard state;
+the loading screen is reserved for requests that do not yet have a completed
+value, such as the initial page load. A non-blocking `Updating…` status remains
+visible while a background refresh is in progress.
+
+User-initiated range changes use a blocking transition: the previous graph is
+cleared and the initial loading state remains until both selected-period metrics
+and cost-series resources finish. Timer and manual refreshes continue to use the
+non-blocking background state.
+
+Graph granularity changes use the same blocking transition and complete after
+the replacement cost-series resource finishes loading.
+
+The router coalesces concurrent API snapshot reads through an actor-isolated
+in-flight task and briefly reuses the completed result. A frontend refresh can
+therefore request metrics, cost series, and budget concurrently while AppCore
+runs only one snapshot load instead of one full `ccusage` process group per
+endpoint.
+
+The server starts snapshot prewarming as soon as its listener starts. Normal
+read endpoints reuse that completed snapshot for up to 60 seconds, making range
+changes a local filter operation. `GET /api/refresh` forces one coalesced fresh
+snapshot; the frontend waits for it before refetching the three visible
+resources, which then resolve from the refreshed cache.
 
 Successful responses use JSON and stable field names. Bad parameters return
 `400`; missing routes return `404`; `ccusage` or internal query failures return

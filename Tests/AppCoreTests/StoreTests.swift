@@ -10,6 +10,7 @@ import Testing
     let value = try store.loadOrCreate()
     #expect(value == AppConfiguration())
     #expect(value.pollIntervalSeconds == 20)
+    #expect(value.cacheRetentionDays == 365)
     let original = try Data(contentsOf: file)
     _ = try store.loadOrCreate()
     #expect(try Data(contentsOf: file) == original)
@@ -22,6 +23,51 @@ import Testing
     try bytes.write(to: file)
     #expect(throws: ConfigurationError.invalidPort(0)) { try ConfigStore(fileURL: file).loadOrCreate() }
     #expect(try Data(contentsOf: file) == bytes)
+  }
+
+  @Test func decodesLegacyConfigWithDefaultCacheRetention() throws {
+    let json = #"{"ccusagePath":null,"defaultResetTerm":"daily","dashboardPort":18081,"dashboardAutostart":true,"pollIntervalSeconds":20}"#
+    let value = try JSONDecoder().decode(AppConfiguration.self, from: Data(json.utf8))
+    #expect(value.cacheRetentionDays == 365)
+  }
+
+  @Test func rejectsInvalidCacheRetention() {
+    #expect(throws: ConfigurationError.invalidCacheRetention(0)) {
+      try AppConfiguration(cacheRetentionDays: 0).validate()
+    }
+  }
+}
+
+@Suite("UsageAggregationCacheTests") struct UsageAggregationCacheTests {
+  @Test func roundTripsAndPurgesFromCreationDate() async throws {
+    let file = try temporaryDirectory().appendingPathComponent("cache/aggregates-v1.sqlite3")
+    let legacy = file.deletingLastPathComponent().appendingPathComponent("aggregates-v1.json")
+    try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("legacy".utf8).write(to: legacy)
+    let cache = UsageAggregationCache(fileURL: file, retentionDays: 365)
+    let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+    let metrics = [CCUsageMetricRecord(
+      date: "2026-07-15",
+      agent: "codex",
+      model: "gpt",
+      costUSD: 1,
+      inputTokens: 2,
+      outputTokens: 3,
+      cacheCreationTokens: 4,
+      cacheReadTokens: 5
+    )]
+    try await cache.save(
+      metrics: metrics,
+      sessions: [],
+      cachedThrough: "2026-07-15",
+      now: createdAt
+    )
+    let header = Data(try Data(contentsOf: file).prefix(16))
+    #expect(String(data: header, encoding: .utf8) == "SQLite format 3\0")
+    #expect(!FileManager.default.fileExists(atPath: legacy.path))
+    #expect(await cache.load(now: createdAt.addingTimeInterval(364 * 86_400))?.metrics == metrics)
+    #expect(await cache.load(now: createdAt.addingTimeInterval(365 * 86_400)) == nil)
+    #expect(!FileManager.default.fileExists(atPath: file.path))
   }
 }
 

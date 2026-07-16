@@ -48,16 +48,68 @@ public struct HTTPResponse: Sendable {
   }
 }
 
+public actor DashboardSnapshotCache {
+  public typealias Loader = @Sendable () async throws -> CostSnapshot
+
+  private let loader: Loader
+  private let maxAgeSeconds: TimeInterval
+  private let now: @Sendable () -> Date
+  private var latest: CostSnapshot?
+  private var loadedAt: Date?
+  private var inFlight: Task<CostSnapshot, Error>?
+
+  public init(
+    maxAgeSeconds: TimeInterval = 1,
+    now: @escaping @Sendable () -> Date = Date.init,
+    loader: @escaping Loader
+  ) {
+    self.maxAgeSeconds = max(0, maxAgeSeconds)
+    self.now = now
+    self.loader = loader
+  }
+
+  public func snapshot(forceRefresh: Bool = false) async throws -> CostSnapshot {
+    let requestedAt = now()
+    if !forceRefresh, let latest, let loadedAt,
+       requestedAt.timeIntervalSince(loadedAt) <= maxAgeSeconds {
+      return latest
+    }
+    if let inFlight { return try await inFlight.value }
+
+    let task = Task { try await loader() }
+    inFlight = task
+    do {
+      let snapshot = try await task.value
+      latest = snapshot
+      loadedAt = now()
+      inFlight = nil
+      return snapshot
+    } catch {
+      inFlight = nil
+      throw error
+    }
+  }
+}
+
 public struct DashboardRouter: Sendable {
   public typealias SnapshotProvider = @Sendable () async throws -> CostSnapshot
-  private let snapshotProvider: SnapshotProvider
+  private let snapshotCache: DashboardSnapshotCache
   private let queryService: DashboardQueryService
   private let assetResolver: StaticAssetResolver
 
-  public init(snapshotProvider: @escaping SnapshotProvider, queryService: DashboardQueryService = DashboardQueryService(), assetResolver: StaticAssetResolver) {
-    self.snapshotProvider = snapshotProvider
+  public init(
+    snapshotProvider: @escaping SnapshotProvider,
+    snapshotCacheMaxAgeSeconds: TimeInterval = 60,
+    queryService: DashboardQueryService = DashboardQueryService(),
+    assetResolver: StaticAssetResolver
+  ) {
+    snapshotCache = DashboardSnapshotCache(maxAgeSeconds: snapshotCacheMaxAgeSeconds, loader: snapshotProvider)
     self.queryService = queryService
     self.assetResolver = assetResolver
+  }
+
+  public func preloadSnapshot() async {
+    _ = try? await snapshotCache.snapshot()
   }
 
   public func route(target: String, method: String = "GET") async -> HTTPResponse {
@@ -71,7 +123,11 @@ public struct DashboardRouter: Sendable {
         return HTTPResponse(status: 200, contentType: "application/json", body: Data("{\"status\":\"ok\"}".utf8))
       }
       do {
-        let snapshot = try await snapshotProvider()
+        if path == "/api/refresh" {
+          _ = try await snapshotCache.snapshot(forceRefresh: true)
+          return json(["status": "ok"])
+        }
+        let snapshot = try await snapshotCache.snapshot()
         switch path {
         case "/api/recent":
           let limit = components.queryItems?.first(where: { $0.name == "limit" })?.value.flatMap(Int.init) ?? 48
@@ -124,11 +180,11 @@ public struct DashboardRouter: Sendable {
         default: return errorResponse(status: 404, code: "not_found", message: "API route not found")
         }
       } catch DashboardQueryError.invalidRange {
-        return errorResponse(status: 400, code: "invalid_range", message: "range must be today, yesterday, week, or month")
+        return errorResponse(status: 400, code: "invalid_range", message: "range must be recent12h, today, yesterday, week, month, or custom")
       } catch DashboardQueryError.invalidCustomRange {
         return errorResponse(status: 400, code: "invalid_custom_range", message: "custom range start must not be after end")
       } catch DashboardQueryError.invalidGranularity {
-        return errorResponse(status: 400, code: "invalid_granularity", message: "granularity must be hourly or daily")
+        return errorResponse(status: 400, code: "invalid_granularity", message: "granularity must be 15min, hourly, or daily")
       } catch {
         return errorResponse(status: 503, code: "usage_unavailable", message: "Usage data is temporarily unavailable")
       }
@@ -184,6 +240,7 @@ public final class DashboardHTTPServer: @unchecked Sendable {
     }
     created.start(queue: queue)
     listener = created
+    Task { await router.preloadSnapshot() }
   }
 
   public func stop() {

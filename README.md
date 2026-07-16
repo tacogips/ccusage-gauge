@@ -35,10 +35,36 @@ The SolidJS dashboard provides:
 
 - exact per-agent and per-model rows from `ccusage daily --json --by-agent`;
 - left-side model and agent filters;
-- top-right Today, Yesterday, This week, This month, and Custom date controls;
-- cost-over-time graph with Hourly (default) and Daily aggregation;
+- top-right Last 12 hours, Today, Yesterday, This week, This month, and Custom date controls;
+- cost-over-time graph with a rolling 12-hour Hourly default, 15-minute and
+  Daily aggregation, and hover details for each bar;
 - selected-period cost/token totals and detailed agent/model rows;
 - budget and aggregation-period summaries from the same AppCore snapshot.
+- automatic data refresh using the menu bar's effective refresh interval.
+
+Automatic refreshes retain the current dashboard while data loads in the
+background, then replace it with the completed response without flashing the
+full-page loading state. A compact `Updating…` indicator remains visible while
+the background request is active.
+
+Changing the selected data range intentionally clears the previous graph and
+uses the initial loading state until the new range's metrics and graph rows are
+both ready. This prevents values from the previous range appearing under the
+new range label.
+
+Changing between 15 min, Hourly, and Daily uses the same blocking transition,
+so bars from the previous granularity are never displayed under the new label.
+
+Concurrent dashboard API requests share one in-flight AppCore snapshot. This
+avoids launching duplicate `ccusage` process groups for metrics, graph, and
+budget requests during initial load and automatic refresh.
+
+The HTTP server prewarms its snapshot at startup. Range changes reuse the last
+completed snapshot immediately, while automatic and manual refreshes explicitly
+replace it through `/api/refresh` before the visible resources are refetched.
+
+Only the active period is requested by the frontend. Historical ranges are
+loaded lazily when selected instead of downloading an all-history catalog.
 
 ## Development
 
@@ -84,7 +110,8 @@ The generated defaults are:
   "defaultResetTerm": "daily",
   "dashboardPort": 18081,
   "dashboardAutostart": true,
-  "pollIntervalSeconds": 20
+  "pollIntervalSeconds": 20,
+  "cacheRetentionDays": 365
 }
 ```
 
@@ -95,12 +122,23 @@ The generated defaults are:
 | `dashboardPort` | integer; default `18081` | Loopback port in the range `1` through `65535`. The dashboard binds to `127.0.0.1`, and **Open dashboard** opens `http://127.0.0.1:<dashboardPort>/`. |
 | `dashboardAutostart` | boolean; default `true` | Starts the local dashboard server when the menu-bar application starts. |
 | `pollIntervalSeconds` | integer; default `20` | Usage refresh interval in seconds. It must be positive. |
+| `cacheRetentionDays` | integer; default `365` | Retains the aggregate cache for this many days from its creation time. It must be positive. Expired cache data is purged during regular snapshot refreshes and rebuilt once. |
 
 Configuration is loaded when the application starts. After changing any field,
 quit and relaunch `ccusage-gauge`; the menu's **Refresh** action refreshes usage
 data but does not reload configuration. For example, to use port `19090`, set
 `"dashboardPort": 19090`, relaunch the application, and choose **Open
 dashboard** to open `http://127.0.0.1:19090/`.
+
+Historical daily and session aggregates are cached at
+`~/.cache/ccusage-gauge/aggregates-v1.sqlite3`. After the initial cache build,
+refreshes run the block, daily, and session queries concurrently while limiting
+daily/session reads to uncached and current dates. Set
+`CCUSAGE_GAUGE_CACHE_HOME` to override the `.cache` root.
+
+The cache uses the system SQLite library. Metadata, daily aggregates, and
+session aggregates are stored in normalized tables and updated transactionally.
+The obsolete JSON cache is removed automatically when SQLite caching starts.
 
 Validate the production configuration and resolved `ccusage` executable with:
 
@@ -118,7 +156,9 @@ Mutable budget/aggregation-period state is stored separately at
 `~/.local/ccusage-gauge/state.json` with user-only permissions. Menu actions do
 not rewrite the static configuration. The **Refresh interval** submenu can set
 a persistent positive whole-number override in seconds or return to the
-`pollIntervalSeconds` configuration default.
+`pollIntervalSeconds` configuration default. The dashboard automatically uses
+the same effective interval and adopts menu-bar interval changes after its next
+refresh.
 
 ## E2E testing
 
@@ -143,13 +183,13 @@ task build:homebrew -- darwin-arm64 darwin-x64
 Render a formula after both platform archives exist:
 
 ```bash
-task homebrew:formula -- 0.1.3
+task homebrew:formula -- 0.1.4
 ```
 
 Render directly into the default sibling tap checkout:
 
 ```bash
-task homebrew:tap-formula -- 0.1.3
+task homebrew:tap-formula -- 0.1.4
 ```
 
 Install from the tap after the formula is published:
@@ -182,14 +222,14 @@ kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID --
 Render a Cask:
 
 ```bash
-task homebrew:cask -- 0.1.3
+task homebrew:cask -- 0.1.4
 ```
 
 For a tagged release, build, upload, and render the tap Cask:
 
 ```bash
 kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID -- \
-  task release:homebrew-cask-local -- v0.1.3
+  task release:homebrew-cask-local -- v0.1.4
 ```
 
 See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.

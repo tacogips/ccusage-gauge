@@ -62,31 +62,52 @@ public enum ResetCycle: Codable, Equatable, Sendable {
 
 public struct AppConfiguration: Codable, Equatable, Sendable {
   public static let defaultPollIntervalSeconds = 20
+  public static let defaultCacheRetentionDays = 365
 
   public var ccusagePath: String?
   public var defaultResetTerm: String
   public var dashboardPort: Int
   public var dashboardAutostart: Bool
   public var pollIntervalSeconds: Int
+  public var cacheRetentionDays: Int
 
   public init(
     ccusagePath: String? = nil,
     defaultResetTerm: String = "daily",
     dashboardPort: Int = 18_081,
     dashboardAutostart: Bool = true,
-    pollIntervalSeconds: Int = AppConfiguration.defaultPollIntervalSeconds
+    pollIntervalSeconds: Int = AppConfiguration.defaultPollIntervalSeconds,
+    cacheRetentionDays: Int = AppConfiguration.defaultCacheRetentionDays
   ) {
     self.ccusagePath = ccusagePath
     self.defaultResetTerm = defaultResetTerm
     self.dashboardPort = dashboardPort
     self.dashboardAutostart = dashboardAutostart
     self.pollIntervalSeconds = pollIntervalSeconds
+    self.cacheRetentionDays = cacheRetentionDays
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case ccusagePath, defaultResetTerm, dashboardPort, dashboardAutostart
+    case pollIntervalSeconds, cacheRetentionDays
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    ccusagePath = try container.decodeIfPresent(String.self, forKey: .ccusagePath)
+    defaultResetTerm = try container.decode(String.self, forKey: .defaultResetTerm)
+    dashboardPort = try container.decode(Int.self, forKey: .dashboardPort)
+    dashboardAutostart = try container.decode(Bool.self, forKey: .dashboardAutostart)
+    pollIntervalSeconds = try container.decode(Int.self, forKey: .pollIntervalSeconds)
+    cacheRetentionDays = try container.decodeIfPresent(Int.self, forKey: .cacheRetentionDays)
+      ?? AppConfiguration.defaultCacheRetentionDays
   }
 
   public func validate() throws {
     _ = try ResetCycle(term: defaultResetTerm)
     guard (1...65_535).contains(dashboardPort) else { throw ConfigurationError.invalidPort(dashboardPort) }
     guard pollIntervalSeconds > 0 else { throw ConfigurationError.invalidPollInterval(pollIntervalSeconds) }
+    guard cacheRetentionDays > 0 else { throw ConfigurationError.invalidCacheRetention(cacheRetentionDays) }
     if let ccusagePath, !ccusagePath.hasPrefix("/") { throw ConfigurationError.pathMustBeAbsolute }
   }
 }
@@ -95,6 +116,7 @@ public enum ConfigurationError: Error, Equatable, CustomStringConvertible, Senda
   case invalidResetTerm(String)
   case invalidPort(Int)
   case invalidPollInterval(Int)
+  case invalidCacheRetention(Int)
   case pathMustBeAbsolute
 
   public var description: String {
@@ -102,6 +124,7 @@ public enum ConfigurationError: Error, Equatable, CustomStringConvertible, Senda
     case .invalidResetTerm(let value): "Unsupported reset term: \(value)"
     case .invalidPort(let value): "Dashboard port must be between 1 and 65535 (received \(value))"
     case .invalidPollInterval(let value): "Poll interval must be positive (received \(value))"
+    case .invalidCacheRetention(let value): "Cache retention days must be positive (received \(value))"
     case .pathMustBeAbsolute: "Configured ccusagePath must be an absolute path"
     }
   }
@@ -110,10 +133,12 @@ public enum ConfigurationError: Error, Equatable, CustomStringConvertible, Senda
 public struct AppPaths: Sendable {
   public let configFile: URL
   public let stateFile: URL
+  public let aggregationCacheFile: URL
 
-  public init(configFile: URL, stateFile: URL) {
+  public init(configFile: URL, stateFile: URL, aggregationCacheFile: URL) {
     self.configFile = configFile
     self.stateFile = stateFile
+    self.aggregationCacheFile = aggregationCacheFile
   }
 
   public static func production(environment: [String: String] = ProcessInfo.processInfo.environment) -> AppPaths {
@@ -122,9 +147,12 @@ public struct AppPaths: Sendable {
       ?? home.appendingPathComponent(".config", isDirectory: true)
     let stateRoot = environment["CCUSAGE_GAUGE_STATE_HOME"].map(URL.init(fileURLWithPath:))
       ?? home.appendingPathComponent(".local", isDirectory: true)
+    let cacheRoot = environment["CCUSAGE_GAUGE_CACHE_HOME"].map(URL.init(fileURLWithPath:))
+      ?? home.appendingPathComponent(".cache", isDirectory: true)
     return AppPaths(
       configFile: configRoot.appendingPathComponent("ccusage-gauge/ccusage-config.json"),
-      stateFile: stateRoot.appendingPathComponent("ccusage-gauge/state.json")
+      stateFile: stateRoot.appendingPathComponent("ccusage-gauge/state.json"),
+      aggregationCacheFile: cacheRoot.appendingPathComponent("ccusage-gauge/aggregates-v1.sqlite3")
     )
   }
 }

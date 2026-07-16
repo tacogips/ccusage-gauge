@@ -16,7 +16,7 @@ let package = Package(
     .target(
       name: "AppCore",
       resources: [.copy("Resources/Web")],
-      linkerSettings: [.linkedFramework("Network")]
+      linkerSettings: [.linkedFramework("Network"), .linkedLibrary("sqlite3")]
     ),
     .executableTarget(
       name: "AppCLI",

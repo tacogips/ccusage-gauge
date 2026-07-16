@@ -72,7 +72,15 @@ struct CCUsageGaugeCLI {
     let resolvedPaths = paths ?? AppPaths.production()
     let config = try configuration ?? ConfigStore(fileURL: resolvedPaths.configFile).loadOrCreate()
     let executable = try CCUsageExecutableResolver().resolve(configuredPath: config.ccusagePath)
-    return SnapshotService(stateStore: StateStore(fileURL: resolvedPaths.stateFile), client: CCUsageClient(executable: executable))
+    return SnapshotService(
+      stateStore: StateStore(fileURL: resolvedPaths.stateFile),
+      client: CCUsageClient(executable: executable),
+      defaultRefreshIntervalSeconds: config.pollIntervalSeconds,
+      aggregationCache: UsageAggregationCache(
+        fileURL: resolvedPaths.aggregationCacheFile,
+        retentionDays: config.cacheRetentionDays
+      )
+    )
   }
 
   static func waitForTerminationSignal() async {
