@@ -2,6 +2,7 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+version="$(tr -d '[:space:]' < "$project_root/VERSION")"
 mode="${1:-fixture}"
 case "$mode" in
   fixture | missing) ;;
@@ -25,6 +26,7 @@ swift build --package-path "$project_root" --product ccusage-gauge-menubar >/dev
 bin_dir="$(swift build --package-path "$project_root" --show-bin-path)"
 cp "$bin_dir/ccusage-gauge-menubar" "$app/Contents/MacOS/ccusage-gauge-menubar"
 chmod 0755 "$app/Contents/MacOS/ccusage-gauge-menubar"
+cp "$project_root/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cp -R "$project_root/Sources/AppCore/Resources/Web"/. "$app/Contents/Resources/Web"/
 
 cat >"$mock_bin" <<'MOCK'
@@ -80,12 +82,14 @@ cat >"$app/Contents/Info.plist" <<PLIST
   <string>ccusage-gauge-menubar</string>
   <key>CFBundleIdentifier</key>
   <string>com.tacogips.ccusage-gauge.e2e</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleName</key>
   <string>CCUsageGauge</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>$version</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>LSUIElement</key>

@@ -76,6 +76,7 @@ public struct BudgetSummary: Codable, Equatable, Sendable {
   public let spentUSD: Decimal
   public let remainingUSD: Decimal?
   public let overageUSD: Decimal
+  public let usagePercentage: Decimal?
   public let visualFraction: Decimal?
 
   public init(spentUSD: Decimal, budgetUSD: Decimal?) {
@@ -85,11 +86,13 @@ public struct BudgetSummary: Codable, Equatable, Sendable {
     guard let budgetUSD, budgetUSD > 0 else {
       remainingUSD = nil
       overageUSD = 0
+      usagePercentage = nil
       visualFraction = nil
       return
     }
     remainingUSD = max(budgetUSD - spent, 0)
     overageUSD = max(spent - budgetUSD, 0)
+    usagePercentage = spent / budgetUSD * 100
     visualFraction = min(spent / budgetUSD, 1)
   }
 }

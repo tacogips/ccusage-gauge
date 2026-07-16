@@ -38,17 +38,20 @@ public struct AppState: Codable, Equatable, Sendable {
   public var resetCycle: ResetCycle
   public var lastManualResetAt: Date?
   public var baseline: ResetBaseline?
+  public var refreshIntervalSeconds: Int?
 
   public init(
     budgetUSD: Decimal? = nil,
     resetCycle: ResetCycle = .daily,
     lastManualResetAt: Date? = nil,
-    baseline: ResetBaseline? = nil
+    baseline: ResetBaseline? = nil,
+    refreshIntervalSeconds: Int? = nil
   ) {
     self.budgetUSD = budgetUSD
     self.resetCycle = resetCycle
     self.lastManualResetAt = lastManualResetAt
     self.baseline = baseline
+    self.refreshIntervalSeconds = refreshIntervalSeconds
   }
 }
 
@@ -68,6 +71,7 @@ public actor StateStore {
 
   public func save(_ state: AppState) throws {
     if let budget = state.budgetUSD, budget < 0 { throw StateError.negativeBudget }
+    if let interval = state.refreshIntervalSeconds, interval <= 0 { throw StateError.invalidRefreshInterval(interval) }
     try fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
     var data = try Self.encoder.encode(state)
     data.append(0x0A)
@@ -89,4 +93,7 @@ public actor StateStore {
   }
 }
 
-public enum StateError: Error, Equatable, Sendable { case negativeBudget }
+public enum StateError: Error, Equatable, Sendable {
+  case negativeBudget
+  case invalidRefreshInterval(Int)
+}

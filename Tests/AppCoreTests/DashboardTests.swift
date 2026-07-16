@@ -11,6 +11,7 @@ import Testing
     let query = DashboardQueryService(calendar: calendar)
     #expect(query.day(snapshot: snapshot, date: now).totalUSD == 2)
     #expect(query.budget(snapshot: snapshot).remainingUSD == 8)
+    #expect(query.budget(snapshot: snapshot).usagePercentage == 20)
   }
 
   @Test func aggregatesDetailedMetricsForExactAgentAndModelRows() throws {
@@ -49,6 +50,32 @@ import Testing
     #expect(throws: DashboardQueryError.invalidGranularity) {
       try query.costSeries(snapshot: snapshot, granularity: "weekly", range: "today", now: now)
     }
+  }
+
+  @Test func yesterdayExcludesRowsAtTodayBoundary() throws {
+    var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let now = ISO8601DateFormatter().date(from: "2026-07-16T12:00:00Z")!
+    let metrics = [
+      CCUsageMetricRecord(date: "2026-07-15", agent: "claude", model: "yesterday-model", costUSD: 1, inputTokens: 1, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0),
+      CCUsageMetricRecord(date: "2026-07-16", agent: "codex", model: "today-model", costUSD: 2, inputTokens: 1, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0)
+    ]
+    let sessions = [
+      CCUsageSessionMetricRecord(timestamp: ISO8601DateFormatter().date(from: "2026-07-15T23:59:59Z")!, agent: "claude", model: "yesterday-model", costUSD: 1),
+      CCUsageSessionMetricRecord(timestamp: ISO8601DateFormatter().date(from: "2026-07-16T00:00:00Z")!, agent: "codex", model: "today-model", costUSD: 2)
+    ]
+    let snapshot = CostSnapshot(
+      generatedAt: now,
+      activeBoundaryAt: now,
+      costSinceResetUSD: 0,
+      budget: BudgetSummary(spentUSD: 0, budgetUSD: nil),
+      resetCycle: .daily,
+      points: [],
+      dashboardMetrics: metrics,
+      dashboardSessions: sessions
+    )
+    let query = DashboardQueryService(calendar: calendar)
+    #expect(try query.metrics(snapshot: snapshot, range: "yesterday", now: now).rows.map(\.model) == ["yesterday-model"])
+    #expect(try query.costSeries(snapshot: snapshot, granularity: "hourly", range: "yesterday", now: now).rows.map(\.model) == ["yesterday-model"])
   }
 
   @Test func customRangeIncludesBothWholeCalendarDays() throws {

@@ -22,6 +22,18 @@ tasks:
     cmds:
       - swift run {{.EXECUTABLE_NAME}} {{.CLI_ARGS}}
 
+  app:build:
+    desc: Build an ad-hoc signed local macOS app bundle with the application icon
+    deps: [frontend:build]
+    cmds:
+      - scripts/build-local-app.sh
+
+  app:run:
+    desc: Build and launch the local macOS menu-bar app bundle
+    deps: [app:build]
+    cmds:
+      - open .build/CCUsageGauge.app
+
   test:
     desc: Run Swift tests
     cmds:

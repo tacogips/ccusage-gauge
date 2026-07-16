@@ -15,7 +15,7 @@ export interface CostRow { timestamp: string; agent: string; model: string; cost
 export interface CostSeriesResponse { range: string; granularity: "hourly" | "daily"; rows: CostRow[]; totalUSD: number }
 export interface BudgetResponse {
   budgetUSD?: number; spentUSD: number; remainingUSD?: number; overageUSD: number;
-  visualFraction?: number; resetCycle: string; activeBoundaryAt: string;
+  usagePercentage?: number; visualFraction?: number; resetCycle: string; activeBoundaryAt: string;
 }
 export async function getJSON<T>(path: string): Promise<T> {
   const response = await fetch(path);

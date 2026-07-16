@@ -37,7 +37,13 @@ import Testing
     let summary = BudgetSummary(spentUSD: 125, budgetUSD: 100)
     #expect(summary.remainingUSD == 0)
     #expect(summary.overageUSD == 25)
+    #expect(summary.usagePercentage == 125)
     #expect(summary.visualFraction == 1)
     #expect(summary.spentUSD == 125)
+  }
+
+  @Test func omitsPercentageWhenBudgetIsNotPositive() {
+    #expect(BudgetSummary(spentUSD: 10, budgetUSD: nil).usagePercentage == nil)
+    #expect(BudgetSummary(spentUSD: 10, budgetUSD: 0).usagePercentage == nil)
   }
 }

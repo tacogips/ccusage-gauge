@@ -133,6 +133,7 @@ public struct BudgetResponse: Codable, Equatable, Sendable {
   public let spentUSD: Decimal
   public let remainingUSD: Decimal?
   public let overageUSD: Decimal
+  public let usagePercentage: Decimal?
   public let visualFraction: Decimal?
   public let resetCycle: String
   public let activeBoundaryAt: Date
@@ -198,7 +199,7 @@ public struct DashboardQueryService: Sendable {
     case "month": guard let value = calendar.dateInterval(of: .month, for: now) else { throw DashboardQueryError.invalidRange }; interval = value
     default: throw DashboardQueryError.invalidRange
     }
-    let points = snapshot.points.filter { interval.contains($0.timestamp) }.map {
+    let points = snapshot.points.filter { isWithin($0.timestamp, interval: interval) }.map {
       RecentPoint(timestamp: $0.timestamp, costUSD: $0.costUSD, models: $0.models)
     }
     return PeriodResponse(range: range, series: points, totalUSD: points.reduce(0) { $0 + $1.costUSD })
@@ -223,6 +224,7 @@ public struct DashboardQueryService: Sendable {
       spentUSD: snapshot.budget.spentUSD,
       remainingUSD: snapshot.budget.remainingUSD,
       overageUSD: snapshot.budget.overageUSD,
+      usagePercentage: snapshot.budget.usagePercentage,
       visualFraction: snapshot.budget.visualFraction,
       resetCycle: snapshot.resetCycle.label,
       activeBoundaryAt: snapshot.activeBoundaryAt
@@ -259,7 +261,7 @@ public struct DashboardQueryService: Sendable {
     }
     let rows = snapshot.dashboardMetrics.filter { row in
       guard let interval, let date = parseDay(row.date) else { return interval == nil }
-      return interval.contains(date)
+      return isWithin(date, interval: interval)
     }
     return DashboardMetricsResponse(range: range, rows: rows, totals: metricTotals(rows))
   }
@@ -277,12 +279,12 @@ public struct DashboardQueryService: Sendable {
     switch granularity {
     case "hourly":
       rows = snapshot.dashboardSessions.compactMap { record in
-        guard interval?.contains(record.timestamp) ?? true else { return nil }
+        guard isWithin(record.timestamp, interval: interval) else { return nil }
         return DashboardCostRow(timestamp: record.timestamp, agent: record.agent, model: record.model, costUSD: record.costUSD)
       }
     case "daily":
       rows = snapshot.dashboardMetrics.compactMap { record in
-        guard let timestamp = parseDay(record.date), interval?.contains(timestamp) ?? true else { return nil }
+        guard let timestamp = parseDay(record.date), isWithin(timestamp, interval: interval) else { return nil }
         return DashboardCostRow(timestamp: timestamp, agent: record.agent, model: record.model, costUSD: record.costUSD)
       }
     default: throw DashboardQueryError.invalidGranularity
@@ -296,6 +298,11 @@ public struct DashboardQueryService: Sendable {
   }
 
   public func parseDay(_ text: String) -> Date? { dayFormatter.date(from: text) }
+
+  private func isWithin(_ date: Date, interval: DateInterval?) -> Bool {
+    guard let interval else { return true }
+    return date >= interval.start && date < interval.end
+  }
 
   private func formatDay(_ date: Date) -> String { dayFormatter.string(from: date) }
 

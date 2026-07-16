@@ -37,10 +37,18 @@ import Testing
         scheduledBoundaryAt: now.addingTimeInterval(-3600), manualResetAtConsidered: now,
         activeBoundaryAt: now, boundaryKind: .manual, cycle: .customHours(12),
         calendarIdentifier: "gregorian", timeZoneIdentifier: "UTC", computedAt: now
-      )
+      ),
+      refreshIntervalSeconds: 15
     )
     try await store.save(state)
     #expect(try await store.load() == state)
+  }
+
+  @Test func rejectsInvalidRefreshInterval() async throws {
+    let store = StateStore(fileURL: try temporaryDirectory().appendingPathComponent("state.json"))
+    await #expect(throws: StateError.invalidRefreshInterval(0)) {
+      try await store.save(AppState(refreshIntervalSeconds: 0))
+    }
   }
 
   @Test func corruptStateIsReportedAndNotReplaced() async throws {
@@ -49,6 +57,13 @@ import Testing
     try bytes.write(to: file)
     await #expect(throws: (any Error).self) { try await StateStore(fileURL: file).load() }
     #expect(try Data(contentsOf: file) == bytes)
+  }
+
+  @Test func decodesStateCreatedBeforeRefreshIntervalOverride() async throws {
+    let file = try temporaryDirectory().appendingPathComponent("state.json")
+    try Data(#"{"resetCycle":{"type":"daily"}}"#.utf8).write(to: file)
+    let state = try await StateStore(fileURL: file).load()
+    #expect(state.refreshIntervalSeconds == nil)
   }
 }
 

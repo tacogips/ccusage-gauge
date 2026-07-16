@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createResource, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { type BudgetResponse, type CostRow, type CostSeriesResponse, type MetricRow, type MetricsResponse, getJSON } from "./api";
 
 type QuickRange = "today" | "yesterday" | "week" | "month";
@@ -11,6 +11,7 @@ const quickRanges: Array<[QuickRange, string]> = [
 ];
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const integer = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const percentage = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
 const dateText = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const localDate = () => dateText(new Date());
 const daysAgo = (days: number) => { const date = new Date(); date.setDate(date.getDate() - days); return dateText(date); };
@@ -64,8 +65,15 @@ export default function App() {
   const [costSeries, { refetch: refreshCostSeries }] = createResource(costPath, (path) => getJSON<CostSeriesResponse>(path));
   const [budget, { refetch: refreshBudget }] = createResource(() => getJSON<BudgetResponse>("/api/budget"));
 
-  const models = createMemo(() => [...new Set((catalog()?.rows ?? []).map((row) => row.model))].sort());
+  const models = createMemo(() => [...new Set((period()?.rows ?? []).map((row) => row.model))].sort());
   const agents = createMemo(() => [...new Set((catalog()?.rows ?? []).map((row) => row.agent))].sort());
+  createEffect(() => {
+    const available = new Set(models());
+    setSelectedModels((current) => {
+      const next = current.filter((model) => available.has(model));
+      return next.length === current.length ? current : next;
+    });
+  });
   const filteredRows = createMemo(() => (period()?.rows ?? []).filter((row) =>
     (selectedModels().length === 0 || selectedModels().includes(row.model)) &&
     (selectedAgents().length === 0 || selectedAgents().includes(row.agent))));
@@ -85,12 +93,12 @@ export default function App() {
       <aside class="model-sidebar" aria-label="Usage filters">
         <div class="brand-mark" aria-hidden="true"><span /></div>
         <div><p class="eyebrow">FILTER USAGE</p><h2>Models</h2></div>
-        <button classList={{ "model-choice": true, active: selectedModels().length === 0 }} onClick={() => setSelectedModels([])}><span>All models</span><b>{models().length}</b></button>
+        <button classList={{ "model-choice": true, active: selectedModels().length === 0 }} onClick={() => setSelectedModels([])}><span>All models</span></button>
         <div class="model-list">
-          <For each={models()} fallback={<p class="muted">No models reported by ccusage.</p>}>{(model) => (
+          <For each={models()} fallback={<p class="muted">No models in the selected period.</p>}>{(model) => (
             <label classList={{ "model-choice": true, active: selectedModels().includes(model) }}>
               <input type="checkbox" checked={selectedModels().includes(model)} onChange={() => toggle(model, selectedModels, setSelectedModels)} />
-              <span title={model}>{model}</span><b>{catalog()?.rows.filter((row) => row.model === model).length ?? 0}</b>
+              <span title={model}>{model}</span>
             </label>
           )}</For>
         </div>
@@ -145,7 +153,9 @@ export default function App() {
             </div>
           </section>
 
-          <section class="budget-note">Menu budget: {currency.format(budget()?.spentUSD ?? 0)} since reset · {budget()?.remainingUSD == null ? "No budget set" : `${currency.format(budget()!.remainingUSD!)} remaining`}</section>
+          <section class="budget-note">
+            Menu budget: {currency.format(budget()?.spentUSD ?? 0)} since reset · {budget()?.usagePercentage == null ? "No budget set" : `${percentage.format(budget()!.usagePercentage!)}% used`} · {budget()?.remainingUSD == null ? "No remaining amount" : `${currency.format(budget()!.remainingUSD!)} remaining`}
+          </section>
         </Show>
       </main>
     </div>
