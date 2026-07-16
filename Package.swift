@@ -9,13 +9,23 @@ let package = Package(
   ],
   products: [
     .library(name: "AppCore", targets: ["AppCore"]),
-    .executable(name: "ccusage-gauge", targets: ["AppCLI"])
+    .executable(name: "ccusage-gauge", targets: ["AppCLI"]),
+    .executable(name: "ccusage-gauge-menubar", targets: ["CCUsageGaugeMenuBar"])
   ],
   targets: [
-    .target(name: "AppCore"),
+    .target(
+      name: "AppCore",
+      resources: [.copy("Resources/Web")],
+      linkerSettings: [.linkedFramework("Network")]
+    ),
     .executableTarget(
       name: "AppCLI",
       dependencies: ["AppCore"]
+    ),
+    .executableTarget(
+      name: "CCUsageGaugeMenuBar",
+      dependencies: ["AppCore"],
+      linkerSettings: [.linkedFramework("AppKit"), .linkedFramework("ServiceManagement")]
     ),
     .testTarget(
       name: "AppCoreTests",

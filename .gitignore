@@ -9,6 +9,15 @@ release/
 *.xcodeproj/
 *.xcworkspace/
 
+# Frontend (bun + SolidJS) dependencies and build caches
+# Note: frontend/dist/ is covered by the dist/ rule above; the bundled assets
+# shipped in the Swift package live under Sources/AppCore/Resources/Web/ and are
+# tracked intentionally. frontend/bun.lock is the lockfile and is tracked.
+node_modules/
+.vite/
+*.tsbuildinfo
+frontend/.bun/
+
 # Nix and local environment files
 .pre-commit-config.yaml
 result

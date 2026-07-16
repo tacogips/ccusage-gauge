@@ -208,11 +208,12 @@ build_target() {
   assert_child_path "$release_dir" "$archive"
 
   rm -rf "$work_dir" "$archive" "$archive.sha256"
-  mkdir -p "$work_dir/bin"
+  mkdir -p "$work_dir/bin" "$work_dir/share/ccusage-gauge/web"
 
   bin_path="$(swift_release_bin_path "$target" | tail -n 1)"
   cp "$bin_path/$product" "$binary"
   chmod 0755 "$binary"
+  cp -R "$repo_root/Sources/AppCore/Resources/Web"/. "$work_dir/share/ccusage-gauge/web"/
   cp "$repo_root/README.md" "$work_dir/README.md"
 
   tar -C "$work_dir" -czf "$archive" .

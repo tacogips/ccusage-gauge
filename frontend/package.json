@@ -1,0 +1,21 @@
+{
+  "name": "ccusage-gauge-dashboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "check": "tsc --noEmit",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "@solidjs/router": "^0.15.3",
+    "solid-js": "^1.9.9"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.14",
+    "typescript": "^5.8.3",
+    "unocss": "^66.3.3",
+    "vite": "^7.0.5",
+    "vite-plugin-solid": "^2.11.7"
+  }
+}

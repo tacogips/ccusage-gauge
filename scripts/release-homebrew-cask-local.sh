@@ -4,22 +4,22 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 artifact_name="ccusage-gauge"
-github_repository="user/repo"
+source_repository="tacogips/ccusage-gauge"
+release_repository="tacogips/homebrew-tap"
 
 usage() {
   cat <<EOF
 Usage:
   scripts/release-homebrew-cask-local.sh v<version> [tap-cask-file]
 
-Required local environment variables:
-  APPLE_SIGNING_IDENTITY  Developer ID Application identity for the executable.
+Builds signed and notarized app archives, publishes them to the shared tap
+release named ccusage-gauge-v<version>, and renders the tap Cask.
+
+Required environment variables:
+  APPLE_SIGNING_IDENTITY  Developer ID Application identity.
   APPLE_ID                Apple ID email for notarization.
   APPLE_PASSWORD          Apple app-specific password for notarization.
   APPLE_TEAM_ID           Apple Developer Team ID for notarization.
-
-The signing certificate must already be installed in the local macOS keychain.
-Use kinko or another local password-manager workflow to provide the environment.
-Do not commit Apple credential values.
 EOF
 }
 
@@ -37,19 +37,10 @@ fi
 
 release_tag="${1:-}"
 tap_cask_file="${2:-$repo_root/../homebrew-tap/Casks/$artifact_name.rb}"
-if [[ -z "$release_tag" ]]; then
+if [[ -z "$release_tag" || "$release_tag" != v* ]]; then
   usage >&2
   exit 1
 fi
-
-case "$release_tag" in
-  v*) ;;
-  *)
-    printf 'error: release tag must start with v, for example v0.1.0\n' >&2
-    exit 1
-    ;;
-esac
-
 if [[ "$(uname -s)" != "Darwin" ]]; then
   printf 'error: Homebrew Cask release signing must run on macOS\n' >&2
   exit 1
@@ -60,45 +51,42 @@ require_command git
 require_command shasum
 
 version="${release_tag#v}"
+host_release_tag="$artifact_name-$release_tag"
 if [[ "$(tr -d '[:space:]' < "$repo_root/VERSION")" != "$version" ]]; then
   printf 'error: VERSION does not match release tag %s\n' "$release_tag" >&2
   exit 1
 fi
 
 cd "$repo_root"
-
-if ! git rev-parse -q --verify "refs/tags/$release_tag" >/dev/null; then
+git rev-parse -q --verify "refs/tags/$release_tag" >/dev/null || {
   printf 'error: local git tag does not exist: %s\n' "$release_tag" >&2
   exit 1
-fi
-
-if ! git ls-remote --exit-code --tags origin "refs/tags/$release_tag" >/dev/null; then
+}
+git ls-remote --exit-code --tags origin "refs/tags/$release_tag" >/dev/null || {
   printf 'error: git tag has not been pushed to origin: %s\n' "$release_tag" >&2
   exit 1
-fi
+}
 
 scripts/build-homebrew-cask-release.sh darwin-arm64 darwin-x64
 
 release_dir="${CASK_RELEASE_DIR:-$repo_root/dist/homebrew-cask}"
-arm_dmg="$release_dir/$artifact_name-$version-darwin-arm64.dmg"
-x64_dmg="$release_dir/$artifact_name-$version-darwin-x64.dmg"
-test -f "$arm_dmg"
-test -f "$x64_dmg"
+arm_zip="$release_dir/${artifact_name}_${version}_aarch64.app.zip"
+intel_zip="$release_dir/${artifact_name}_${version}_x86_64.app.zip"
+test -f "$arm_zip"
+test -f "$intel_zip"
 
-release_notes="Signed, notarized, and stapled macOS DMG archives for the Homebrew Cask release."
-if ! gh release view "$release_tag" --repo "$github_repository" >/dev/null 2>&1; then
-  gh release create "$release_tag" \
-    --repo "$github_repository" \
-    --title "ccusage-gauge $release_tag" \
+release_notes="Signed, notarized, and stapled CCUsage Gauge macOS app archives for Homebrew Cask. Source release: https://github.com/$source_repository/releases/tag/$release_tag"
+if ! gh release view "$host_release_tag" --repo "$release_repository" >/dev/null 2>&1; then
+  gh release create "$host_release_tag" \
+    --repo "$release_repository" \
+    --target main \
+    --title "CCUsage Gauge $release_tag" \
     --notes "$release_notes"
 fi
 
-gh release upload "$release_tag" "$arm_dmg" "$x64_dmg" --repo "$github_repository" --clobber
-
+gh release upload "$host_release_tag" "$arm_zip" "$intel_zip" --repo "$release_repository" --clobber
 scripts/render-homebrew-cask.sh "$version" "$tap_cask_file"
 
-printf '\nRendered tap cask: %s\n' "$tap_cask_file"
-printf 'Review, commit, and push the tap change from the tap repository.\n'
-printf 'Then install with:\n'
-printf '  brew tap user/tap\n'
-printf '  brew install --cask ccusage-gauge\n'
+printf '\nRendered tap Cask: %s\n' "$tap_cask_file"
+printf 'Install after pushing the tap update with:\n'
+printf '  brew install --cask tacogips/tap/ccusage-gauge\n'

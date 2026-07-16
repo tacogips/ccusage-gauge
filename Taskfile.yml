@@ -13,6 +13,7 @@ tasks:
 
   build:
     desc: Build the Swift package
+    deps: [frontend:build]
     cmds:
       - swift build
 
@@ -36,6 +37,50 @@ tasks:
     cmds:
       - swiftlint
 
+  frontend:install:
+    desc: Install pinned dashboard dependencies
+    dir: frontend
+    cmds:
+      - bun install --frozen-lockfile
+
+  frontend:check:
+    desc: Typecheck the SolidJS dashboard
+    dir: frontend
+    deps: [frontend:install]
+    cmds:
+      - bun run check
+
+  frontend:build:
+    desc: Build and synchronize the SolidJS dashboard assets
+    dir: frontend
+    deps: [frontend:install]
+    cmds:
+      - bun run build
+      - ../scripts/sync-frontend-assets.sh
+
+  smoke:assets:
+    desc: Verify supported packaged dashboard asset layouts
+    deps: [frontend:build]
+    cmds:
+      - scripts/smoke-packaged-assets.sh --layout all
+      - scripts/smoke-packaged-assets.sh --layout all --expect-missing-diagnostics
+
+  smoke:isolated-runtime:
+    desc: Verify isolated config/state and invalid explicit ccusage behavior
+    cmds:
+      - scripts/smoke-isolated-runtime.sh
+
+  smoke:dashboard:
+    desc: Verify dashboard routes, shutdown, and same-port restart
+    deps: [frontend:build]
+    cmds:
+      - scripts/smoke-dashboard.sh --port 18081 --assets frontend/dist
+
+  e2e:build:
+    desc: Build an isolated macOS app bundle for Computer Use E2E testing
+    cmds:
+      - scripts/build-e2e-app.sh {{.CLI_ARGS}}
+
   build:homebrew:
     desc: Build standalone Homebrew formula archives for the current platform, or pass targets after --
     cmds:
@@ -58,7 +103,7 @@ tasks:
         scripts/render-homebrew-formula.sh "{{.CLI_ARGS}}" "{{.TAP_DIR}}/Formula/ccusage-gauge.rb"
 
   build:homebrew-cask:
-    desc: Build signed and notarized Homebrew Cask DMGs, or pass targets after --
+    desc: Build signed and notarized Homebrew Cask app archives, or pass targets after --
     cmds:
       - scripts/build-homebrew-cask-release.sh {{.CLI_ARGS}}
 

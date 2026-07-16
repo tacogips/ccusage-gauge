@@ -3,6 +3,15 @@ import Foundation
 public struct AppCommand: Sendable {
   public enum Error: Swift.Error, Equatable, Sendable {
     case unknownArgument(String)
+    case invalidValue(String)
+  }
+
+  public enum Invocation: Equatable, Sendable {
+    case help
+    case version
+    case configCheck
+    case usageSnapshot(json: Bool)
+    case dashboard(port: Int?, assets: String?)
   }
 
   public let arguments: [String]
@@ -12,24 +21,59 @@ public struct AppCommand: Sendable {
   }
 
   public func run() throws -> String {
-    if arguments.contains("--version") {
-      return Version.current
+    switch try parse() {
+    case .version: return Version.current
+    case .help: return usage
+    default: return ""
     }
+  }
 
-    if arguments.contains("--help") || arguments.contains("-h") {
-      return usage
+  public func parse() throws -> Invocation {
+    guard let command = arguments.first else { return .help }
+    switch command {
+    case "--help", "-h", "help": return .help
+    case "--version": return .version
+    case "config-check":
+      guard arguments.count == 1 else { throw Error.unknownArgument(arguments[1]) }
+      return .configCheck
+    case "usage-snapshot":
+      let options = Array(arguments.dropFirst())
+      guard options.allSatisfy({ $0 == "--json" }) else { throw Error.unknownArgument(options.first { $0 != "--json" }!) }
+      return .usageSnapshot(json: options.contains("--json"))
+    case "dashboard": return try parseDashboard(Array(arguments.dropFirst()))
+    default: throw Error.unknownArgument(command)
     }
+  }
 
-    if let firstUnknown = arguments.first(where: { $0.hasPrefix("-") }) {
-      throw Error.unknownArgument(firstUnknown)
+  private func parseDashboard(_ options: [String]) throws -> Invocation {
+    var port: Int?
+    var assets: String?
+    var index = 0
+    while index < options.count {
+      let option = options[index]
+      guard index + 1 < options.count else { throw Error.invalidValue("Missing value for \(option)") }
+      let value = options[index + 1]
+      switch option {
+      case "--port":
+        guard let parsed = Int(value), (1...65_535).contains(parsed) else { throw Error.invalidValue("Invalid port: \(value)") }
+        port = parsed
+      case "--assets": assets = value
+      default: throw Error.unknownArgument(option)
+      }
+      index += 2
     }
-
-    return "Hello from ccusage-gauge"
+    return .dashboard(port: port, assets: assets)
   }
 
   public var usage: String {
     """
-    Usage: ccusage-gauge [--help] [--version]
+    Usage: ccusage-gauge <command> [options]
+
+      ccusage-gauge --help
+      ccusage-gauge --version
+      ccusage-gauge config-check
+      ccusage-gauge usage-snapshot [--json]
+      ccusage-gauge dashboard [--port <port>] [--assets <directory>]
     """
   }
 }

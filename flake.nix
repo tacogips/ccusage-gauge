@@ -33,6 +33,7 @@
           ];
 
         devOnlyPackages = with pkgs; [
+          bun
           gitleaks
         ];
 

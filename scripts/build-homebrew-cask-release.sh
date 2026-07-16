@@ -4,7 +4,9 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 product="ccusage-gauge"
+menu_product="ccusage-gauge-menubar"
 artifact_name="ccusage-gauge"
+app_name="CCUsageGauge"
 
 usage() {
   cat <<EOF
@@ -34,8 +36,8 @@ Examples:
   kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID -- \
     scripts/build-homebrew-cask-release.sh darwin-arm64 darwin-x64
 
-This builder stages signed, notarized, and stapled macOS .dmg artifacts for a
-Homebrew Cask. It does not publish release assets, mutate a tap, or push commits.
+This builder stages signed, notarized, and stapled macOS .app zip artifacts for
+a Homebrew Cask. It does not publish release assets, mutate a tap, or push commits.
 EOF
 }
 
@@ -73,7 +75,7 @@ validate_target() {
     darwin-arm64 | darwin-x64) ;;
     *)
       printf 'unsupported Swift cask target: %s\n' "$1" >&2
-      printf 'Homebrew Cask DMGs are macOS-only.\n' >&2
+      printf 'Homebrew Cask app archives are macOS-only.\n' >&2
       usage >&2
       return 1
       ;;
@@ -196,6 +198,8 @@ swift_release_bin_path() {
     DEVELOPER_DIR="$developer_dir" SDKROOT="$sdkroot" \
       "$swift_exe" build -c release --product "$product" --triple "$triple" >/dev/null
     DEVELOPER_DIR="$developer_dir" SDKROOT="$sdkroot" \
+      "$swift_exe" build -c release --product "$menu_product" --triple "$triple" >/dev/null
+    DEVELOPER_DIR="$developer_dir" SDKROOT="$sdkroot" \
       "$swift_exe" build -c release --product "$product" --triple "$triple" --show-bin-path
   )
 }
@@ -207,82 +211,122 @@ assert_codesigning_identity() {
 }
 
 print_plan() {
-  local version target release_dir work_dir dmg_path staged_binary triple install_prefix
+  local version target release_dir work_dir zip_path app_path triple install_prefix release_arch
   version="$1"
   target="$2"
   release_dir="$3"
+  release_arch="$(release_arch_for_target "$target")"
   work_dir="$release_dir/work/$artifact_name-$version-$target"
-  dmg_path="$release_dir/$artifact_name-$version-$target.dmg"
-  staged_binary="$work_dir/$product"
+  zip_path="$release_dir/${artifact_name}_${version}_${release_arch}.app.zip"
+  app_path="$work_dir/$app_name.app"
   triple="$(swift_triple_for_target "$target")"
   install_prefix="$(install_prefix_for_target "$target")"
 
   assert_child_path "$release_dir" "$work_dir"
-  assert_child_path "$release_dir" "$dmg_path"
+  assert_child_path "$release_dir" "$zip_path"
 
-  printf 'Swift Homebrew Cask DMG plan\n'
+  printf 'Swift Homebrew Cask app archive plan\n'
   printf '  product: %s\n' "$product"
   printf '  target: %s\n' "$target"
   printf '  swift triple: %s\n' "$triple"
   printf '  cask install prefix: %s\n' "$install_prefix"
-  printf '  staged signed binary: %s\n' "$staged_binary"
-  printf '  notarized DMG: %s\n' "$dmg_path"
-  printf '  checksum: %s.sha256\n' "$dmg_path"
+  printf '  staged app bundle: %s\n' "$app_path"
+  printf '  notarized app zip: %s\n' "$zip_path"
+  printf '  checksum: %s.sha256\n' "$zip_path"
   printf '  required Apple env: APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID\n'
   printf '  publish side effects: false\n'
 }
 
+release_arch_for_target() {
+  case "$1" in
+    darwin-arm64) printf '%s\n' "aarch64" ;;
+    darwin-x64) printf '%s\n' "x86_64" ;;
+  esac
+}
+
 build_target() {
-  local version target release_dir work_dir dmg_path staged_binary bin_path notarytool stapler
+  local version target release_dir work_dir zip_path app_path bin_path notarytool stapler release_arch
   version="$1"
   target="$2"
   release_dir="$3"
+  release_arch="$(release_arch_for_target "$target")"
   work_dir="$release_dir/work/$artifact_name-$version-$target"
-  dmg_path="$release_dir/$artifact_name-$version-$target.dmg"
-  staged_binary="$work_dir/$product"
+  zip_path="$release_dir/${artifact_name}_${version}_${release_arch}.app.zip"
+  app_path="$work_dir/$app_name.app"
   notarytool="${NOTARYTOOL:-/Applications/Xcode.app/Contents/Developer/usr/bin/notarytool}"
   stapler="${STAPLER:-/Applications/Xcode.app/Contents/Developer/usr/bin/stapler}"
 
   assert_child_path "$release_dir" "$work_dir"
-  assert_child_path "$release_dir" "$dmg_path"
+  assert_child_path "$release_dir" "$zip_path"
 
   require_env APPLE_SIGNING_IDENTITY
   require_env APPLE_ID
   require_env APPLE_PASSWORD
   require_env APPLE_TEAM_ID
   require_command codesign
-  require_command hdiutil
+  require_command ditto
   require_command security
   require_command spctl
   test -x "$notarytool"
   test -x "$stapler"
   assert_codesigning_identity "$APPLE_SIGNING_IDENTITY"
 
-  rm -rf "$work_dir" "$dmg_path" "$dmg_path.sha256"
-  mkdir -p "$work_dir"
+  rm -rf "$work_dir" "$zip_path" "$zip_path.sha256"
+  mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources/Web"
 
   bin_path="$(swift_release_bin_path "$target" | tail -n 1)"
-  cp "$bin_path/$product" "$staged_binary"
-  chmod 0755 "$staged_binary"
+  cp "$bin_path/$menu_product" "$app_path/Contents/MacOS/$menu_product"
+  cp "$bin_path/$product" "$app_path/Contents/MacOS/$product"
+  chmod 0755 "$app_path/Contents/MacOS/$menu_product" "$app_path/Contents/MacOS/$product"
+  cp "$repo_root/Resources/AppIcon.icns" "$app_path/Contents/Resources/AppIcon.icns"
+  cp -R "$repo_root/Sources/AppCore/Resources/Web"/. "$app_path/Contents/Resources/Web"/
 
-  codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$staged_binary"
-  codesign --verify --strict --verbose=2 "$staged_binary"
+  cat > "$app_path/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleDisplayName</key><string>CCUsage Gauge</string>
+  <key>CFBundleExecutable</key><string>$menu_product</string>
+  <key>CFBundleIdentifier</key><string>com.tacogips.ccusage-gauge</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>CCUsageGauge</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$version</string>
+  <key>CFBundleVersion</key><string>$version</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSMultipleInstancesProhibited</key><true/>
+  <key>LSUIElement</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+</dict>
+</plist>
+EOF
+  printf 'APPL????' > "$app_path/Contents/PkgInfo"
+  plutil -lint "$app_path/Contents/Info.plist" >/dev/null
 
-  hdiutil create -quiet -fs HFS+ -format UDZO -volname "$product" -srcfolder "$work_dir" "$dmg_path"
-  codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$dmg_path"
-  codesign --verify --strict --verbose=2 "$dmg_path"
-  "$notarytool" submit "$dmg_path" \
+  codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$app_path/Contents/MacOS/$product"
+  codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$app_path/Contents/MacOS/$menu_product"
+  codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$app_path"
+  codesign --verify --deep --strict --verbose=2 "$app_path"
+
+  ditto -c -k --norsrc --keepParent "$app_path" "$zip_path"
+  "$notarytool" submit "$zip_path" \
     --apple-id "$APPLE_ID" \
     --password "$APPLE_PASSWORD" \
     --team-id "$APPLE_TEAM_ID" \
     --wait
-  "$stapler" staple "$dmg_path"
-  "$stapler" validate "$dmg_path"
-  spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg_path"
-  write_sha256 "$dmg_path" > "$dmg_path.sha256"
+  "$stapler" staple "$app_path"
+  "$stapler" validate "$app_path"
+  spctl --assess --type execute --verbose=4 "$app_path"
+  rm -f "$zip_path"
+  ditto -c -k --norsrc --keepParent "$app_path" "$zip_path"
+  write_sha256 "$zip_path" > "$zip_path.sha256"
 
-  printf 'built %s\n' "$dmg_path"
-  cat "$dmg_path.sha256"
+  printf 'built %s\n' "$zip_path"
+  cat "$zip_path.sha256"
 }
 
 main() {
@@ -300,7 +344,7 @@ main() {
   fi
 
   if [[ "$(uname -s)" != "Darwin" ]]; then
-    printf 'Homebrew Cask DMG builds must run on macOS.\n' >&2
+    printf 'Homebrew Cask app archive builds must run on macOS.\n' >&2
     return 1
   fi
 
@@ -328,7 +372,7 @@ main() {
     fi
   done
 
-  printf '\nRender a cask after all platform DMGs exist:\n'
+  printf '\nRender a cask after all platform app archives exist:\n'
   printf '  scripts/render-homebrew-cask.sh %s\n' "$version"
 }
 
