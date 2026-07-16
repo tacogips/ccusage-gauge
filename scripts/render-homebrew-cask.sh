@@ -55,10 +55,10 @@ main() {
   mkdir -p "$(dirname "$output")"
   cat > "$output" <<EOF
 cask "ccusage-gauge" do
-  version "$version"
   arch arm: "aarch64", intel: "x86_64"
 
-  sha256 arm: "$arm_sha",
+  version "$version"
+  sha256 arm:   "$arm_sha",
          intel: "$intel_sha"
 
   url "$release_base_url/${artifact_name}_#{version}_#{arch}.app.zip"
