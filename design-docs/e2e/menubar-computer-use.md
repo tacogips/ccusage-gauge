@@ -19,9 +19,9 @@ They must not read or modify the user's production files under
 
 1. Launch the fixture app.
 2. Verify the status item has the accessibility label
-   `ccusage-gauge cost since reset`.
+   `ccusage-gauge cost in selected period`.
 3. Verify the status item shows a pie-chart icon followed by `$3.75`.
-4. Verify the menu shows the spent value, `Budget not set`, reset controls,
+4. Verify the menu shows the spent value, `Budget not set`, aggregation-period controls,
    dashboard controls, refresh, and quit.
 
 Expected result: usage is aggregated from the fixture and no production state
@@ -38,15 +38,14 @@ file is touched.
 
 Expected result: the budget persists in `.build/e2e/home/state/ccusage-gauge/state.json`.
 
-## E2E-003: Reset-cycle and manual-reset persistence
+## E2E-003: Aggregation-period persistence
 
-1. Choose `Reset cycle` and then `Monthly`.
+1. Choose `Aggregation period` and then `Monthly`.
 2. Reopen the menu and verify the budget summary says `monthly`.
-3. Choose `Reset now`.
-4. Verify the isolated state contains a monthly reset cycle and a manual-reset
-   timestamp.
+3. Verify the isolated state contains a monthly aggregation period and no
+   manual-reset timestamp.
 
-Expected result: both changes persist and the cost-since-reset presentation
+Expected result: the selection persists and the selected-period presentation
 refreshes without modifying the read-only configuration.
 
 ## E2E-004: Dashboard lifecycle and content
@@ -98,10 +97,10 @@ opening logs, while state-only actions remain available when state storage is va
 3. Verify `$!` and a non-sensitive `ccusage unavailable` message are shown.
 4. Choose `Set budget…`, enter `12.00`, and save.
 5. Verify the isolated state JSON contains `"budgetUSD" : 12` even though
-   usage collection is unavailable.
+usage collection is unavailable.
 
 Expected result: process validation fails visibly, but independent budget and
-reset settings remain usable.
+aggregation-period settings remain usable.
 
 ## Evidence to record
 

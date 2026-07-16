@@ -48,10 +48,13 @@ input[type="date"] { border: 1px solid #bfd0c4; background: white; color: #17312
 .granularity-control button { padding: 7px 13px; border-radius: 999px; background: transparent; color: #476858; font-weight: 750; }
 .granularity-control button.active { background: #1f6945; color: white; box-shadow: 0 4px 12px rgba(31,105,69,.2); }
 .granularity-control strong { font-size: 1.15rem; }
-.chart { height: 280px; display: flex; align-items: stretch; gap: 5px; padding-top: 32px; overflow-x: auto; border-bottom: 1px solid #b9cbbf; }
-.bar-column { height: 100%; min-width: 18px; flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 8px; }
-.bar { width: 100%; max-width: 28px; min-height: 3px; border-radius: 5px 5px 1px 1px; background: linear-gradient(#78dfa0, #238855); box-shadow: 0 5px 14px rgba(35,136,85,.2); }
-.bar-column span { font-size: .62rem; color: #71887e; transform: rotate(-35deg); transform-origin: center; white-space: nowrap; height: 26px; }
+.chart { min-height: 280px; display: flex; overflow-x: auto; }
+.cost-chart { display: block; min-width: 640px; flex: 1 0 auto; color: #71887e; }
+.chart-grid-line { stroke: #dce7df; stroke-width: 1; }
+.axis-title { fill: currentColor; font-size: .68rem; font-weight: 800; letter-spacing: .04em; }
+.y-axis-label { fill: currentColor; font-size: .66rem; font-variant-numeric: tabular-nums; }
+.x-axis-label { fill: currentColor; font-size: .62rem; }
+.cost-bar { fill: url(#cost-bar-gradient); filter: drop-shadow(0 5px 7px rgba(35,136,85,.2)); }
 .empty { margin: auto; color: #71887e; }
 .empty.compact { padding: 20px; }
 .block-list { display: grid; margin-top: 14px; }
@@ -75,5 +78,5 @@ input[type="date"] { border: 1px solid #bfd0c4; background: white; color: #17312
 @media (prefers-reduced-motion: reduce) { .loading-spinner { animation: none; } }
 @media (max-width: 1100px) { .stats.metric-stats { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 980px) { .app-shell { grid-template-columns: 1fr; }.model-sidebar { position: static; max-height: none; }.model-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } header { flex-direction: column; }.period-control { justify-items: start; max-width: 100%; }.range-buttons { justify-content: flex-start; } }
-@media (max-width: 700px) { .app-shell { width: min(100% - 20px, 1440px); padding-top: 18px; }.stats, .stats.metric-stats { grid-template-columns: 1fr; }.panel { padding: 18px; }.panel-title { flex-direction: column; }.chart { height: 220px; }.custom-calendar { width: 100%; flex-wrap: wrap; }.model-list { grid-template-columns: 1fr; } }
-@media (prefers-color-scheme: dark) { :root { color: #e3eee7; background: #102019; } body { background: radial-gradient(circle at top left, #203a2d, #0f1c16 60%); }.model-sidebar, .stats article, .panel, .custom-calendar, .loading-state { background: rgba(25,44,35,.9); border-color: #355644; }.model-choice:hover { background: #294638; }.model-choice.active, .model-tags span, .agent-tag { background: #294f3b; color: #c9efd6; }.range-buttons button, .agent-buttons button { background: #294a39; color: #c5e7d2; }.range-buttons .refresh { border-color: #42624f; }.filter-note, .agent-filter, .block-list article, .metric-row { border-color: #345140; } input[type="date"] { background: #183126; border-color: #42624f; color: white; }.granularity-control > div { background: #294a39; }.granularity-control button { color: #c5e7d2; } }
+@media (max-width: 700px) { .app-shell { width: min(100% - 20px, 1440px); padding-top: 18px; }.stats, .stats.metric-stats { grid-template-columns: 1fr; }.panel { padding: 18px; }.panel-title { flex-direction: column; }.custom-calendar { width: 100%; flex-wrap: wrap; }.model-list { grid-template-columns: 1fr; } }
+@media (prefers-color-scheme: dark) { :root { color: #e3eee7; background: #102019; } body { background: radial-gradient(circle at top left, #203a2d, #0f1c16 60%); }.model-sidebar, .stats article, .panel, .custom-calendar, .loading-state { background: rgba(25,44,35,.9); border-color: #355644; }.model-choice:hover { background: #294638; }.model-choice.active, .model-tags span, .agent-tag { background: #294f3b; color: #c9efd6; }.range-buttons button, .agent-buttons button { background: #294a39; color: #c5e7d2; }.range-buttons .refresh { border-color: #42624f; }.filter-note, .agent-filter, .block-list article, .metric-row { border-color: #345140; }.chart-grid-line { stroke: #345140; } input[type="date"] { background: #183126; border-color: #42624f; color: white; }.granularity-control > div { background: #294a39; }.granularity-control button { color: #c5e7d2; } }

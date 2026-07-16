@@ -91,7 +91,7 @@ import Testing
       """
     let sessionPayload = """
       {"session":[{"agent":"codex","metadata":{"lastActivity":"2026-07-15T11:00:00Z"},"modelBreakdowns":[
-        {"modelName":"gpt-5.6-sol","cost":3,"inputTokens":10,"outputTokens":2,"cacheCreationTokens":0,"cacheReadTokens":20}
+        {"modelName":"gpt-5.6-sol","cost":99,"inputTokens":10,"outputTokens":2,"cacheCreationTokens":0,"cacheReadTokens":20}
       ]}]}
       """
     let script = "#!/bin/sh\ncase \"$1\" in blocks) printf '%s' '\(payload)' ;; daily) printf '%s' '\(dailyPayload)' ;; session) printf '%s' '\(sessionPayload)' ;; esac\n"
@@ -104,6 +104,6 @@ import Testing
     let snapshot = try await service.snapshot(now: now)
     #expect(snapshot.costSinceResetUSD == 3)
     #expect(snapshot.dashboardMetrics.first?.model == "gpt-5.6-sol")
-    #expect(snapshot.dashboardSessions.first?.costUSD == 3)
+    #expect(snapshot.dashboardSessions.first?.costUSD == 99)
   }
 }

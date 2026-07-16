@@ -1,12 +1,8 @@
 import Foundation
 
-public enum BoundaryKind: String, Codable, Sendable { case scheduled, manual }
-
 public struct ResetBaseline: Codable, Equatable, Sendable {
   public var scheduledBoundaryAt: Date
-  public var manualResetAtConsidered: Date?
   public var activeBoundaryAt: Date
-  public var boundaryKind: BoundaryKind
   public var cycle: ResetCycle
   public var calendarIdentifier: String
   public var timeZoneIdentifier: String
@@ -14,18 +10,14 @@ public struct ResetBaseline: Codable, Equatable, Sendable {
 
   public init(
     scheduledBoundaryAt: Date,
-    manualResetAtConsidered: Date?,
     activeBoundaryAt: Date,
-    boundaryKind: BoundaryKind,
     cycle: ResetCycle,
     calendarIdentifier: String,
     timeZoneIdentifier: String,
     computedAt: Date
   ) {
     self.scheduledBoundaryAt = scheduledBoundaryAt
-    self.manualResetAtConsidered = manualResetAtConsidered
     self.activeBoundaryAt = activeBoundaryAt
-    self.boundaryKind = boundaryKind
     self.cycle = cycle
     self.calendarIdentifier = calendarIdentifier
     self.timeZoneIdentifier = timeZoneIdentifier
@@ -36,20 +28,17 @@ public struct ResetBaseline: Codable, Equatable, Sendable {
 public struct AppState: Codable, Equatable, Sendable {
   public var budgetUSD: Decimal?
   public var resetCycle: ResetCycle
-  public var lastManualResetAt: Date?
   public var baseline: ResetBaseline?
   public var refreshIntervalSeconds: Int?
 
   public init(
     budgetUSD: Decimal? = nil,
     resetCycle: ResetCycle = .daily,
-    lastManualResetAt: Date? = nil,
     baseline: ResetBaseline? = nil,
     refreshIntervalSeconds: Int? = nil
   ) {
     self.budgetUSD = budgetUSD
     self.resetCycle = resetCycle
-    self.lastManualResetAt = lastManualResetAt
     self.baseline = baseline
     self.refreshIntervalSeconds = refreshIntervalSeconds
   }

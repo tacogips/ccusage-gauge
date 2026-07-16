@@ -17,6 +17,27 @@ const localDate = () => dateText(new Date());
 const daysAgo = (days: number) => { const date = new Date(); date.setDate(date.getDate() - days); return dateText(date); };
 const metricValue = (row: MetricRow, metric: MetricKey) => row[metric];
 
+const chartHeight = 280;
+const chartMargin = { top: 16, right: 16, bottom: 54, left: 78 };
+const yTickCount = 4;
+
+function niceChartMaximum(value: number) {
+  if (value <= 0) return 1;
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  const normalized = value / magnitude;
+  const rounded = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return rounded * magnitude;
+}
+
+function axisCurrency(value: number, step: number) {
+  const fractionDigits = step >= 1 ? 2 : Math.min(6, Math.max(2, Math.ceil(-Math.log10(step)) + 1));
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: fractionDigits,
+  }).format(value);
+}
+
 function Bars(props: { rows: CostRow[]; granularity: Granularity; label: string }) {
   const points = createMemo(() => {
     const grouped = new Map<string, number>();
@@ -29,18 +50,45 @@ function Bars(props: { rows: CostRow[]; granularity: Granularity; label: string 
     }
     return [...grouped].sort(([left], [right]) => left.localeCompare(right));
   });
-  const max = () => Math.max(...points().map(([, value]) => value), 0.01);
+  const axisMaximum = createMemo(() => niceChartMaximum(Math.max(...points().map(([, value]) => value), 0)));
+  const yTicks = createMemo(() => Array.from({ length: yTickCount + 1 }, (_, index) => (axisMaximum() / yTickCount) * index));
+  const chartWidth = createMemo(() => Math.max(640, chartMargin.left + chartMargin.right + points().length * 40));
+  const plotHeight = chartHeight - chartMargin.top - chartMargin.bottom;
+  const plotWidth = () => chartWidth() - chartMargin.left - chartMargin.right;
+  const barSlotWidth = () => plotWidth() / Math.max(points().length, 1);
+  const barWidth = () => Math.min(28, barSlotWidth() * 0.65);
   return (
     <div class="chart" role="img" aria-label={`${props.label} cost by ${props.granularity}`}>
       <Show when={points().length > 0} fallback={<p class="empty">No usage matches this period and model filter.</p>}>
-        <For each={points()}>{([timestamp, value]) => (
-          <div class="bar-column" title={`${new Date(timestamp).toLocaleString()}: ${currency.format(value)}`}>
-            <div class="bar" style={{ height: `${Math.max(3, (value / max()) * 100)}%` }} />
-            <span>{props.granularity === "hourly"
+        <svg class="cost-chart" width={chartWidth()} height={chartHeight} viewBox={`0 0 ${chartWidth()} ${chartHeight}`} aria-hidden="true">
+          <defs>
+            <linearGradient id="cost-bar-gradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#78dfa0" />
+              <stop offset="1" stop-color="#238855" />
+            </linearGradient>
+          </defs>
+          <text class="axis-title" x="16" y={chartMargin.top + plotHeight / 2} text-anchor="middle" transform={`rotate(-90 16 ${chartMargin.top + plotHeight / 2})`}>Spent amount (USD)</text>
+          <For each={yTicks()}>{(tick) => {
+            const y = () => chartMargin.top + plotHeight - (tick / axisMaximum()) * plotHeight;
+            return <>
+              <line class="chart-grid-line" x1={chartMargin.left} x2={chartWidth() - chartMargin.right} y1={y()} y2={y()} />
+              <text class="y-axis-label" x={chartMargin.left - 10} y={y()} text-anchor="end" dominant-baseline="middle">{axisCurrency(tick, axisMaximum() / yTickCount)}</text>
+            </>;
+          }}</For>
+          <For each={points()}>{([timestamp, value], index) => {
+            const x = () => chartMargin.left + barSlotWidth() * index() + (barSlotWidth() - barWidth()) / 2;
+            const height = () => (value / axisMaximum()) * plotHeight;
+            const label = () => props.granularity === "hourly"
               ? new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-              : new Date(timestamp).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
-          </div>
-        )}</For>
+              : new Date(timestamp).toLocaleDateString([], { month: "short", day: "numeric" });
+            return <>
+              <rect class="cost-bar" x={x()} y={chartMargin.top + plotHeight - height()} width={barWidth()} height={height()} rx="4">
+                <title>{`${new Date(timestamp).toLocaleString()}: ${currency.format(value)}`}</title>
+              </rect>
+              <text class="x-axis-label" x={x() + barWidth() / 2} y={chartMargin.top + plotHeight + 17} text-anchor="end" transform={`rotate(-35 ${x() + barWidth() / 2} ${chartMargin.top + plotHeight + 17})`}>{label()}</text>
+            </>;
+          }}</For>
+        </svg>
       </Show>
     </div>
   );
@@ -168,7 +216,7 @@ export default function App() {
             </section>
 
             <section class="budget-note">
-              Menu budget: {currency.format(budget()?.spentUSD ?? 0)} since reset · {budget()?.usagePercentage == null ? "No budget set" : `${percentage.format(budget()!.usagePercentage!)}% used`} · {budget()?.remainingUSD == null ? "No remaining amount" : `${currency.format(budget()!.remainingUSD!)} remaining`}
+              Menu budget: {currency.format(budget()?.spentUSD ?? 0)} in selected period · {budget()?.usagePercentage == null ? "No budget set" : `${percentage.format(budget()!.usagePercentage!)}% used`} · {budget()?.remainingUSD == null ? "No remaining amount" : `${currency.format(budget()!.remainingUSD!)} remaining`}
             </section>
           </Show>
         </Show>

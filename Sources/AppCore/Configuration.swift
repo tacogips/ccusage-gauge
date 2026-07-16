@@ -1,17 +1,19 @@
 import Foundation
 
 public enum ResetCycle: Codable, Equatable, Sendable {
+  case hourly
   case daily
   case weekly
   case monthly
   case customHours(Int)
 
   private enum CodingKeys: String, CodingKey { case type, hours }
-  private enum Kind: String, Codable { case daily, weekly, monthly, customHours }
+  private enum Kind: String, Codable { case hourly, daily, weekly, monthly, customHours }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     switch try container.decode(Kind.self, forKey: .type) {
+    case .hourly: self = .hourly
     case .daily: self = .daily
     case .weekly: self = .weekly
     case .monthly: self = .monthly
@@ -27,6 +29,7 @@ public enum ResetCycle: Codable, Equatable, Sendable {
   public func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     switch self {
+    case .hourly: try container.encode(Kind.hourly, forKey: .type)
     case .daily: try container.encode(Kind.daily, forKey: .type)
     case .weekly: try container.encode(Kind.weekly, forKey: .type)
     case .monthly: try container.encode(Kind.monthly, forKey: .type)
@@ -38,6 +41,7 @@ public enum ResetCycle: Codable, Equatable, Sendable {
 
   public init(term: String) throws {
     switch term {
+    case "hourly": self = .hourly
     case "daily": self = .daily
     case "weekly": self = .weekly
     case "monthly": self = .monthly
@@ -47,6 +51,7 @@ public enum ResetCycle: Codable, Equatable, Sendable {
 
   public var label: String {
     switch self {
+    case .hourly: "hourly"
     case .daily: "daily"
     case .weekly: "weekly"
     case .monthly: "monthly"

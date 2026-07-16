@@ -3,9 +3,9 @@
 A macOS menu-bar cost gauge and local dashboard backed exclusively by
 `ccusage --json`.
 
-The status item shows a budget-progress pie followed by cost since the active
-reset boundary. Its menu supports budget editing, manual reset, daily/weekly/
-monthly/custom-hour reset cycles, Launch at Login, dashboard start/stop/open,
+The status item shows a budget-progress pie followed by cost in the selected
+aggregation period. Its menu supports budget editing, hourly/daily/weekly/
+monthly/custom-hour aggregation periods, Launch at Login, dashboard start/stop/open,
 refresh, and quit. Missing or invalid `ccusage` configuration changes the
 status icon to a warning and exposes diagnostics plus retry in an Error Details
 submenu.
@@ -20,7 +20,7 @@ The compact status item shows current spend and budget usage at a glance.
   <img src="design-docs/screenshots/menu-bar-status.png" alt="ccusage-gauge menu-bar status showing spend and budget usage" width="384">
 </p>
 
-The expanded menu provides budget, reset-cycle, refresh-interval, settings,
+The expanded menu provides budget, aggregation-period, refresh-interval, settings,
 and dashboard controls.
 
 <p align="center">
@@ -38,7 +38,7 @@ The SolidJS dashboard provides:
 - top-right Today, Yesterday, This week, This month, and Custom date controls;
 - cost-over-time graph with Hourly (default) and Daily aggregation;
 - selected-period cost/token totals and detailed agent/model rows;
-- budget and reset-window summaries from the same AppCore snapshot.
+- budget and aggregation-period summaries from the same AppCore snapshot.
 
 ## Development
 
@@ -91,7 +91,7 @@ The generated defaults are:
 | Field | Type and default | Behavior and validation |
 | --- | --- | --- |
 | `ccusagePath` | string or `null`; default `null` | An explicit value must be an absolute executable path. `null` searches `PATH`, `/opt/homebrew/bin`, and `/usr/local/bin`. An invalid explicit path is an error and does not fall back. |
-| `defaultResetTerm` | string; default `"daily"` | Initial reset cycle when mutable state has no selected cycle. Supported values are `"daily"`, `"weekly"`, and `"monthly"`. |
+| `defaultResetTerm` | string; default `"daily"` | Initial aggregation period when mutable state has no selection. Supported values are `"hourly"`, `"daily"`, `"weekly"`, and `"monthly"`. |
 | `dashboardPort` | integer; default `18081` | Loopback port in the range `1` through `65535`. The dashboard binds to `127.0.0.1`, and **Open dashboard** opens `http://127.0.0.1:<dashboardPort>/`. |
 | `dashboardAutostart` | boolean; default `true` | Starts the local dashboard server when the menu-bar application starts. |
 | `pollIntervalSeconds` | integer; default `20` | Usage refresh interval in seconds. It must be positive. |
@@ -114,7 +114,7 @@ During source development, the equivalent command is:
 swift run ccusage-gauge config-check
 ```
 
-Mutable budget/reset state is stored separately at
+Mutable budget/aggregation-period state is stored separately at
 `~/.local/ccusage-gauge/state.json` with user-only permissions. Menu actions do
 not rewrite the static configuration. The **Refresh interval** submenu can set
 a persistent positive whole-number override in seconds or return to the

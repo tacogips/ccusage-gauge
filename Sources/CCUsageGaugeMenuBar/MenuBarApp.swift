@@ -18,6 +18,20 @@ private func formatUSDCurrency(_ value: Decimal, minimumFractionDigits: Int = 0)
   return formatter.string(from: value as NSDecimalNumber) ?? "$\(value)"
 }
 
+private func formatUsagePeriod(from start: Date, through end: Date) -> String {
+  let formatter = DateIntervalFormatter()
+  formatter.dateStyle = .short
+  formatter.timeStyle = .short
+  return formatter.string(from: start, to: end)
+}
+
+private func formatUsagePeriod(for cycle: ResetCycle, now: Date) -> String {
+  guard let interval = try? ResetWindowCalculator().aggregationInterval(for: cycle, now: now) else {
+    return "unavailable"
+  }
+  return formatUsagePeriod(from: interval.start, through: interval.end.addingTimeInterval(-1))
+}
+
 @main
 @MainActor
 struct CCUsageGaugeMenuBarApp {
@@ -145,7 +159,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     let menu = NSMenu()
     if let snapshot = latestSnapshot {
       let budgetItem = NSMenuItem()
-      budgetItem.view = BudgetMenuView(summary: snapshot.budget)
+      budgetItem.view = BudgetMenuView(snapshot: snapshot)
       menu.addItem(budgetItem)
     } else if let budget = currentState?.budgetUSD {
       let item = NSMenuItem(title: "Budget: \(formatUSDCurrency(budget)) (usage unavailable)", action: nil, keyEquivalent: "")
@@ -161,9 +175,6 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     let budgetItem = menu.addItem(withTitle: "Set budget…", action: #selector(setBudget), keyEquivalent: "b")
     budgetItem.target = self
     budgetItem.isEnabled = stateStore != nil
-    let resetItem = menu.addItem(withTitle: "Reset now", action: #selector(resetNow), keyEquivalent: "r")
-    resetItem.target = self
-    resetItem.isEnabled = stateStore != nil
     let cycleItem = resetCycleItem()
     cycleItem.isEnabled = stateStore != nil
     menu.addItem(cycleItem)
@@ -222,9 +233,9 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func resetCycleItem() -> NSMenuItem {
-    let root = NSMenuItem(title: "Reset cycle", action: nil, keyEquivalent: "")
+    let root = NSMenuItem(title: "Aggregation period", action: nil, keyEquivalent: "")
     let submenu = NSMenu()
-    [("Daily", 0), ("Weekly", 1), ("Monthly", 2), ("Custom hours…", 3)].forEach { title, tag in
+    [("Hourly", 0), ("Daily", 1), ("Weekly", 2), ("Monthly", 3), ("Custom hours…", 4)].forEach { title, tag in
       let item = NSMenuItem(title: title, action: #selector(changeCycle(_:)), keyEquivalent: "")
       item.target = self
       item.tag = tag
@@ -290,18 +301,15 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  @objc private func resetNow() {
-    Task { await mutateState { state in state = try ResetWindowCalculator().resetting(state, at: Date()) } }
-  }
-
   @objc private func changeCycle(_ sender: NSMenuItem) {
     var cycle: ResetCycle
     switch sender.tag {
-    case 0: cycle = .daily
-    case 1: cycle = .weekly
-    case 2: cycle = .monthly
+    case 0: cycle = .hourly
+    case 1: cycle = .daily
+    case 2: cycle = .weekly
+    case 3: cycle = .monthly
     default:
-      guard let text = prompt(title: "Custom reset cycle", message: "Hours", defaultValue: "24"), let hours = Int(text), hours > 0 else { return }
+      guard let text = prompt(title: "Custom aggregation period", message: "Rolling hours", defaultValue: "24"), let hours = Int(text), hours > 0 else { return }
       cycle = .customHours(hours)
     }
     Task { await mutateState { state in state = try ResetWindowCalculator().changing(state, to: cycle, at: Date()) } }
@@ -405,8 +413,8 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     guard let button = statusItem.button else { return }
     button.imagePosition = .imageLeading
     button.imageScaling = .scaleProportionallyDown
-    button.toolTip = "ccusage-gauge — cost since reset"
-    button.setAccessibilityLabel("ccusage-gauge cost since reset")
+    button.toolTip = "ccusage-gauge — cost in selected period"
+    button.setAccessibilityLabel("ccusage-gauge cost in selected period")
     updateStatusIcon()
   }
 
@@ -422,9 +430,9 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       hasBudget: currentState?.budgetUSD != nil,
       warning: isUsageUnavailable
     )
-    let label = isUsageUnavailable ? "Warning: ccusage unavailable" : "ccusage-gauge cost since reset"
+    let label = isUsageUnavailable ? "Warning: ccusage unavailable" : "ccusage-gauge cost in selected period"
     statusItem.button?.setAccessibilityLabel(label)
-    statusItem.button?.toolTip = isUsageUnavailable ? errorMessage : "ccusage-gauge — cost since reset"
+    statusItem.button?.toolTip = isUsageUnavailable ? errorMessage : "ccusage-gauge — cost in selected period"
     e2eIconView?.image = statusItem.button?.image
   }
 
@@ -454,7 +462,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     e2eIconView = icon
     let status = NSTextField(labelWithString: "$—")
     status.font = .systemFont(ofSize: 20, weight: .semibold)
-    status.setAccessibilityLabel("Cost since reset")
+    status.setAccessibilityLabel("Cost in selected period")
     e2eStatusLabel = status
     let header = NSStackView(views: [icon, status])
     header.orientation = .horizontal
@@ -470,14 +478,14 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     e2eErrorLabel = error
 
     let setBudgetButton = e2eButton(title: "Set budget…", action: #selector(setBudget))
-    let resetButton = e2eButton(title: "Reset now", action: #selector(resetNow))
-    let cycleLabel = NSTextField(labelWithString: "Reset cycle: daily")
-    cycleLabel.setAccessibilityLabel("Current reset cycle")
+    let cycleLabel = NSTextField(labelWithString: "Aggregation period: daily")
+    cycleLabel.setAccessibilityLabel("Current aggregation period")
     e2eCycleLabel = cycleLabel
-    let dailyButton = e2eCycleButton(title: "Reset cycle: Daily", tag: 0)
-    let weeklyButton = e2eCycleButton(title: "Reset cycle: Weekly", tag: 1)
-    let monthlyButton = e2eCycleButton(title: "Reset cycle: Monthly", tag: 2)
-    let customButton = e2eCycleButton(title: "Reset cycle: Custom hours…", tag: 3)
+    let hourlyButton = e2eCycleButton(title: "Aggregation period: Hourly", tag: 0)
+    let dailyButton = e2eCycleButton(title: "Aggregation period: Daily", tag: 1)
+    let weeklyButton = e2eCycleButton(title: "Aggregation period: Weekly", tag: 2)
+    let monthlyButton = e2eCycleButton(title: "Aggregation period: Monthly", tag: 3)
+    let customButton = e2eCycleButton(title: "Aggregation period: Custom hours…", tag: 4)
     let launchAtLoginButton = e2eButton(title: "Launch at Login: Off", action: #selector(toggleLaunchAtLogin))
     launchAtLoginButton.setAccessibilityLabel("Launch at Login")
     e2eLaunchAtLoginButton = launchAtLoginButton
@@ -494,8 +502,8 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     let quitButton = e2eButton(title: "Quit", action: #selector(quit))
 
     let stack = NSStackView(views: [
-      header, budget, error, setBudgetButton, resetButton, cycleLabel,
-      dailyButton, weeklyButton, monthlyButton, customButton,
+      header, budget, error, setBudgetButton, cycleLabel,
+      hourlyButton, dailyButton, weeklyButton, monthlyButton, customButton,
       launchAtLoginButton, refreshIntervalButton, openDashboardButton, dashboardButton, refreshButton, quitButton
     ])
     stack.orientation = .vertical
@@ -510,7 +518,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24)
     ])
     [
-      setBudgetButton, resetButton, dailyButton, weeklyButton, monthlyButton,
+      setBudgetButton, hourlyButton, dailyButton, weeklyButton, monthlyButton,
       customButton, launchAtLoginButton, refreshIntervalButton, openDashboardButton, dashboardButton, refreshButton, quitButton
     ].forEach {
       $0.widthAnchor.constraint(equalToConstant: 220).isActive = true
@@ -538,14 +546,15 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     if let snapshot = latestSnapshot {
       let budget = snapshot.budget.budgetUSD.map { formatUSDCurrency($0) } ?? "not set"
       let usage = snapshot.budget.usagePercentage.map(formatPercentage) ?? "unavailable"
-      e2eBudgetLabel?.stringValue = "Spent \(formatUSDCurrency(snapshot.budget.spentUSD, minimumFractionDigits: 2)) · Budget \(budget) · Usage \(usage) · \(snapshot.resetCycle.label)"
+      let period = formatUsagePeriod(for: snapshot.resetCycle, now: snapshot.generatedAt)
+      e2eBudgetLabel?.stringValue = "Spent \(formatUSDCurrency(snapshot.budget.spentUSD, minimumFractionDigits: 2)) · Budget \(budget) · Usage \(usage) · \(snapshot.resetCycle.label) · Period \(period)"
     } else if let budget = currentState?.budgetUSD {
       e2eBudgetLabel?.stringValue = "Spent unavailable · Budget \(formatUSDCurrency(budget)) · \(currentState?.resetCycle.label ?? defaultResetCycle.label)"
     } else {
       e2eBudgetLabel?.stringValue = "Budget not set · \(currentState?.resetCycle.label ?? defaultResetCycle.label)"
     }
     e2eErrorLabel?.stringValue = errorMessage ?? ""
-    e2eCycleLabel?.stringValue = "Reset cycle: \((currentState?.resetCycle ?? defaultResetCycle).label)"
+    e2eCycleLabel?.stringValue = "Aggregation period: \((currentState?.resetCycle ?? defaultResetCycle).label)"
     e2eDashboardButton?.title = dashboardServer?.isRunning == true ? "Stop dashboard" : "Start dashboard"
     e2eLaunchAtLoginButton?.title = "Launch at Login: \(launchAtLoginController.state.label)"
     e2eRefreshIntervalButton?.title = "Refresh interval: \(effectiveRefreshIntervalSeconds) seconds"
@@ -560,11 +569,11 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
 
 @MainActor
 final class BudgetMenuView: NSView {
-  private let summary: BudgetSummary
+  private let snapshot: CostSnapshot
 
-  init(summary: BudgetSummary) {
-    self.summary = summary
-    super.init(frame: NSRect(x: 0, y: 0, width: 280, height: 72))
+  init(snapshot: CostSnapshot) {
+    self.snapshot = snapshot
+    super.init(frame: NSRect(x: 0, y: 0, width: 390, height: 86))
     wantsLayer = true
   }
 
@@ -573,10 +582,10 @@ final class BudgetMenuView: NSView {
 
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
-    let circle = NSRect(x: 14, y: 14, width: 44, height: 44)
+    let circle = NSRect(x: 14, y: 21, width: 44, height: 44)
     NSColor.systemGray.withAlphaComponent(0.25).setFill()
     NSBezierPath(ovalIn: circle).fill()
-    if let fraction = summary.visualFraction {
+    if let fraction = snapshot.budget.visualFraction {
       let path = NSBezierPath()
       let center = NSPoint(x: circle.midX, y: circle.midY)
       path.move(to: center)
@@ -585,9 +594,13 @@ final class BudgetMenuView: NSView {
       NSColor.systemGreen.setFill()
       path.fill()
     }
-    let budget = summary.budgetUSD.map { "$\($0)" } ?? "not set"
-    let usage = summary.usagePercentage.map(formatPercentage) ?? "unavailable"
-    let text = "Spent \(formatUSDCurrency(summary.spentUSD, minimumFractionDigits: 2)) (\(usage))\nBudget \(budget)"
-    text.draw(at: NSPoint(x: 72, y: 20), withAttributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
+    let budget = snapshot.budget.budgetUSD.map { formatUSDCurrency($0) } ?? "not set"
+    let usage = snapshot.budget.usagePercentage.map(formatPercentage) ?? "unavailable"
+    let period = formatUsagePeriod(for: snapshot.resetCycle, now: snapshot.generatedAt)
+    let text = "Spent \(formatUSDCurrency(snapshot.budget.spentUSD, minimumFractionDigits: 2)) (\(usage))\nBudget \(budget)\nPeriod \(period)"
+    text.draw(
+      at: NSPoint(x: 72, y: 16),
+      withAttributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
+    )
   }
 }

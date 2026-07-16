@@ -33,10 +33,9 @@ import Testing
     let state = AppState(
       budgetUSD: Decimal(string: "42.50"),
       resetCycle: .customHours(12),
-      lastManualResetAt: now,
       baseline: ResetBaseline(
-        scheduledBoundaryAt: now.addingTimeInterval(-3600), manualResetAtConsidered: now,
-        activeBoundaryAt: now, boundaryKind: .manual, cycle: .customHours(12),
+        scheduledBoundaryAt: now.addingTimeInterval(-3600),
+        activeBoundaryAt: now.addingTimeInterval(-3600), cycle: .customHours(12),
         calendarIdentifier: "gregorian", timeZoneIdentifier: "UTC", computedAt: now
       ),
       refreshIntervalSeconds: 15
@@ -65,6 +64,14 @@ import Testing
     try Data(#"{"resetCycle":{"type":"daily"}}"#.utf8).write(to: file)
     let state = try await StateStore(fileURL: file).load()
     #expect(state.refreshIntervalSeconds == nil)
+  }
+
+  @Test func ignoresRemovedManualResetFields() async throws {
+    let file = try temporaryDirectory().appendingPathComponent("state.json")
+    let json = #"{"resetCycle":{"type":"daily"},"lastManualResetAt":"2026-07-16T03:23:33Z"}"#
+    try Data(json.utf8).write(to: file)
+    let state = try await StateStore(fileURL: file).load()
+    #expect(state.resetCycle == .daily)
   }
 }
 

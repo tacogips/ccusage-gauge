@@ -106,10 +106,9 @@ Path: `~/.local/ccusage-gauge/state.json`
 The state store owns:
 
 - optional nonnegative `budgetUSD`;
-- selected reset cycle: `daily`, `weekly`, `monthly`, or `customHours` with a
+- selected aggregation period: `hourly`, `daily`, `weekly`, `monthly`, or `customHours` with a
   positive hour count;
-- optional `lastManualResetAt` timestamp;
-- reset baseline metadata, as defined below, which makes the selected effective
+- period baseline metadata, as defined below, which makes the selected effective
   boundary explicit and stable across restarts.
 
 State changes use an atomic replacement in the same directory. Timestamps are
@@ -129,11 +128,11 @@ timeout, invalid JSON, or unsupported payload is a typed error suitable for UI
 guidance and HTTP error mapping.
 
 Decoders follow the observed v20.0.17 `blocks --json`, `daily --json`, and
-`daily --json --by-agent` shapes. Blocks retain exact reset-boundary behavior
-for the menu gauge. Detailed daily agent/model breakdowns are the dashboard's
-source of truth for cost and token metrics across supported agents, including
-Claude Code and Codex. `session --json --by-agent` supplies model cost and
-session last-activity timestamps for the dashboard's hourly cost graph.
+`daily --json --by-agent` shapes. Detailed daily agent/model breakdowns are the
+source of truth for calendar-day, Monday-through-Sunday week, and calendar-month
+gauge totals across supported agents, including Claude Code and Codex.
+`session --json --by-agent` supplies model cost and session last-activity
+timestamps for hourly/custom-hour gauge totals and the dashboard's hourly graph.
 They ignore unknown fields and tolerate additive schema evolution, while
 requiring the time and cost fields necessary for a query. Cost is aggregated by
 summing model-level cost values exactly once per record; a provided aggregate
@@ -143,21 +142,17 @@ accepted schema and protect against double counting.
 All internal monetary calculations use `Decimal`. JSON APIs emit numeric USD
 values at a documented precision; UI rounding is presentation-only.
 
-## Reset Window and Budget Rules
+## Aggregation Period and Budget Rules
 
 ### Persisted reset baseline contract
 
-The baseline is a persisted cache of the boundary decision used to include or
+The baseline is a persisted cache of the selected period boundary used to include or
 exclude `ccusage` records. It is not a monetary balance, does not copy usage
 cost, and must never be added to or subtracted from `ccusage` totals. Version one
 stores this object in `state.json`:
 
 - `scheduledBoundaryAt`: scheduled boundary calculated for the selected cycle;
-- `manualResetAtConsidered`: the `lastManualResetAt` value considered, or
-  `null`;
-- `activeBoundaryAt`: the later of the scheduled boundary and
-  `manualResetAtConsidered`;
-- `boundaryKind`: `scheduled` or `manual`, identifying which value won;
+- `activeBoundaryAt`: the scheduled boundary used for aggregation;
 - `cycle`: a copy of the cycle used for the calculation, including the positive
   hour value for `customHours`;
 - `calendarIdentifier` and `timeZoneIdentifier`: environment used for calendar
@@ -165,7 +160,7 @@ stores this object in `state.json`:
 - `computedAt`: evaluation instant, used for diagnostics and expiry checks.
 
 All baseline timestamps are ISO 8601 instants. The baseline is valid only when
-its cycle, manual-reset value, calendar, time zone, and scheduled boundary match
+its cycle, calendar, time zone, active boundary, and scheduled boundary match
 the current evaluation context. `computedAt` never changes the cost result.
 
 Startup loads state, chooses the persisted cycle or the configured
@@ -175,12 +170,8 @@ Advancing into a new scheduled window similarly recomputes and persists it.
 Corrupt state remains an error under the state-store policy and is not repaired
 silently.
 
-`Reset now` captures one clock instant, writes it to `lastManualResetAt`, derives
-the baseline from that same instant and current cycle, and atomically persists
-both. A failed write leaves both prior values effective. Changing the cycle
-preserves `lastManualResetAt`, recomputes all baseline fields for the new cycle,
-and atomically persists the cycle and baseline. Thus a manual reset later than
-the new scheduled boundary continues to win; an older manual reset does not.
+Changing the aggregation period recomputes all baseline fields and atomically
+persists the selection and baseline. There is no manual-reset override.
 
 Every menu-bar, CLI, and dashboard cost query uses `baseline.activeBoundaryAt`
 as the lower bound after baseline validation. There is no parallel boundary
@@ -190,25 +181,21 @@ while `ccusage --json` remains the sole monetary source.
 
 ### Boundary calculation and aggregation
 
-The active reset boundary is the later of the scheduled-cycle boundary and the
-last manual reset instant. Calendar boundaries use the user's current calendar
-and time zone:
+Calendar boundaries use the user's current time zone:
 
-- `daily`: start of the current local day;
-- `weekly`: start of the current local week according to the active calendar;
+- `hourly`: the current local clock hour, from `HH:00:00` through `HH:59:59`;
+- `daily`: the current local day, from `00:00:00` through `23:59:59`;
+- `weekly`: Monday `00:00:00` through Sunday `23:59:59`;
 - `monthly`: start of the current local month;
 - `customHours(n)`: `n` hours before the evaluation instant.
 
-A manual reset and cycle change follow the atomic baseline lifecycle above.
-Usage before `baseline.activeBoundaryAt` is excluded. Tests use fixed clocks,
-calendars, and time zones and cover exact boundaries, daylight-saving-relevant
-calendar transitions, startup with valid and stale baselines, atomic manual
-reset, cycle changes with older and later manual resets, and restart persistence.
+Usage outside the selected interval is excluded. Tests use fixed clocks,
+calendars, and time zones and cover exact boundaries, Monday-based weeks,
+daylight-saving-relevant calendar transitions, cycle changes, and restart persistence.
 
-Cost since reset is the sum of records in the closed interval
-`[baseline.activeBoundaryAt, now]`, using each decoded record's documented
-accounting timestamp. Records exactly at either bound are included; records
-after `now` are excluded. Baseline metadata contributes no cost. With a positive
+Cost is the sum of records in the selected period. Calendar-day, week, and month
+totals use exact daily agent/model rows; hourly and rolling custom-hour totals use
+session last-activity timestamps. Baseline metadata contributes no cost. With a positive
 budget, spent is the nonnegative cost, remaining is
 `max(budget - spent, 0)`, and the visual fraction is capped at 100% while the raw
 over-budget amount remains available. Without a budget, the UI shows an unset
@@ -217,12 +204,11 @@ state rather than inventing a denominator.
 ## Menu-Bar Behavior
 
 The status item renders a dynamic pie whose filled sector is the capped budget
-fraction, followed by formatted USD cost since reset. Its menu exposes:
+fraction, followed by formatted USD cost in the selected period. Its menu exposes:
 
 - budget usage as spent versus remaining, including a pie-chart presentation;
 - a budget editor persisted to the mutable state file;
-- `Reset now`;
-- reset-cycle choices, including a positive custom-hour value;
+- aggregation-period choices, including hourly and a positive custom-hour value;
 - dashboard start, stop, and open actions;
 - a Settings submenu backed by `SMAppService.mainApp` for Launch at Login;
 - a warning status icon and Error Details submenu when ccusage validation or
@@ -261,15 +247,15 @@ Version-one routes are:
 - `GET /api/cost-series?granularity=hourly|daily&range=...`: filtered graph
   source rows; hourly uses session last-activity timestamps and daily uses
   exact daily agent/model breakdowns;
-- `GET /api/budget`: budget, cost since reset, remaining amount, reset cycle,
+- `GET /api/budget`: budget, selected-period cost, remaining amount, aggregation period,
   and active boundary.
 
 Successful responses use JSON and stable field names. Bad parameters return
 `400`; missing routes return `404`; `ccusage` or internal query failures return
 `503` or `500` with a machine-readable error code and non-sensitive message.
 No route accepts filesystem paths or executes arbitrary commands. State-changing
-HTTP endpoints are out of scope for version one; budget and reset mutations
-remain menu-bar actions.
+HTTP endpoints are out of scope for version one; budget and aggregation-period
+mutations remain menu-bar actions.
 
 Static assets are resolved in this order: an explicit development override,
 SwiftPM resources in development, then resources adjacent to the packaged
@@ -320,7 +306,7 @@ forms. No commit or push is implied by this design.
   before finalizing Codable contracts.
 - Swift 6 actor isolation must be verified around `Process`, polling, AppKit, and
   listener lifecycle rather than bypassed with unchecked concurrency.
-- Calendar and manual-reset boundary tests must establish behavior across local
+- Calendar-period boundary tests must establish behavior across local
   time-zone changes and daylight-saving transitions.
 - Asset discovery must be tested from SwiftPM, Homebrew formula, and app-bundle
   layouts.

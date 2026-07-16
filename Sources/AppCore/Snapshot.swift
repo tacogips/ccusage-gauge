@@ -1,5 +1,31 @@
 import Foundation
 
+private func selectedPeriodCost(
+  cycle: ResetCycle,
+  interval: DateInterval,
+  metrics: [CCUsageMetricRecord],
+  sessions: [CCUsageSessionMetricRecord],
+  calendar: Calendar
+) -> Decimal {
+  switch cycle {
+  case .hourly, .customHours:
+    return sessions
+      .filter { interval.contains($0.timestamp) }
+      .reduce(Decimal.zero) { $0 + $1.costUSD }
+  case .daily, .weekly, .monthly:
+    return metrics
+      .filter { record in
+        let components = record.date.split(separator: "-").compactMap { Int($0) }
+        guard components.count == 3,
+              let date = calendar.date(from: DateComponents(year: components[0], month: components[1], day: components[2])) else {
+          return false
+        }
+        return interval.contains(date)
+      }
+      .reduce(Decimal.zero) { $0 + $1.costUSD }
+  }
+}
+
 public struct CostSnapshot: Codable, Equatable, Sendable {
   public let generatedAt: Date
   public let activeBoundaryAt: Date
@@ -32,9 +58,15 @@ public struct CostSnapshot: Codable, Equatable, Sendable {
 
   public func applying(state: AppState, now: Date = Date()) -> CostSnapshot? {
     guard let baseline = state.baseline else { return nil }
-    let cost = points
-      .filter { $0.timestamp >= baseline.activeBoundaryAt && $0.timestamp <= now }
-      .reduce(Decimal.zero) { $0 + $1.costUSD }
+    let calculator = ResetWindowCalculator()
+    guard let interval = try? calculator.aggregationInterval(for: state.resetCycle, now: now) else { return nil }
+    let cost = selectedPeriodCost(
+      cycle: state.resetCycle,
+      interval: interval,
+      metrics: dashboardMetrics,
+      sessions: dashboardSessions,
+      calendar: calculator.calendar
+    )
     return CostSnapshot(
       generatedAt: now,
       activeBoundaryAt: baseline.activeBoundaryAt,
@@ -70,9 +102,14 @@ public struct SnapshotService: Sendable {
     let points = try await blockRecords
     let dashboardMetrics = try await metricRecords
     let dashboardSessions = try await sessionRecords
-    let cost = points
-      .filter { $0.timestamp >= baseline.activeBoundaryAt && $0.timestamp <= now }
-      .reduce(Decimal.zero) { $0 + $1.costUSD }
+    let interval = try calculator.aggregationInterval(for: state.resetCycle, now: now)
+    let cost = selectedPeriodCost(
+      cycle: state.resetCycle,
+      interval: interval,
+      metrics: dashboardMetrics,
+      sessions: dashboardSessions,
+      calendar: calculator.calendar
+    )
     return CostSnapshot(
       generatedAt: now,
       activeBoundaryAt: baseline.activeBoundaryAt,

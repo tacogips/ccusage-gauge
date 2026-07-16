@@ -42,7 +42,7 @@ struct CCUsageGaugeCLI {
         let data = try encoder.encode(snapshot)
         print(String(data: data, encoding: .utf8) ?? "{}")
       } else {
-        print("Cost since reset: $\(snapshot.costSinceResetUSD) (since \(snapshot.activeBoundaryAt.ISO8601Format()))")
+        print("Cost in selected period: $\(snapshot.costSinceResetUSD) (from \(snapshot.activeBoundaryAt.ISO8601Format()))")
       }
     } catch {
       if json {
