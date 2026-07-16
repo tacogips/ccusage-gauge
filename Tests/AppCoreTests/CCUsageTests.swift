@@ -29,10 +29,12 @@ import Testing
 
 @Suite("CCUsageDecoderTests") struct CCUsageDecoderTests {
   @Test func decodesObservedBlocksShapeAndIgnoresUnknownFields() throws {
-    let data = Data(#"{"blocks":[{"startTime":"2026-07-15T01:00:00Z","costUSD":1.25,"models":["opus"],"future":true}]}"#.utf8)
+    let data = Data(#"{"blocks":[{"startTime":"2026-07-15T01:00:00.123Z","costUSD":1.25,"models":["opus"],"future":true}]}"#.utf8)
     let records = try CCUsageDecoder.blocks(from: data)
     #expect(records.count == 1)
     #expect(records[0].costUSD == Decimal(string: "1.25"))
+    let wholeSecond = ISO8601DateFormatter().date(from: "2026-07-15T01:00:00Z")!
+    #expect(abs(records[0].timestamp.timeIntervalSince(wholeSecond) - 0.123) < 0.001)
   }
 
   @Test func sumsModelBreakdownsExactlyOnce() throws {
@@ -249,6 +251,73 @@ import Testing
     #expect(arguments.contains("daily --json --since 2026-07-16 --until 2026-07-16"))
     #expect(arguments.contains("session --json --since 2026-07-16 --until 2026-07-16"))
     #expect(!arguments.contains("--by-agent"))
+  }
+
+  @Test func detailedDailyFallsBackToAndCachesCCUsageTwentyZeroSeventeenArguments() async throws {
+    let root = try temporaryDirectory()
+    let executable = root.appendingPathComponent("ccusage")
+    let log = root.appendingPathComponent("arguments.log")
+    let unified = #"{"daily":[{"period":"2026-07-16","totalCost":2.5,"modelsUsed":["gpt-test"]}]}"#
+    let byAgent = #"""
+      {"daily":[{"period":"2026-07-16","agents":[{"agent":"codex","modelBreakdowns":[
+        {"modelName":"gpt-test","cost":2.5,"inputTokens":10,"outputTokens":3,
+         "cacheCreationTokens":0,"cacheReadTokens":20}
+      ]}]}]}
+      """#
+    let script = """
+      #!/bin/sh
+      printf '%s\n' "$*" >> '\(log.path)'
+      case " $* " in
+        *" --by-agent "*) printf '%s' '\(byAgent)' ;;
+        *) printf '%s' '\(unified)' ;;
+      esac
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    let client = CCUsageClient(executable: executable)
+
+    let first = try await client.detailedDaily(since: "2026-07-16", until: "2026-07-16")
+    let second = try await client.detailedDaily(since: "2026-07-16", until: "2026-07-16")
+    let arguments = try String(contentsOf: log, encoding: .utf8).split(separator: "\n")
+
+    #expect(first == second)
+    #expect(first.first?.agent == "codex")
+    #expect(arguments.count == 3)
+    #expect(!arguments[0].contains("--by-agent"))
+    #expect(arguments[1].contains("--by-agent"))
+    #expect(arguments[2].contains("--by-agent"))
+  }
+
+  @Test func detailedDailyCachesFlagFreeCCUsageTwentyOneArguments() async throws {
+    let root = try temporaryDirectory()
+    let executable = root.appendingPathComponent("ccusage")
+    let count = root.appendingPathComponent("count")
+    let log = root.appendingPathComponent("arguments.log")
+    let detailed = #"{"daily":[{"period":"2026-07-16","agents":[]}] }"#
+    let script = """
+      #!/bin/sh
+      current=$(cat '\(count.path)' 2>/dev/null || printf '0')
+      current=$((current + 1))
+      printf '%s' "$current" > '\(count.path)'
+      printf '%s\n' "$*" >> '\(log.path)'
+      if [ "$current" -eq 1 ]; then
+        printf '%s' '\(detailed)'
+      else
+        printf '%s' '{"daily":[{"period":"2026-07-16","totalCost":0,"modelsUsed":[]}]}'
+      fi
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    let client = CCUsageClient(executable: executable)
+
+    _ = try await client.detailedDaily()
+    await #expect(throws: CCUsageError.invalidJSON) {
+      try await client.detailedDaily()
+    }
+    let arguments = try String(contentsOf: log, encoding: .utf8).split(separator: "\n")
+
+    #expect(arguments.count == 2)
+    #expect(arguments.allSatisfy { !$0.contains("--by-agent") })
   }
 
   @Test func snapshotUsesClosedBoundaryAndExcludesFuture() async throws {

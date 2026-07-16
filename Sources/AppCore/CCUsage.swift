@@ -173,7 +173,7 @@ public struct CCUsageProcessRunner: Sendable {
 public enum CCUsageDecoder {
   private struct BlocksEnvelope: Decodable { let blocks: [Block] }
   private struct Block: Decodable {
-    let startTime: Date
+    let startTime: String
     let costUSD: Decimal
     let models: [String]
   }
@@ -213,7 +213,8 @@ public enum CCUsageDecoder {
   public static func blocks(from data: Data) throws -> [CCUsageCostRecord] {
     do {
       return try decoder.decode(BlocksEnvelope.self, from: data).blocks.map {
-        CCUsageCostRecord(timestamp: $0.startTime, costUSD: $0.costUSD, models: $0.models)
+        guard let timestamp = parseTimestamp($0.startTime) else { throw CCUsageError.invalidJSON }
+        return CCUsageCostRecord(timestamp: timestamp, costUSD: $0.costUSD, models: $0.models)
       }
     } catch { throw CCUsageError.invalidJSON }
   }
@@ -286,13 +287,67 @@ public enum CCUsageDecoder {
   }
 }
 
+private actor CCUsageDetailedDailyLoader {
+  private enum ArgumentMode {
+    case flagFree
+    case byAgent
+  }
+
+  private var argumentMode: ArgumentMode?
+
+  func load(
+    executable: URL,
+    runner: CCUsageProcessRunner,
+    arguments: [String]
+  ) async throws -> [CCUsageMetricRecord] {
+    if argumentMode == .flagFree {
+      return try await loadFlagFree(executable: executable, runner: runner, arguments: arguments)
+    }
+    if argumentMode == .byAgent {
+      return try await loadWithByAgent(executable: executable, runner: runner, arguments: arguments)
+    }
+
+    do {
+      let records = try await loadFlagFree(executable: executable, runner: runner, arguments: arguments)
+      argumentMode = .flagFree
+      return records
+    } catch CCUsageError.invalidJSON {
+      let records = try await loadWithByAgent(executable: executable, runner: runner, arguments: arguments)
+      argumentMode = .byAgent
+      return records
+    }
+  }
+
+  private func loadFlagFree(
+    executable: URL,
+    runner: CCUsageProcessRunner,
+    arguments: [String]
+  ) async throws -> [CCUsageMetricRecord] {
+    let result = try await runner.run(executable: executable, arguments: arguments)
+    return try CCUsageDecoder.detailedDaily(from: result.stdout)
+  }
+
+  private func loadWithByAgent(
+    executable: URL,
+    runner: CCUsageProcessRunner,
+    arguments: [String]
+  ) async throws -> [CCUsageMetricRecord] {
+    var compatibleArguments = arguments
+    compatibleArguments.insert("--by-agent", at: 2)
+    let result = try await runner.run(executable: executable, arguments: compatibleArguments)
+    return try CCUsageDecoder.detailedDaily(from: result.stdout)
+  }
+}
+
 public struct CCUsageClient: Sendable {
   public let executable: URL
   public let runner: CCUsageProcessRunner
+  private let detailedDailyLoader: CCUsageDetailedDailyLoader
 
   public init(executable: URL, runner: CCUsageProcessRunner = CCUsageProcessRunner()) {
     self.executable = executable
     self.runner = runner
+    detailedDailyLoader = CCUsageDetailedDailyLoader()
   }
 
   public func blocks() async throws -> [CCUsageCostRecord] {
@@ -306,11 +361,11 @@ public struct CCUsageClient: Sendable {
   }
 
   public func detailedDaily(since: String? = nil, until: String? = nil) async throws -> [CCUsageMetricRecord] {
-    let result = try await runner.run(
+    try await detailedDailyLoader.load(
       executable: executable,
+      runner: runner,
       arguments: filteredArguments(command: "daily", since: since, until: until)
     )
-    return try CCUsageDecoder.detailedDaily(from: result.stdout)
   }
 
   public func detailedSessions(since: String? = nil, until: String? = nil) async throws -> [CCUsageSessionMetricRecord] {

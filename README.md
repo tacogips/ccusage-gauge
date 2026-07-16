@@ -3,8 +3,9 @@
 A cross-platform local dashboard and CLI, plus a macOS menu-bar cost gauge,
 backed exclusively by `ccusage --json`.
 
-ccusage-gauge supports ccusage 20.1.0 and later. Earlier ccusage releases are
-not supported.
+ccusage-gauge supports ccusage 20.0.17 and later. It automatically uses the
+20.0.17 `--by-agent` daily report and the flag-free daily report introduced by
+ccusage 20.1.0.
 
 The status item shows a budget-progress pie followed by cost in the selected
 aggregation period. Its menu supports budget editing, hourly/daily/weekly/
@@ -36,7 +37,8 @@ and dashboard controls.
 
 The SolidJS dashboard provides:
 
-- exact per-agent and per-model rows from `ccusage daily --json`;
+- exact per-agent and per-model rows from `ccusage daily --json --by-agent` on
+  ccusage 20.0.17 and `ccusage daily --json` on ccusage 20.1.0 and later;
 - left-side model and agent filters;
 - top-right Last 12 hours, Today, Yesterday, This week, This month, and Custom date controls;
 - cost-over-time graph with a rolling 12-hour Hourly default, 15-minute,
@@ -266,13 +268,13 @@ task build:homebrew -- darwin-arm64 darwin-x64
 Render a formula after both platform archives exist:
 
 ```bash
-task homebrew:formula -- 0.1.4
+task homebrew:formula -- 0.1.5
 ```
 
 Render directly into the default sibling tap checkout:
 
 ```bash
-task homebrew:tap-formula -- 0.1.4
+task homebrew:tap-formula -- 0.1.5
 ```
 
 Install from the tap after the formula is published:
@@ -305,14 +307,14 @@ kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID --
 Render a Cask:
 
 ```bash
-task homebrew:cask -- 0.1.4
+task homebrew:cask -- 0.1.5
 ```
 
 For a tagged release, build, upload, and render the tap Cask:
 
 ```bash
 kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID -- \
-  task release:homebrew-cask-local -- v0.1.4
+  task release:homebrew-cask-local -- v0.1.5
 ```
 
 See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.
