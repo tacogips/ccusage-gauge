@@ -193,3 +193,7 @@ kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID --
 ```
 
 See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.
+
+## License
+
+This project is available under the [MIT License](LICENSE).
