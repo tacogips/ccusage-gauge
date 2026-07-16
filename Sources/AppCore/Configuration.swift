@@ -152,7 +152,7 @@ public struct AppPaths: Sendable {
     return AppPaths(
       configFile: configRoot.appendingPathComponent("ccusage-gauge/ccusage-config.json"),
       stateFile: stateRoot.appendingPathComponent("ccusage-gauge/state.json"),
-      aggregationCacheFile: cacheRoot.appendingPathComponent("ccusage-gauge/aggregates-v1.sqlite3")
+      aggregationCacheFile: cacheRoot.appendingPathComponent("ccusage-gauge/aggregates.sqlite3")
     )
   }
 }

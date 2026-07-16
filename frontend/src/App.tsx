@@ -4,7 +4,7 @@ import { type BudgetResponse, type CostRow, type CostSeriesResponse, type Metric
 type QuickRange = "recent12h" | "today" | "yesterday" | "week" | "month";
 type Range = QuickRange | "custom";
 type MetricKey = "costUSD" | "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens";
-type Granularity = "15min" | "hourly" | "daily";
+type Granularity = "15min" | "hourly" | "6hour" | "daily";
 
 const quickRanges: Array<[QuickRange, string]> = [
   ["recent12h", "Last 12 hours"], ["today", "Today"], ["yesterday", "Yesterday"], ["week", "This week"], ["month", "This month"]
@@ -26,18 +26,35 @@ const chartMetrics: Array<[MetricKey, string]> = [
 ];
 
 const chartHeight = 360;
-const chartMargin = { top: 16, right: 16, bottom: 54, left: 78 };
+const chartMargin = { top: 16, right: 78, bottom: 54, left: 78 };
 const yTickCount = 4;
 const lazyRenderWindowMilliseconds = 12 * 60 * 60 * 1_000;
-const chartSlotWidths: Record<Granularity, number> = { "15min": 32, hourly: 96, daily: 72 };
+const chartSlotWidths: Record<Granularity, number> = { "15min": 32, hourly: 96, "6hour": 112, daily: 72 };
 const modelColors = ["#238855", "#3f75b5", "#b86f32", "#7b5eb5", "#b84f6f", "#468a86", "#8a7a35", "#596d7a"];
 
 function bucketMilliseconds(granularity: Granularity) {
   switch (granularity) {
   case "15min": return 15 * 60 * 1_000;
   case "hourly": return 60 * 60 * 1_000;
+  case "6hour": return 6 * 60 * 60 * 1_000;
   case "daily": return 24 * 60 * 60 * 1_000;
   }
+}
+
+function alignedBucketStart(timestamp: string, granularity: Granularity) {
+  const date = new Date(timestamp);
+  if (granularity === "15min") date.setMinutes(Math.floor(date.getMinutes() / 15) * 15, 0, 0);
+  else if (granularity === "hourly") date.setMinutes(0, 0, 0);
+  else if (granularity === "6hour") date.setHours(Math.floor(date.getHours() / 6) * 6, 0, 0, 0);
+  else date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function nextBucket(date: Date, granularity: Granularity) {
+  const next = new Date(date);
+  if (granularity === "daily") next.setDate(next.getDate() + 1);
+  else next.setTime(next.getTime() + bucketMilliseconds(granularity));
+  return next;
 }
 
 function chartDateLabel(timestamp: string, granularity: Granularity) {
@@ -98,6 +115,7 @@ function Bars(props: {
       const bucket = new Date(row.timestamp);
       if (props.granularity === "15min") bucket.setMinutes(Math.floor(bucket.getMinutes() / 15) * 15, 0, 0);
       else if (props.granularity === "hourly") bucket.setMinutes(0, 0, 0);
+      else if (props.granularity === "6hour") bucket.setHours(Math.floor(bucket.getHours() / 6) * 6, 0, 0, 0);
       else bucket.setHours(0, 0, 0, 0);
       const key = bucket.toISOString();
       const modelValues = grouped.get(key) ?? new Map<string, number>();
@@ -114,24 +132,22 @@ function Bars(props: {
   });
   const points = createMemo(() => {
     const occupied = occupiedPoints();
-    if (props.granularity !== "hourly" || props.timelineStart == null || props.timelineEndExclusive == null) return occupied;
-    const start = new Date(props.timelineStart);
+    if (props.timelineStart == null || props.timelineEndExclusive == null) return occupied;
+    const start = alignedBucketStart(props.timelineStart, props.granularity);
     const endExclusive = new Date(props.timelineEndExclusive);
     if (Number.isNaN(start.getTime()) || Number.isNaN(endExclusive.getTime()) || start >= endExclusive) return occupied;
-    start.setMinutes(0, 0, 0);
     const occupiedByTimestamp = new Map(occupied.map((point) => [point.timestamp, point]));
     const continuous = [];
-    for (let timestamp = start.getTime(); timestamp < endExclusive.getTime(); timestamp += bucketMilliseconds("hourly")) {
-      const key = new Date(timestamp).toISOString();
+    for (let bucket = start; bucket < endExclusive; bucket = nextBucket(bucket, props.granularity)) {
+      const key = bucket.toISOString();
       continuous.push(occupiedByTimestamp.get(key) ?? { timestamp: key, segments: [], total: 0 });
     }
     return continuous;
   });
   const firstTimestamp = createMemo(() => points()[0] == null ? 0 : new Date(points()[0].timestamp).getTime());
   const lastTimestamp = createMemo(() => points().at(-1) == null ? 0 : new Date(points().at(-1)!.timestamp).getTime());
-  const bucketCount = createMemo(() => points().length === 0
-    ? 0
-    : Math.round((lastTimestamp() - firstTimestamp()) / bucketMilliseconds(props.granularity)) + 1);
+  const bucketCount = createMemo(() => points().length);
+  const pointIndexByTimestamp = createMemo(() => new Map(points().map((point, index) => [point.timestamp, index])));
   const visiblePoints = createMemo(() => points().filter((point) => new Date(point.timestamp).getTime() >= loadedAfter()));
   const axisMaximum = createMemo(() => niceChartMaximum(Math.max(...visiblePoints().map((point) => point.total), 0)));
   const yTicks = createMemo(() => Array.from({ length: yTickCount + 1 }, (_, index) => (axisMaximum() / yTickCount) * index));
@@ -140,7 +156,8 @@ function Bars(props: {
   const plotWidth = () => chartWidth() - chartMargin.left - chartMargin.right;
   const barSlotWidth = () => plotWidth() / Math.max(bucketCount(), 1);
   const barWidth = () => Math.min(28, barSlotWidth() * 0.65);
-  const bucketIndex = (timestamp: string) => Math.round((new Date(timestamp).getTime() - firstTimestamp()) / bucketMilliseconds(props.granularity));
+  const bucketIndex = (timestamp: string) => pointIndexByTimestamp().get(timestamp)
+    ?? Math.round((new Date(timestamp).getTime() - firstTimestamp()) / bucketMilliseconds(props.granularity));
   const loadEarlier = () => {
     if (props.granularity === "daily" || loadedAfter() <= firstTimestamp() || isLoadingEarlier()) return;
     const boundaryIndex = Math.max(0, (loadedAfter() - firstTimestamp()) / bucketMilliseconds(props.granularity));
@@ -166,6 +183,9 @@ function Bars(props: {
   };
   const formatValue = (value: number) => props.metric === "costUSD" ? currency.format(value) : integer.format(value);
   const yAxisTitle = () => props.metric === "costUSD" ? "Spent amount (USD)" : "Tokens";
+  const yTickLabel = (tick: number) => props.metric === "costUSD"
+    ? axisCurrency(tick, axisMaximum() / yTickCount)
+    : integer.format(tick);
   const metricLabel = () => chartMetrics.find(([key]) => key === props.metric)?.[1] ?? "Value";
   const hoveredPoint = createMemo(() => {
     const hovered = hoveredSegment();
@@ -210,16 +230,13 @@ function Bars(props: {
         <Show when={props.granularity !== "daily"}>
           <p class="chart-scroll-hint">Newest data is shown first. Scroll left to render earlier 12-hour windows.</p>
         </Show>
-        <div class="chart" ref={chartElement} onScroll={loadEarlier}>
-          <svg class="cost-chart" width={chartWidth()} height={chartHeight} viewBox={`0 0 ${chartWidth()} ${chartHeight}`} aria-hidden="true">
-          <text class="axis-title" x="16" y={chartMargin.top + plotHeight / 2} text-anchor="middle" transform={`rotate(-90 16 ${chartMargin.top + plotHeight / 2})`}>{yAxisTitle()}</text>
-          <For each={yTicks()}>{(tick) => {
-            const y = () => chartMargin.top + plotHeight - (tick / axisMaximum()) * plotHeight;
-            return <>
-              <line class="chart-grid-line" x1={chartMargin.left} x2={chartWidth() - chartMargin.right} y1={y()} y2={y()} />
-              <text class="y-axis-label" x={chartMargin.left - 10} y={y()} text-anchor="end" dominant-baseline="middle">{props.metric === "costUSD" ? axisCurrency(tick, axisMaximum() / yTickCount) : integer.format(tick)}</text>
-            </>;
-          }}</For>
+        <div class="chart-frame">
+          <div class="chart" ref={chartElement} onScroll={loadEarlier}>
+            <svg class="cost-chart" width={chartWidth()} height={chartHeight} viewBox={`0 0 ${chartWidth()} ${chartHeight}`} aria-hidden="true">
+            <For each={yTicks()}>{(tick) => {
+              const y = () => chartMargin.top + plotHeight - (tick / axisMaximum()) * plotHeight;
+              return <line class="chart-grid-line" x1={chartMargin.left} x2={chartWidth() - chartMargin.right} y1={y()} y2={y()} />;
+            }}</For>
           <For each={visiblePoints()}>{(point, index) => {
             const x = () => chartMargin.left + barSlotWidth() * bucketIndex(point.timestamp) + (barSlotWidth() - barWidth()) / 2;
             const label = () => chartDateLabel(point.timestamp, props.granularity);
@@ -249,6 +266,23 @@ function Bars(props: {
               <text class="chart-tooltip-value" x="12" y="41">{point.model} · {metricLabel()}: {formatValue(point.value)}</text>
             </g>
           )}</Show>
+            </svg>
+          </div>
+          <svg class="chart-y-axis chart-y-axis-left" width={chartMargin.left} height={chartHeight} viewBox={`0 0 ${chartMargin.left} ${chartHeight}`} aria-hidden="true">
+            <rect class="axis-backdrop" width={chartMargin.left} height={chartHeight} />
+            <text class="axis-title" x="16" y={chartMargin.top + plotHeight / 2} text-anchor="middle" transform={`rotate(-90 16 ${chartMargin.top + plotHeight / 2})`}>{yAxisTitle()}</text>
+            <For each={yTicks()}>{(tick) => {
+              const y = () => chartMargin.top + plotHeight - (tick / axisMaximum()) * plotHeight;
+              return <text class="y-axis-label" x={chartMargin.left - 10} y={y()} text-anchor="end" dominant-baseline="middle">{yTickLabel(tick)}</text>;
+            }}</For>
+          </svg>
+          <svg class="chart-y-axis chart-y-axis-right" width={chartMargin.right} height={chartHeight} viewBox={`0 0 ${chartMargin.right} ${chartHeight}`} aria-hidden="true">
+            <rect class="axis-backdrop" width={chartMargin.right} height={chartHeight} />
+            <text class="axis-title" x={chartMargin.right - 16} y={chartMargin.top + plotHeight / 2} text-anchor="middle" transform={`rotate(90 ${chartMargin.right - 16} ${chartMargin.top + plotHeight / 2})`}>{yAxisTitle()}</text>
+            <For each={yTicks()}>{(tick) => {
+              const y = () => chartMargin.top + plotHeight - (tick / axisMaximum()) * plotHeight;
+              return <text class="y-axis-label" x="10" y={y()} text-anchor="start" dominant-baseline="middle">{yTickLabel(tick)}</text>;
+            }}</For>
           </svg>
         </div>
       </Show>
@@ -293,8 +327,19 @@ export default function App() {
 
   const models = createMemo(() => [...new Set((period()?.rows ?? []).map((row) => row.model))].sort());
   const agents = createMemo(() => [...new Set((period()?.rows ?? []).map((row) => row.agent))].sort());
+  const chartModels = createMemo(() => new Set((costSeries()?.rows ?? []).map((row) => row.model)));
+  const estimatedModels = createMemo(() => new Set((costSeries()?.rows ?? [])
+    .filter((row) => row.dataQuality === "sessionEstimated")
+    .map((row) => row.model)));
+  const unavailableModelReason = (model: string) => {
+    if (chartModels().has(model)) return undefined;
+    if (granularity() === "daily") return `${model} has no daily usage in the selected period.`;
+    return `${model} has no timestamped usage events or session data for the selected period. Choose Daily to view its aggregate usage.`;
+  };
+  const modelSourceNote = (model: string) => unavailableModelReason(model)
+    ?? (estimatedModels().has(model) ? `${model} uses session-level timing for part or all of this period, so sub-daily placement is estimated.` : undefined);
   createEffect(() => {
-    const available = new Set(models());
+    const available = chartModels();
     setSelectedModels((current) => {
       const next = current.filter((model) => available.has(model));
       return next.length === current.length ? current : next;
@@ -313,6 +358,13 @@ export default function App() {
   const filteredCostRows = createMemo(() => (costSeries()?.rows ?? []).filter((row) =>
     (selectedModels().length === 0 || selectedModels().includes(row.model)) &&
     (selectedAgents().length === 0 || selectedAgents().includes(row.agent))));
+  const chartDataQuality = createMemo(() => {
+    if (granularity() === "daily") return "Daily aggregate";
+    const qualities = new Set(filteredCostRows().map((row) => row.dataQuality));
+    if (qualities.has("timestamped") && qualities.has("sessionEstimated")) return "Timestamped + session estimate";
+    if (qualities.has("sessionEstimated")) return "Session estimate";
+    return "Timestamped events";
+  });
   const total = (key: MetricKey) => filteredRows().reduce((sum, row) => sum + metricValue(row, key), 0);
   const chartTotal = createMemo(() => filteredCostRows().reduce((sum, row) => sum + metricValue(row, chartMetric()), 0));
   const chartMetricLabel = createMemo(() => chartMetrics.find(([value]) => value === chartMetric())?.[1] ?? "Cost");
@@ -325,7 +377,23 @@ export default function App() {
   const isBlockingLoading = createMemo(() => isInitialLoading() || isRangeLoading());
   const isBackgroundLoading = createMemo(() => !isBlockingLoading() &&
     (isRefreshing() || period.loading || costSeries.loading || budget.loading));
-  const toggle = (value: string, values: () => string[], setter: (next: string[]) => void) => setter(values().includes(value) ? values().filter((item) => item !== value) : [...values(), value]);
+  const toggleModel = (model: string) => setSelectedModels((current) => current.includes(model)
+    ? current.filter((item) => item !== model)
+    : [...current, model]);
+  const toggleAgent = (agent: string) => {
+    const nextAgents = selectedAgents().includes(agent)
+      ? selectedAgents().filter((item) => item !== agent)
+      : [...selectedAgents(), agent];
+    setSelectedAgents(nextAgents);
+    if (nextAgents.length === 0) {
+      setSelectedModels([]);
+      return;
+    }
+    const selectable = chartModels();
+    setSelectedModels([...new Set((period()?.rows ?? [])
+      .filter((row) => nextAgents.includes(row.agent) && selectable.has(row.model))
+      .map((row) => row.model))].sort());
+  };
   let refreshPromise: Promise<unknown> | undefined;
   const refresh = () => {
     if (refreshPromise) return refreshPromise;
@@ -385,31 +453,33 @@ export default function App() {
         <div><p class="eyebrow">FILTER USAGE</p><h2>Models</h2></div>
         <button classList={{ "model-choice": true, active: selectedModels().length === 0 }} onClick={() => setSelectedModels([])}><span>All models</span></button>
         <div class="model-list">
-          <For each={models()} fallback={<p class="muted">{period.loading ? "Loading models…" : "No models in the selected period."}</p>}>{(model) => (
-            <label classList={{ "model-choice": true, active: selectedModels().includes(model) }}>
-              <input type="checkbox" checked={selectedModels().includes(model)} onChange={() => toggle(model, selectedModels, setSelectedModels)} />
-              <span title={model}>{model}</span>
+          <For each={models()} fallback={<p class="muted">{period.loading ? "Loading models…" : "No models have data in this period."}</p>}>{(model) => (
+            <label
+              classList={{ "model-choice": true, active: selectedModels().includes(model), unavailable: unavailableModelReason(model) != null, estimated: estimatedModels().has(model) }}
+              title={modelSourceNote(model) ?? model}
+              data-tooltip={modelSourceNote(model)}
+            >
+              <input type="checkbox" disabled={unavailableModelReason(model) != null} checked={selectedModels().includes(model)} onChange={() => toggleModel(model)} />
+              <span>{model}</span>
             </label>
           )}</For>
         </div>
         <div class="agent-filter"><p class="eyebrow">AGENTS</p><div class="agent-buttons">
-          <For each={agents()}>{(agent) => <button classList={{ active: selectedAgents().includes(agent) }} onClick={() => toggle(agent, selectedAgents, setSelectedAgents)}>{agent}</button>}</For>
+          <For each={agents()}>{(agent) => <button classList={{ active: selectedAgents().includes(agent) }} onClick={() => toggleAgent(agent)}>{agent}</button>}</For>
         </div></div>
-        <p class="filter-note">Each row is an exact ccusage daily agent/model breakdown. Costs and tokens are summed only from matching rows.</p>
       </aside>
 
       <main class="content" aria-busy={isBlockingLoading() || isBackgroundLoading()}>
         <header>
-          <div><p class="eyebrow">CCUSAGE DETAILED METRICS</p><h1>ccusage-gauge</h1></div>
+          <div><h1>ccusage-gauge</h1></div>
           <div class="period-control" aria-label="Aggregation period">
             <div class="range-buttons">
               <For each={quickRanges}>{([value, label]) => <button classList={{ active: range() === value }} onClick={() => selectRange(value)}>{label}</button>}</For>
               <button classList={{ active: range() === "custom" }} onClick={() => selectRange("custom")}>Custom</button>
-              <button class="refresh" onClick={refresh}>Refresh</button>
-              <span classList={{ "background-refresh-status": true, visible: isBackgroundLoading() }} role="status" aria-live="polite">
-                <span class="refresh-spinner" aria-hidden="true" />Updating…
-              </span>
             </div>
+            <span classList={{ "background-refresh-status": true, visible: isBackgroundLoading() }} role="status" aria-live="polite">
+              <span class="refresh-spinner" aria-hidden="true" />Updating…
+            </span>
             <Show when={range() === "custom"}><div class="custom-calendar" role="group" aria-label="Custom date range">
               <label>From<input aria-label="Custom range start" type="date" value={customStart()} max={customEnd()} onInput={(event) => updateCustomStart(event.currentTarget.value)} /></label>
               <span>to</span>
@@ -425,19 +495,31 @@ export default function App() {
             <article><span>Total tokens</span><strong>{integer.format(total("totalTokens"))}</strong><small>All token categories</small></article>
             <article><span>Input / output</span><strong>{integer.format(total("inputTokens"))} / {integer.format(total("outputTokens"))}</strong><small>Prompt and generated</small></article>
             <article><span>Cache read / creation</span><strong>{integer.format(total("cacheReadTokens"))} / {integer.format(total("cacheCreationTokens"))}</strong><small>Reported by ccusage</small></article>
+            <button
+              classList={{ "refresh-icon": true, refreshing: isRefreshing() }}
+              onClick={refresh}
+              aria-label="Refresh usage data"
+              aria-busy={isRefreshing()}
+              title="Refresh usage data"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 11a8 8 0 0 0-14.9-4M4 4v6h6M4 13a8 8 0 0 0 14.9 4M20 20v-6h-6" />
+              </svg>
+            </button>
             </section>
 
             <section class="panel usage-panel">
             <div class="panel-title"><div><p class="eyebrow">AGGREGATED USAGE</p><div class="chart-heading"><h2>{chartTitle()}</h2>
+              <span class="data-quality-badge">{chartDataQuality()}</span>
               <Show when={isGraphLazyLoading()}><span class="graph-loading-status" role="status" aria-label="Rendering earlier graph data"><span class="graph-loading-spinner" aria-hidden="true" /></span></Show>
             </div></div>
               <div class="granularity-control" aria-label="Graph aggregation">
+                <div><button classList={{ active: granularity() === "15min" }} onClick={() => selectGranularity("15min")}>15 min</button><button classList={{ active: granularity() === "hourly" }} onClick={() => selectGranularity("hourly")}>Hourly</button><button classList={{ active: granularity() === "6hour" }} onClick={() => selectGranularity("6hour")}>6 hour</button><button classList={{ active: granularity() === "daily" }} onClick={() => selectGranularity("daily")}>Daily</button></div>
                 <label class="metric-selector">Metric
                   <select value={chartMetric()} onChange={(event) => setChartMetric(event.currentTarget.value as MetricKey)}>
                     <For each={chartMetrics}>{([value, label]) => <option value={value}>{label}</option>}</For>
                   </select>
                 </label>
-                <div><button classList={{ active: granularity() === "15min" }} onClick={() => selectGranularity("15min")}>15 min</button><button classList={{ active: granularity() === "hourly" }} onClick={() => selectGranularity("hourly")}>Hourly</button><button classList={{ active: granularity() === "daily" }} onClick={() => selectGranularity("daily")}>Daily</button></div>
                 <strong>{formattedChartTotal()}</strong>
               </div>
             </div>

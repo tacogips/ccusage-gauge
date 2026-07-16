@@ -15,10 +15,11 @@ export interface CostRow {
   timestamp: string; agent: string; model: string; costUSD: number;
   inputTokens: number; outputTokens: number; cacheCreationTokens: number;
   cacheReadTokens: number; totalTokens: number;
+  dataQuality: "timestamped" | "sessionEstimated" | "daily";
 }
 export interface CostSeriesResponse {
   range: string;
-  granularity: "15min" | "hourly" | "daily";
+  granularity: "15min" | "hourly" | "6hour" | "daily";
   timelineStart?: string;
   timelineEndExclusive?: string;
   rows: CostRow[];

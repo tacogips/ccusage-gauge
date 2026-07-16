@@ -36,8 +36,8 @@ The SolidJS dashboard provides:
 - exact per-agent and per-model rows from `ccusage daily --json --by-agent`;
 - left-side model and agent filters;
 - top-right Last 12 hours, Today, Yesterday, This week, This month, and Custom date controls;
-- cost-over-time graph with a rolling 12-hour Hourly default, 15-minute and
-  Daily aggregation, and hover details for each bar;
+- cost-over-time graph with a rolling 12-hour Hourly default, 15-minute,
+  6-hour, and Daily aggregation, and hover details for each bar;
 - selected-period cost/token totals and detailed agent/model rows;
 - budget and aggregation-period summaries from the same AppCore snapshot.
 - automatic data refresh using the menu bar's effective refresh interval.
@@ -52,8 +52,29 @@ uses the initial loading state until the new range's metrics and graph rows are
 both ready. This prevents values from the previous range appearing under the
 new range label.
 
-Changing between 15 min, Hourly, and Daily uses the same blocking transition,
-so bars from the previous granularity are never displayed under the new label.
+Changing between 15 min, Hourly, 6 hour, and Daily uses the same blocking
+transition, so bars from the previous granularity are never displayed under the
+new label.
+
+The 15-minute graph reads timestamped response usage from local Claude Code and
+Codex JSONL logs. Claude streaming snapshots are deduplicated by session,
+request, and message ID; Codex token events are deduplicated by session and
+cumulative token watermark while retaining the active turn model. Each
+agent/model/day is reconciled to the authoritative
+`ccusage daily --json --by-agent` cost using weighted input, output, cache-read,
+and cache-creation usage, so its 15-minute buckets preserve the reported daily
+total. The timestamp and token counts are taken from the raw event; the
+sub-daily cost is a reconciled allocation rather than an amount reported
+directly by the agent. Hourly and 6-hour graphs aggregate those same cached
+buckets. This enables granular Fable and Opus graphs when their local response
+events are present, even when the unified `ccusage session` report omits
+Claude, and avoids assigning an entire Codex session total to its last activity.
+
+Models for which neither raw timestamped events nor session rows exist remain
+visible in the Models filter but are disabled and struck through for the
+affected granularity. Hover a disabled model for the source-data explanation,
+or select Daily to view its aggregate usage. The dashboard does not invent a
+timestamp when only a daily total is available.
 
 Concurrent dashboard API requests share one in-flight AppCore snapshot. This
 avoids launching duplicate `ccusage` process groups for metrics, graph, and
@@ -63,8 +84,47 @@ The HTTP server prewarms its snapshot at startup. Range changes reuse the last
 completed snapshot immediately, while automatic and manual refreshes explicitly
 replace it through `/api/refresh` before the visible resources are refetched.
 
-Only the active period is requested by the frontend. Historical ranges are
-loaded lazily when selected instead of downloading an all-history catalog.
+Only the active period's metric and graph rows are requested by the frontend.
+The Models menu omits models with no data in that period. If period data exists
+but the selected graph granularity has no usable timestamped source, the model
+remains visible but is disabled and struck through.
+
+## Installation with Nix (nix-darwin)
+
+CCUsage Gauge can be installed declaratively through nix-darwin's Homebrew
+integration. Homebrew must already be installed, either separately or through
+a Nix Homebrew integration such as `nix-homebrew`.
+
+Add the tap, the `ccusage` CLI used as the data source, and the CCUsage Gauge
+Cask to a nix-darwin module:
+
+```nix
+{ ... }:
+{
+  homebrew = {
+    enable = true;
+    taps = [ "tacogips/tap" ];
+    brews = [ "ccusage" ];
+    casks = [ "tacogips/tap/ccusage-gauge" ];
+  };
+}
+```
+
+Apply the configuration using the configuration name defined by your flake:
+
+```bash
+darwin-rebuild switch --flake .#<configuration>
+```
+
+If the local Homebrew policy requires explicit trust for third-party taps,
+trust the tap once before rebuilding:
+
+```bash
+brew trust --tap tacogips/tap
+```
+
+The repository's own `flake.nix` provides the development shell described
+below; it is not the application installation package.
 
 ## Development
 
@@ -130,15 +190,14 @@ data but does not reload configuration. For example, to use port `19090`, set
 `"dashboardPort": 19090`, relaunch the application, and choose **Open
 dashboard** to open `http://127.0.0.1:19090/`.
 
-Historical daily and session aggregates are cached at
-`~/.cache/ccusage-gauge/aggregates-v1.sqlite3`. After the initial cache build,
+Historical daily and timestamped event aggregates are cached at
+`~/.cache/ccusage-gauge/aggregates.sqlite3`. After the initial cache build,
 refreshes run the block, daily, and session queries concurrently while limiting
-daily/session reads to uncached and current dates. Set
+daily/session and raw Claude event reads to uncached and current dates. Set
 `CCUSAGE_GAUGE_CACHE_HOME` to override the `.cache` root.
 
 The cache uses the system SQLite library. Metadata, daily aggregates, and
 session aggregates are stored in normalized tables and updated transactionally.
-The obsolete JSON cache is removed automatically when SQLite caching starts.
 
 Validate the production configuration and resolved `ccusage` executable with:
 

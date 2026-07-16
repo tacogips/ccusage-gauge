@@ -79,7 +79,9 @@ struct CCUsageGaugeCLI {
       aggregationCache: UsageAggregationCache(
         fileURL: resolvedPaths.aggregationCacheFile,
         retentionDays: config.cacheRetentionDays
-      )
+      ),
+      claudeUsageEventLoader: .production(),
+      codexUsageEventLoader: .production()
     )
   }
 

@@ -57,6 +57,11 @@ public struct CCUsageMetricRecord: Codable, Equatable, Sendable {
   }
 }
 
+public enum UsageDataQuality: String, Codable, Equatable, Sendable {
+  case timestamped
+  case sessionEstimated
+}
+
 public struct CCUsageSessionMetricRecord: Codable, Equatable, Sendable {
   public let timestamp: Date
   public let agent: String
@@ -67,6 +72,7 @@ public struct CCUsageSessionMetricRecord: Codable, Equatable, Sendable {
   public let cacheCreationTokens: Int
   public let cacheReadTokens: Int
   public let totalTokens: Int
+  public let dataQuality: UsageDataQuality
 
   public init(
     timestamp: Date,
@@ -76,7 +82,8 @@ public struct CCUsageSessionMetricRecord: Codable, Equatable, Sendable {
     inputTokens: Int = 0,
     outputTokens: Int = 0,
     cacheCreationTokens: Int = 0,
-    cacheReadTokens: Int = 0
+    cacheReadTokens: Int = 0,
+    dataQuality: UsageDataQuality = .sessionEstimated
   ) {
     self.timestamp = timestamp
     self.agent = agent
@@ -86,6 +93,7 @@ public struct CCUsageSessionMetricRecord: Codable, Equatable, Sendable {
     self.outputTokens = outputTokens
     self.cacheCreationTokens = cacheCreationTokens
     self.cacheReadTokens = cacheReadTokens
+    self.dataQuality = dataQuality
     totalTokens = inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
   }
 }

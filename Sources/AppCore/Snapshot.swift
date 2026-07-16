@@ -1,5 +1,175 @@
 import Foundation
 
+private struct AgentModelDay: Hashable {
+  let day: String
+  let agent: String
+  let model: String
+}
+
+private struct AgentModelBucket: Hashable {
+  let timestamp: Date
+  let agent: String
+  let model: String
+}
+
+private struct UsageBucketTotals {
+  var costUSD = Decimal.zero
+  var inputTokens = 0
+  var outputTokens = 0
+  var cacheCreationTokens = 0
+  var cacheReadTokens = 0
+}
+
+private struct AuthoritativeUsageTotals {
+  var costUSD = Decimal.zero
+  var inputTokens = 0
+  var outputTokens = 0
+  var cacheCreationTokens = 0
+  var cacheReadTokens = 0
+}
+
+private func reconciledTimestampedSessions(
+  events: [TimestampedUsageEvent],
+  metrics: [CCUsageMetricRecord],
+  calendar: Calendar
+) -> [CCUsageSessionMetricRecord] {
+  let formatter = DateFormatter()
+  formatter.calendar = calendar
+  formatter.locale = Locale(identifier: "en_US_POSIX")
+  formatter.timeZone = calendar.timeZone
+  formatter.dateFormat = "yyyy-MM-dd"
+
+  let totalsByModelDay = Dictionary(grouping: metrics) {
+    AgentModelDay(day: $0.date, agent: $0.agent.lowercased(), model: $0.model)
+  }.mapValues { rows in
+    rows.reduce(into: AuthoritativeUsageTotals()) { totals, row in
+      totals.costUSD += row.costUSD
+      totals.inputTokens += row.inputTokens
+      totals.outputTokens += row.outputTokens
+      totals.cacheCreationTokens += row.cacheCreationTokens
+      totals.cacheReadTokens += row.cacheReadTokens
+    }
+  }
+
+  let eventsByModelDay = Dictionary(grouping: events) {
+    AgentModelDay(day: formatter.string(from: $0.timestamp), agent: $0.agent, model: $0.model)
+  }
+  let allocatedEvents = eventsByModelDay.flatMap { key, groupedEvents -> [CCUsageSessionMetricRecord] in
+    guard let authoritative = totalsByModelDay[key] else { return [] }
+    let sortedEvents = groupedEvents.sorted { ($0.timestamp, $0.identity) < ($1.timestamp, $1.identity) }
+    let totalWeight = sortedEvents.reduce(Decimal.zero) { $0 + $1.relativeCostWeight }
+    let rawInputTokens = sortedEvents.reduce(0) { $0 + $1.inputTokens }
+    let rawOutputTokens = sortedEvents.reduce(0) { $0 + $1.outputTokens }
+    let rawCacheCreationTokens = sortedEvents.reduce(0) { $0 + $1.cacheCreationTokens }
+    let rawCacheReadTokens = sortedEvents.reduce(0) { $0 + $1.cacheReadTokens }
+    var allocatedCost = Decimal.zero
+    var allocatedInputTokens = 0
+    var allocatedOutputTokens = 0
+    var allocatedCacheCreationTokens = 0
+    var allocatedCacheReadTokens = 0
+    return sortedEvents.enumerated().map { index, event in
+      let cost: Decimal
+      if index == sortedEvents.count - 1 {
+        cost = authoritative.costUSD - allocatedCost
+      } else if totalWeight > 0 {
+        cost = authoritative.costUSD * event.relativeCostWeight / totalWeight
+      } else {
+        cost = authoritative.costUSD / Decimal(sortedEvents.count)
+      }
+      let inputTokens = reconciledTokenCount(
+        target: authoritative.inputTokens,
+        raw: event.inputTokens,
+        rawTotal: rawInputTokens,
+        allocated: allocatedInputTokens,
+        index: index,
+        count: sortedEvents.count
+      )
+      let outputTokens = reconciledTokenCount(
+        target: authoritative.outputTokens,
+        raw: event.outputTokens,
+        rawTotal: rawOutputTokens,
+        allocated: allocatedOutputTokens,
+        index: index,
+        count: sortedEvents.count
+      )
+      let cacheCreationTokens = reconciledTokenCount(
+        target: authoritative.cacheCreationTokens,
+        raw: event.cacheCreationTokens,
+        rawTotal: rawCacheCreationTokens,
+        allocated: allocatedCacheCreationTokens,
+        index: index,
+        count: sortedEvents.count
+      )
+      let cacheReadTokens = reconciledTokenCount(
+        target: authoritative.cacheReadTokens,
+        raw: event.cacheReadTokens,
+        rawTotal: rawCacheReadTokens,
+        allocated: allocatedCacheReadTokens,
+        index: index,
+        count: sortedEvents.count
+      )
+      allocatedCost += cost
+      allocatedInputTokens += inputTokens
+      allocatedOutputTokens += outputTokens
+      allocatedCacheCreationTokens += cacheCreationTokens
+      allocatedCacheReadTokens += cacheReadTokens
+      return CCUsageSessionMetricRecord(
+        timestamp: event.timestamp,
+        agent: event.agent,
+        model: event.model,
+        costUSD: cost,
+        inputTokens: inputTokens,
+        outputTokens: outputTokens,
+        cacheCreationTokens: cacheCreationTokens,
+        cacheReadTokens: cacheReadTokens,
+        dataQuality: .timestamped
+      )
+    }
+  }
+  var buckets: [AgentModelBucket: UsageBucketTotals] = [:]
+  for event in allocatedEvents {
+    let bucketTimestamp = Date(
+      timeIntervalSince1970: floor(event.timestamp.timeIntervalSince1970 / 900) * 900
+    )
+    let key = AgentModelBucket(timestamp: bucketTimestamp, agent: event.agent, model: event.model)
+    var totals = buckets[key] ?? UsageBucketTotals()
+    totals.costUSD += event.costUSD
+    totals.inputTokens += event.inputTokens
+    totals.outputTokens += event.outputTokens
+    totals.cacheCreationTokens += event.cacheCreationTokens
+    totals.cacheReadTokens += event.cacheReadTokens
+    buckets[key] = totals
+  }
+  return buckets.map { key, totals in
+    CCUsageSessionMetricRecord(
+      timestamp: key.timestamp,
+      agent: key.agent,
+      model: key.model,
+      costUSD: totals.costUSD,
+      inputTokens: totals.inputTokens,
+      outputTokens: totals.outputTokens,
+      cacheCreationTokens: totals.cacheCreationTokens,
+      cacheReadTokens: totals.cacheReadTokens,
+      dataQuality: .timestamped
+    )
+  }.sorted { ($0.timestamp, $0.model) < ($1.timestamp, $1.model) }
+}
+
+private func reconciledTokenCount(
+  target: Int,
+  raw: Int,
+  rawTotal: Int,
+  allocated: Int,
+  index: Int,
+  count: Int
+) -> Int {
+  if index == count - 1 { return target - allocated }
+  if rawTotal > 0 {
+    return NSDecimalNumber(decimal: Decimal(target) * Decimal(raw) / Decimal(rawTotal)).intValue
+  }
+  return target / count
+}
+
 private func selectedPeriodCost(
   cycle: ResetCycle,
   interval: DateInterval,
@@ -90,19 +260,27 @@ public struct SnapshotService: Sendable {
   public let calculator: ResetWindowCalculator
   public let defaultRefreshIntervalSeconds: Int
   public let aggregationCache: UsageAggregationCache?
+  public let claudeUsageEventLoader: ClaudeUsageEventLoader?
+  public let codexUsageEventLoader: CodexUsageEventLoader?
+  private let usageEventCoordinator: TimestampedUsageEventLoadCoordinator
 
   public init(
     stateStore: StateStore,
     client: CCUsageClient,
     calculator: ResetWindowCalculator = ResetWindowCalculator(),
     defaultRefreshIntervalSeconds: Int = AppConfiguration.defaultPollIntervalSeconds,
-    aggregationCache: UsageAggregationCache? = nil
+    aggregationCache: UsageAggregationCache? = nil,
+    claudeUsageEventLoader: ClaudeUsageEventLoader? = nil,
+    codexUsageEventLoader: CodexUsageEventLoader? = nil
   ) {
     self.stateStore = stateStore
     self.client = client
     self.calculator = calculator
     self.defaultRefreshIntervalSeconds = defaultRefreshIntervalSeconds
     self.aggregationCache = aggregationCache
+    self.claudeUsageEventLoader = claudeUsageEventLoader
+    self.codexUsageEventLoader = codexUsageEventLoader
+    usageEventCoordinator = TimestampedUsageEventLoadCoordinator()
   }
 
   public func snapshot(now: Date = Date(), defaultCycle: ResetCycle = .daily) async throws -> CostSnapshot {
@@ -118,12 +296,37 @@ public struct SnapshotService: Sendable {
       cached = nil
     }
     let since = cached.flatMap { nextUncachedDay(after: $0.cachedThrough, today: todayStart) }
+    let currentMonthStart = calculator.calendar.dateInterval(of: .month, for: now)?.start ?? todayStart
+    let rawEventSince = since ?? formatDay(currentMonthStart)
     async let blockRecords = client.blocks()
     async let metricRecords = client.detailedDaily(since: since, until: since == nil ? nil : today)
     async let sessionRecords = client.detailedSessions(since: since, until: since == nil ? nil : today)
+    async let timestampedUsageEvents = usageEventCoordinator.events(
+      claudeLoader: claudeUsageEventLoader,
+      codexLoader: codexUsageEventLoader,
+      since: rawEventSince,
+      until: today,
+      calendar: calculator.calendar
+    )
     let points = try await blockRecords
     let freshMetrics = try await metricRecords
-    let freshSessions = try await sessionRecords
+    let unifiedSessions = try await sessionRecords
+    let timestampedEvents = try await timestampedUsageEvents
+    let timestampedKeys = Set(timestampedEvents.map {
+      AgentModelDay(day: formatDay($0.timestamp), agent: $0.agent, model: $0.model)
+    })
+    let fallbackSessions = unifiedSessions.filter { row in
+      !timestampedKeys.contains(AgentModelDay(
+        day: formatDay(row.timestamp),
+        agent: row.agent.lowercased(),
+        model: row.model
+      ))
+    }
+    let freshSessions = fallbackSessions + reconciledTimestampedSessions(
+      events: timestampedEvents,
+      metrics: freshMetrics,
+      calendar: calculator.calendar
+    )
     let historicalMetrics = (cached?.metrics ?? []) + freshMetrics.filter { $0.date < today }
     let historicalSessions = (cached?.sessions ?? []) + freshSessions.filter { $0.timestamp < todayStart }
     let dashboardMetrics = (cached == nil ? freshMetrics : historicalMetrics + freshMetrics.filter { $0.date >= today })
@@ -279,6 +482,7 @@ public struct DashboardCostRow: Codable, Equatable, Sendable {
   public let cacheCreationTokens: Int
   public let cacheReadTokens: Int
   public let totalTokens: Int
+  public let dataQuality: String
 }
 
 public struct DashboardCostResponse: Codable, Equatable, Sendable {
@@ -384,7 +588,7 @@ public struct DashboardQueryService: Sendable {
     let interval = try queryInterval(range: range, startDate: startDate, endDate: endDate, now: now)
     let rows: [DashboardCostRow]
     switch granularity {
-    case "15min", "hourly":
+    case "15min", "hourly", "6hour":
       rows = snapshot.dashboardSessions.compactMap { record in
         guard isWithin(record.timestamp, interval: interval) else { return nil }
         return DashboardCostRow(
@@ -396,7 +600,8 @@ public struct DashboardQueryService: Sendable {
           outputTokens: record.outputTokens,
           cacheCreationTokens: record.cacheCreationTokens,
           cacheReadTokens: record.cacheReadTokens,
-          totalTokens: record.totalTokens
+          totalTokens: record.totalTokens,
+          dataQuality: record.dataQuality.rawValue
         )
       }
     case "daily":
@@ -411,7 +616,8 @@ public struct DashboardQueryService: Sendable {
           outputTokens: record.outputTokens,
           cacheCreationTokens: record.cacheCreationTokens,
           cacheReadTokens: record.cacheReadTokens,
-          totalTokens: record.totalTokens
+          totalTokens: record.totalTokens,
+          dataQuality: "daily"
         )
       }
     default: throw DashboardQueryError.invalidGranularity

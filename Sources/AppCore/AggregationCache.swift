@@ -48,7 +48,6 @@ public actor UsageAggregationCache {
   }
 
   public func load(now: Date = Date()) -> AggregationCachePayload? {
-    removeLegacyJSONCache()
     guard retentionDays > 0 else { return nil }
     if let memoryPayload {
       guard isRetained(memoryPayload, now: now) else {
@@ -89,7 +88,6 @@ public actor UsageAggregationCache {
     try fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
     try writeDatabase(payload)
     try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-    removeLegacyJSONCache()
     memoryPayload = payload
   }
 
@@ -98,7 +96,6 @@ public actor UsageAggregationCache {
     for suffix in ["", "-journal", "-shm", "-wal"] {
       try? fileManager.removeItem(atPath: fileURL.path + suffix)
     }
-    removeLegacyJSONCache()
   }
 
   private func readDatabase() throws -> AggregationCachePayload {
@@ -170,7 +167,8 @@ public actor UsageAggregationCache {
         input_tokens INTEGER NOT NULL,
         output_tokens INTEGER NOT NULL,
         cache_creation_tokens INTEGER NOT NULL,
-        cache_read_tokens INTEGER NOT NULL
+        cache_read_tokens INTEGER NOT NULL,
+        data_quality TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS daily_metrics_date_idx ON daily_metrics(date);
       CREATE INDEX IF NOT EXISTS session_metrics_timestamp_idx ON session_metrics(timestamp);
@@ -217,13 +215,16 @@ public actor UsageAggregationCache {
   private func readSessions(from database: OpaquePointer) throws -> [CCUsageSessionMetricRecord] {
     let statement = try prepare("""
       SELECT timestamp, agent, model, cost_usd, input_tokens, output_tokens,
-             cache_creation_tokens, cache_read_tokens
+             cache_creation_tokens, cache_read_tokens, data_quality
       FROM session_metrics ORDER BY timestamp, agent, model
       """, in: database)
     defer { sqlite3_finalize(statement) }
     var rows: [CCUsageSessionMetricRecord] = []
     while sqlite3_step(statement) == SQLITE_ROW {
       guard let cost = Decimal(string: try text(statement, column: 3)) else {
+        throw AggregationCacheError.invalidDatabase
+      }
+      guard let dataQuality = UsageDataQuality(rawValue: try text(statement, column: 8)) else {
         throw AggregationCacheError.invalidDatabase
       }
       rows.append(CCUsageSessionMetricRecord(
@@ -234,7 +235,8 @@ public actor UsageAggregationCache {
         inputTokens: Int(sqlite3_column_int64(statement, 4)),
         outputTokens: Int(sqlite3_column_int64(statement, 5)),
         cacheCreationTokens: Int(sqlite3_column_int64(statement, 6)),
-        cacheReadTokens: Int(sqlite3_column_int64(statement, 7))
+        cacheReadTokens: Int(sqlite3_column_int64(statement, 7)),
+        dataQuality: dataQuality
       ))
     }
     return rows
@@ -279,8 +281,8 @@ public actor UsageAggregationCache {
     let statement = try prepare("""
       INSERT INTO session_metrics(
         timestamp, agent, model, cost_usd, input_tokens, output_tokens,
-        cache_creation_tokens, cache_read_tokens
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        cache_creation_tokens, cache_read_tokens, data_quality
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       """, in: database)
     defer { sqlite3_finalize(statement) }
     for row in sessions {
@@ -294,6 +296,7 @@ public actor UsageAggregationCache {
       sqlite3_bind_int64(statement, 6, sqlite3_int64(row.outputTokens))
       sqlite3_bind_int64(statement, 7, sqlite3_int64(row.cacheCreationTokens))
       sqlite3_bind_int64(statement, 8, sqlite3_int64(row.cacheReadTokens))
+      try bind(row.dataQuality.rawValue, to: 9, in: statement)
       try stepDone(statement)
     }
   }
@@ -334,11 +337,6 @@ public actor UsageAggregationCache {
     now.timeIntervalSince(payload.createdAt) < TimeInterval(retentionDays) * 86_400
   }
 
-  private func removeLegacyJSONCache() {
-    let legacy = fileURL.deletingLastPathComponent().appendingPathComponent("aggregates-v1.json")
-    guard legacy != fileURL else { return }
-    try? fileManager.removeItem(at: legacy)
-  }
 }
 
 public enum AggregationCacheError: Error, Sendable {

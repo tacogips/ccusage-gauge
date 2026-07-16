@@ -112,7 +112,9 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
         aggregationCache: UsageAggregationCache(
           fileURL: paths.aggregationCacheFile,
           retentionDays: loaded.cacheRetentionDays
-        )
+        ),
+        claudeUsageEventLoader: .production(),
+        codexUsageEventLoader: .production()
       )
       snapshotService = service
       errorMessage = nil
