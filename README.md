@@ -10,6 +10,27 @@ refresh, and quit. Missing or invalid `ccusage` configuration changes the
 status icon to a warning and exposes diagnostics plus retry in an Error Details
 submenu.
 
+## Screenshots
+
+### Menu bar
+
+The compact status item shows current spend and budget usage at a glance.
+
+<p align="center">
+  <img src="design-docs/screenshots/menu-bar-status.png" alt="ccusage-gauge menu-bar status showing spend and budget usage" width="384">
+</p>
+
+The expanded menu provides budget, reset-cycle, refresh-interval, settings,
+and dashboard controls.
+
+<p align="center">
+  <img src="design-docs/screenshots/menu-bar-menu.png" alt="ccusage-gauge expanded menu" width="608">
+</p>
+
+### Dashboard
+
+![ccusage-gauge dashboard showing model filters, cost metrics, and hourly usage](design-docs/screenshots/dashboard.png)
+
 The SolidJS dashboard provides:
 
 - exact per-agent and per-model rows from `ccusage daily --json --by-agent`;
