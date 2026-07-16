@@ -218,7 +218,7 @@ import Testing
   }
 }
 
-@Suite("CostAggregationTests") struct CostAggregationTests {
+@Suite("CostAggregationTests", .serialized) struct CostAggregationTests {
   @Test func cachedSnapshotUsesModernArgumentsAndLimitsDetailedQueriesToCurrentDate() async throws {
     let root = try temporaryDirectory()
     let executable = root.appendingPathComponent("ccusage")
