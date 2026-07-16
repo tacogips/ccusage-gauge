@@ -8,6 +8,45 @@ private actor SnapshotLoadCounter {
   func increment() { value += 1 }
 }
 
+private actor SnapshotRangeRecorder {
+  private(set) var earliestDate: Date?
+  private(set) var requestCount = 0
+
+  func record(_ date: Date?) {
+    earliestDate = date
+    requestCount += 1
+  }
+}
+
+private actor ControlledSnapshotLoader {
+  private let snapshot: CostSnapshot
+  private var requests: [Date?] = []
+  private var continuations: [CheckedContinuation<CostSnapshot, Never>] = []
+
+  init(snapshot: CostSnapshot) { self.snapshot = snapshot }
+
+  func load(_ date: Date?) async -> CostSnapshot {
+    requests.append(date)
+    return await withCheckedContinuation { continuation in
+      continuations.append(continuation)
+    }
+  }
+
+  var requestDates: [Date?] { requests }
+
+  func releaseAll() {
+    let waiting = continuations
+    continuations.removeAll()
+    for continuation in waiting { continuation.resume(returning: snapshot) }
+  }
+}
+
+private actor CacheClearCounter {
+  private(set) var value = 0
+
+  func increment() { value += 1 }
+}
+
 @Suite("DashboardQueryTests") struct DashboardQueryTests {
   @Test func groupsSelectedDayAndBudget() {
     var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -221,6 +260,149 @@ private actor SnapshotLoadCounter {
 }
 
 @Suite("APIRouteTests") struct APIRouteTests {
+  @Test func preloadStartsWeeklyAndHistoricalLoadsConcurrently() async throws {
+    let root = try temporaryDirectory()
+    try Data("<h1>dashboard</h1>".utf8).write(to: root.appendingPathComponent("index.html"))
+    let now = ISO8601DateFormatter().date(from: "2026-07-16T12:00:00Z")!
+    let snapshot = CostSnapshot(
+      generatedAt: now,
+      activeBoundaryAt: now,
+      costSinceResetUSD: 0,
+      budget: BudgetSummary(spentUSD: 0, budgetUSD: nil),
+      resetCycle: .daily,
+      points: []
+    )
+    let loader = ControlledSnapshotLoader(snapshot: snapshot)
+    let router = DashboardRouter(
+      rangeSnapshotProvider: { await loader.load($0) },
+      assetResolver: StaticAssetResolver(explicitRoot: root)
+    )
+    let preload = Task { await router.preloadSnapshot() }
+
+    for _ in 0..<1_000 {
+      if await loader.requestDates.count == 2 { break }
+      try await Task.sleep(for: .milliseconds(1))
+    }
+    let requests = await loader.requestDates
+    #expect(requests.count == 2)
+    #expect(requests.contains(where: { $0 == nil }))
+    #expect(requests.contains(where: { $0 != nil }))
+
+    await loader.releaseAll()
+    await preload.value
+  }
+
+  @Test func initialSnapshotWarmsPreviousMonthAfterCurrentWeek() async throws {
+    let now = ISO8601DateFormatter().date(from: "2026-07-16T12:00:00Z")!
+    let snapshot = CostSnapshot(
+      generatedAt: now,
+      activeBoundaryAt: now,
+      costSinceResetUSD: 0,
+      budget: BudgetSummary(spentUSD: 0, budgetUSD: nil),
+      resetCycle: .daily,
+      points: []
+    )
+    let recorder = SnapshotRangeRecorder()
+    let cache = DashboardSnapshotCache(
+      maxAgeSeconds: 60,
+      now: { now },
+      progressiveLoader: { date, progress in
+        await recorder.record(date)
+        let total = date == nil ? 1 : 9
+        await progress?(SnapshotLoadProgress(completed: 0, total: total))
+        await progress?(SnapshotLoadProgress(completed: total, total: total))
+        return snapshot
+      }
+    )
+
+    _ = try await cache.snapshot()
+    let weeklyStatus = await cache.status()
+    #expect(weeklyStatus.phase == .loadingHistory)
+    #expect(weeklyStatus.completed == 0)
+    #expect(weeklyStatus.total == 1)
+    #expect(weeklyStatus.isLoading)
+    _ = try await cache.warmHistoricalCoverage()
+    let readyStatus = await cache.status()
+
+    var calendar = Calendar.current
+    calendar.timeZone = TimeZone.current
+    let monthStart = try #require(calendar.dateInterval(of: .month, for: now)?.start)
+    let expected = try #require(calendar.date(byAdding: .month, value: -1, to: monthStart))
+    #expect(await recorder.requestCount == 2)
+    #expect(await recorder.earliestDate == expected)
+    #expect(readyStatus.phase == .ready)
+    #expect(readyStatus.completed == 9)
+    #expect(readyStatus.total == 9)
+    #expect(!readyStatus.isLoading)
+  }
+
+  @Test func clearingCacheInvalidatesPersistentAndSnapshotCaches() async throws {
+    let root = try temporaryDirectory()
+    try Data("<h1>dashboard</h1>".utf8).write(to: root.appendingPathComponent("index.html"))
+    let now = Date()
+    let snapshot = CostSnapshot(
+      generatedAt: now,
+      activeBoundaryAt: now,
+      costSinceResetUSD: 0,
+      budget: BudgetSummary(spentUSD: 0, budgetUSD: nil),
+      resetCycle: .daily,
+      points: []
+    )
+    let loads = SnapshotLoadCounter()
+    let clears = CacheClearCounter()
+    let router = DashboardRouter(
+      rangeSnapshotProvider: { _ in
+        await loads.increment()
+        return snapshot
+      },
+      assetResolver: StaticAssetResolver(explicitRoot: root),
+      cacheClearer: { await clears.increment() }
+    )
+
+    #expect(await router.route(target: "/api/metrics?range=today").status == 200)
+    #expect(await loads.value == 1)
+    #expect(await router.route(target: "/api/cache", method: "DELETE").status == 200)
+    #expect(await clears.value == 1)
+    for _ in 0..<1_000 {
+      if await loads.value == 3 { break }
+      try await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(await loads.value == 3)
+    #expect(await router.route(target: "/api/metrics?range=today").status == 200)
+    #expect(await loads.value == 3)
+    #expect(await router.route(target: "/api/cache", method: "POST").status == 405)
+  }
+
+  @Test func customRangeRequestsOlderSnapshotCoverage() async throws {
+    let root = try temporaryDirectory()
+    try Data("<h1>dashboard</h1>".utf8).write(to: root.appendingPathComponent("index.html"))
+    let now = Date()
+    let snapshot = CostSnapshot(
+      generatedAt: now,
+      activeBoundaryAt: now,
+      costSinceResetUSD: 0,
+      budget: BudgetSummary(spentUSD: 0, budgetUSD: nil),
+      resetCycle: .daily,
+      points: []
+    )
+    let recorder = SnapshotRangeRecorder()
+    let query = DashboardQueryService()
+    let expected = try #require(query.parseDay("2026-04-01"))
+    let router = DashboardRouter(
+      rangeSnapshotProvider: {
+        await recorder.record($0)
+        return snapshot
+      },
+      queryService: query,
+      assetResolver: StaticAssetResolver(explicitRoot: root)
+    )
+
+    let response = await router.route(target: "/api/metrics?range=custom&start=2026-04-01&end=2026-04-30")
+
+    #expect(response.status == 200)
+    #expect(await recorder.earliestDate == expected)
+  }
+
   @Test func coalescesConcurrentSnapshotRequests() async throws {
     let root = try temporaryDirectory()
     try Data("<h1>dashboard</h1>".utf8).write(to: root.appendingPathComponent("index.html"))
@@ -265,6 +447,7 @@ private actor SnapshotLoadCounter {
     #expect(await router.route(target: "/api/period?range=custom&start=2026-07-16&end=2026-07-15").status == 400)
     #expect(await router.route(target: "/api/metrics?range=today").status == 200)
     #expect(await router.route(target: "/api/metrics?range=recent12h").status == 200)
+    #expect(await router.route(target: "/api/load-status").status == 200)
     #expect(await router.route(target: "/api/cost-series?range=today&granularity=hourly").status == 200)
     #expect(await router.route(target: "/api/cost-series?range=today&granularity=15min").status == 200)
     #expect(await router.route(target: "/api/cost-series?range=today&granularity=weekly").status == 400)

@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
-import { type BudgetResponse, type CostRow, type CostSeriesResponse, type MetricRow, type MetricsResponse, getJSON } from "./api";
+import { type BudgetResponse, type CostRow, type CostSeriesResponse, type LoadStatusResponse, type MetricRow, type MetricsResponse, getJSON, requestJSON } from "./api";
 
 type QuickRange = "recent12h" | "today" | "yesterday" | "week" | "month";
 type Range = QuickRange | "custom";
@@ -290,22 +290,30 @@ function Bars(props: {
   );
 }
 
-function LoadingState() {
+function LoadingState(props: { status?: LoadStatusResponse }) {
+  const completed = () => props.status?.completed ?? 0;
+  const total = () => Math.max(props.status?.total ?? 1, 1);
   return (
     <section class="loading-state" role="status" aria-live="polite">
       <div class="loading-spinner" aria-hidden="true" />
       <div>
-        <strong>Loading usage data…</strong>
-        <p>Reading ccusage metrics and preparing the dashboard.</p>
+        <strong>{props.status?.message ?? "Loading this week"}…</strong>
+        <p>Reading ccusage metrics and preparing the dashboard. {completed()}/{total()}</p>
+        <progress class="load-progress" value={completed()} max={total()} aria-label="Usage loading progress" />
       </div>
     </section>
   );
 }
 
 export default function App() {
+  let configMenu: HTMLDetailsElement | undefined;
+  const initialCustomStart = daysAgo(6);
+  const initialCustomEnd = localDate();
   const [range, setRange] = createSignal<Range>("recent12h");
-  const [customStart, setCustomStart] = createSignal(daysAgo(6));
-  const [customEnd, setCustomEnd] = createSignal(localDate());
+  const [customStart, setCustomStart] = createSignal(initialCustomStart);
+  const [customEnd, setCustomEnd] = createSignal(initialCustomEnd);
+  const [appliedCustomRange, setAppliedCustomRange] = createSignal({ start: initialCustomStart, end: initialCustomEnd });
+  const [isCustomEditorOpen, setIsCustomEditorOpen] = createSignal(false);
   const [selectedModels, setSelectedModels] = createSignal<string[]>([]);
   const [selectedAgents, setSelectedAgents] = createSignal<string[]>([]);
   const [granularity, setGranularity] = createSignal<Granularity>("hourly");
@@ -314,16 +322,19 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = createSignal(false);
   const [isRangeLoading, setIsRangeLoading] = createSignal(false);
   const [rangeLoadStarted, setRangeLoadStarted] = createSignal(false);
+  const [isClearingCache, setIsClearingCache] = createSignal(false);
+  const [cacheStatus, setCacheStatus] = createSignal<string>();
 
   const periodPath = createMemo(() => range() === "custom"
-    ? `/api/metrics?range=custom&start=${customStart()}&end=${customEnd()}`
+    ? `/api/metrics?range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`
     : `/api/metrics?range=${range()}`);
   const [period, { refetch: refreshPeriod }] = createResource(periodPath, (path) => getJSON<MetricsResponse>(path));
   const costPath = createMemo(() => range() === "custom"
-    ? `/api/cost-series?granularity=${granularity()}&range=custom&start=${customStart()}&end=${customEnd()}`
+    ? `/api/cost-series?granularity=${granularity()}&range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`
     : `/api/cost-series?granularity=${granularity()}&range=${range()}`);
   const [costSeries, { refetch: refreshCostSeries }] = createResource(costPath, (path) => getJSON<CostSeriesResponse>(path));
   const [budget, { refetch: refreshBudget }] = createResource(() => getJSON<BudgetResponse>("/api/budget"));
+  const [loadStatus, { refetch: refreshLoadStatus }] = createResource(() => getJSON<LoadStatusResponse>("/api/load-status"));
 
   const models = createMemo(() => [...new Set((period()?.rows ?? []).map((row) => row.model))].sort());
   const agents = createMemo(() => [...new Set((period()?.rows ?? []).map((row) => row.agent))].sort());
@@ -370,13 +381,15 @@ export default function App() {
   const chartMetricLabel = createMemo(() => chartMetrics.find(([value]) => value === chartMetric())?.[1] ?? "Cost");
   const chartTitle = createMemo(() => `${chartMetricLabel()} over time by model`);
   const formattedChartTotal = createMemo(() => chartMetric() === "costUSD" ? currency.format(chartTotal()) : integer.format(chartTotal()));
-  const rangeLabel = createMemo(() => range() === "custom" ? `${customStart()} – ${customEnd()}` : quickRanges.find(([value]) => value === range())?.[1] ?? "Selected period");
+  const rangeLabel = createMemo(() => range() === "custom"
+    ? `${appliedCustomRange().start} – ${appliedCustomRange().end}`
+    : quickRanges.find(([value]) => value === range())?.[1] ?? "Selected period");
   const filterLabel = createMemo(() => selectedModels().length === 0 ? "All models" : `${selectedModels().length} selected`);
   const errorMessage = createMemo(() => period.error?.message ?? costSeries.error?.message ?? budget.error?.message);
   const isInitialLoading = createMemo(() => period() == null || costSeries() == null || budget() == null);
   const isBlockingLoading = createMemo(() => isInitialLoading() || isRangeLoading());
   const isBackgroundLoading = createMemo(() => !isBlockingLoading() &&
-    (isRefreshing() || period.loading || costSeries.loading || budget.loading));
+    (loadStatus()?.isLoading || isRefreshing() || period.loading || costSeries.loading || budget.loading));
   const toggleModel = (model: string) => setSelectedModels((current) => current.includes(model)
     ? current.filter((item) => item !== model)
     : [...current, model]);
@@ -406,24 +419,58 @@ export default function App() {
     });
     return refreshPromise;
   };
+  const clearCache = async () => {
+    if (isClearingCache() || !window.confirm("Clear cached usage aggregates? The dashboard will reload recent data.")) return;
+    setIsClearingCache(true);
+    setCacheStatus(undefined);
+    try {
+      await requestJSON<{ status: string }>("/api/cache", { method: "DELETE" });
+      if (configMenu) configMenu.open = false;
+      const wasShowingThisWeek = range() === "week";
+      setIsCustomEditorOpen(false);
+      beginRangeLoad();
+      let reload: Promise<unknown>;
+      if (wasShowingThisWeek) {
+        reload = Promise.all([refreshPeriod(), refreshCostSeries(), refreshBudget()]);
+      } else {
+        setRange("week");
+        reload = Promise.resolve(refreshBudget());
+      }
+      void reload.catch((error) => setCacheStatus(error instanceof Error ? error.message : "Background reload failed."));
+      setCacheStatus("Cache cleared. Reloading this week in the background.");
+    } catch (error) {
+      setCacheStatus(error instanceof Error ? error.message : "Cache clear failed.");
+    } finally {
+      setIsClearingCache(false);
+    }
+  };
   const beginRangeLoad = () => {
     setRangeLoadStarted(false);
     setIsRangeLoading(true);
   };
   const selectRange = (next: Range) => {
     if (next === range()) return;
+    setIsCustomEditorOpen(false);
     beginRangeLoad();
     setRange(next);
   };
   const updateCustomStart = (value: string) => {
     if (value === customStart()) return;
-    beginRangeLoad();
     setCustomStart(value);
   };
   const updateCustomEnd = (value: string) => {
     if (value === customEnd()) return;
-    beginRangeLoad();
     setCustomEnd(value);
+  };
+  const applyCustomRange = () => {
+    const start = customStart();
+    const end = customEnd();
+    if (!start || !end || start > end) return;
+    const applied = appliedCustomRange();
+    if (range() === "custom" && applied.start === start && applied.end === end) return;
+    beginRangeLoad();
+    setAppliedCustomRange({ start, end });
+    setRange("custom");
   };
   const selectGranularity = (next: Granularity) => {
     if (next === granularity()) return;
@@ -440,9 +487,16 @@ export default function App() {
       setRangeLoadStarted(false);
     }
   });
+  onMount(() => {
+    const timer = window.setInterval(refreshLoadStatus, 250);
+    onCleanup(() => window.clearInterval(timer));
+  });
   createEffect(() => {
     const intervalSeconds = budget()?.refreshIntervalSeconds ?? 20;
-    const timer = window.setInterval(refresh, Math.max(intervalSeconds, 1) * 1_000);
+    const timer = window.setInterval(() => {
+      if (loadStatus()?.isLoading) return;
+      void refresh();
+    }, Math.max(intervalSeconds, 1) * 1_000);
     onCleanup(() => window.clearInterval(timer));
   });
 
@@ -471,25 +525,43 @@ export default function App() {
 
       <main class="content" aria-busy={isBlockingLoading() || isBackgroundLoading()}>
         <header>
-          <div><h1>ccusage-gauge</h1></div>
+          <div class="dashboard-title"><h1>ccusage-gauge</h1>
+            <details class="config-menu" ref={configMenu}>
+              <summary aria-label="Open dashboard configuration" title="Dashboard configuration">Config</summary>
+              <div class="config-menu-panel">
+                <strong>Dashboard configuration</strong>
+                <p>Remove persisted usage aggregates and reload recent data.</p>
+                <button disabled={isClearingCache()} onClick={clearCache}>{isClearingCache() ? "Clearing…" : "Clear cache"}</button>
+                <Show when={cacheStatus()}>{(message) => <small role="status">{message()}</small>}</Show>
+              </div>
+            </details>
+          </div>
           <div class="period-control" aria-label="Aggregation period">
             <div class="range-buttons">
               <For each={quickRanges}>{([value, label]) => <button classList={{ active: range() === value }} onClick={() => selectRange(value)}>{label}</button>}</For>
-              <button classList={{ active: range() === "custom" }} onClick={() => selectRange("custom")}>Custom</button>
+              <button classList={{ active: range() === "custom" || isCustomEditorOpen() }} onClick={() => setIsCustomEditorOpen(true)}>Custom</button>
             </div>
             <span classList={{ "background-refresh-status": true, visible: isBackgroundLoading() }} role="status" aria-live="polite">
-              <span class="refresh-spinner" aria-hidden="true" />Updating…
+              <span class="refresh-spinner" aria-hidden="true" />
+              {loadStatus()?.isLoading
+                ? `${loadStatus()!.message} · ${loadStatus()!.completed}/${loadStatus()!.total}`
+                : "Updating…"}
             </span>
-            <Show when={range() === "custom"}><div class="custom-calendar" role="group" aria-label="Custom date range">
+            <Show when={isCustomEditorOpen()}><div class="custom-calendar" role="group" aria-label="Custom date range">
               <label>From<input aria-label="Custom range start" type="date" value={customStart()} max={customEnd()} onInput={(event) => updateCustomStart(event.currentTarget.value)} /></label>
               <span>to</span>
               <label>To<input aria-label="Custom range end" type="date" value={customEnd()} min={customStart()} onInput={(event) => updateCustomEnd(event.currentTarget.value)} /></label>
+              <button
+                class="apply-custom-range"
+                disabled={!customStart() || !customEnd() || customStart() > customEnd()}
+                onClick={applyCustomRange}
+              >Apply</button>
             </div></Show>
           </div>
         </header>
 
         <Show when={!errorMessage()} fallback={<section class="error"><span>{errorMessage()}</span><button onClick={refresh}>Retry</button></section>}>
-          <Show when={!isBlockingLoading()} fallback={<LoadingState />}>
+          <Show when={!isBlockingLoading()} fallback={<LoadingState status={loadStatus()} />}>
             <section class="stats metric-stats">
             <article><span>Selected cost</span><strong>{currency.format(total("costUSD"))}</strong><small>{rangeLabel()} · {filterLabel()}</small></article>
             <article><span>Total tokens</span><strong>{integer.format(total("totalTokens"))}</strong><small>All token categories</small></article>

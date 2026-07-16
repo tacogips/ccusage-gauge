@@ -52,15 +52,49 @@ public struct HTTPResponse: Sendable {
   }
 }
 
-public actor DashboardSnapshotCache {
-  public typealias Loader = @Sendable () async throws -> CostSnapshot
+public enum DashboardLoadPhase: String, Codable, Equatable, Sendable {
+  case idle
+  case loadingWeek
+  case loadingHistory
+  case loadingRange
+  case refreshing
+  case ready
+  case failed
+}
 
-  private let loader: Loader
+public struct DashboardLoadStatus: Codable, Equatable, Sendable {
+  public let phase: DashboardLoadPhase
+  public let message: String
+  public let completed: Int
+  public let total: Int
+  public let isLoading: Bool
+}
+
+public actor DashboardSnapshotCache {
+  public typealias Loader = @Sendable (Date?) async throws -> CostSnapshot
+  public typealias ProgressiveLoader = @Sendable (Date?, SnapshotLoadProgressHandler?) async throws -> CostSnapshot
+
+  private let loader: ProgressiveLoader
   private let maxAgeSeconds: TimeInterval
   private let now: @Sendable () -> Date
   private var latest: CostSnapshot?
   private var loadedAt: Date?
+  private var coverageStart: Date?
   private var inFlight: Task<CostSnapshot, Error>?
+  private var inFlightGeneration = 0
+  private var inFlightStart: Date?
+  private var inFlightRequestedAt: Date?
+  private var historicalTask: Task<CostSnapshot, Error>?
+  private var historicalGeneration = 0
+  private var historicalStart: Date?
+  private var historicalProgress = SnapshotLoadProgress(completed: 0, total: 1)
+  private var loadStatus = DashboardLoadStatus(
+    phase: .idle,
+    message: "Waiting to load usage data",
+    completed: 0,
+    total: 1,
+    isLoading: false
+  )
 
   public init(
     maxAgeSeconds: TimeInterval = 1,
@@ -69,69 +103,412 @@ public actor DashboardSnapshotCache {
   ) {
     self.maxAgeSeconds = max(0, maxAgeSeconds)
     self.now = now
-    self.loader = loader
+    self.loader = { date, _ in try await loader(date) }
   }
 
-  public func snapshot(forceRefresh: Bool = false) async throws -> CostSnapshot {
+  public init(
+    maxAgeSeconds: TimeInterval = 1,
+    now: @escaping @Sendable () -> Date = Date.init,
+    progressiveLoader: @escaping ProgressiveLoader
+  ) {
+    self.maxAgeSeconds = max(0, maxAgeSeconds)
+    self.now = now
+    loader = progressiveLoader
+  }
+
+  public func snapshot(earliestDate: Date? = nil, forceRefresh: Bool = false) async throws -> CostSnapshot {
     let requestedAt = now()
+    let requiredStart = earliestDate
     if !forceRefresh, let latest, let loadedAt,
-       requestedAt.timeIntervalSince(loadedAt) <= maxAgeSeconds {
+       requestedAt.timeIntervalSince(loadedAt) <= maxAgeSeconds,
+       covers(requiredStart) {
       return latest
     }
-    if let inFlight { return try await inFlight.value }
+    if let inFlight {
+      let generation = inFlightGeneration
+      let loadFrom = inFlightStart
+      let startedAt = inFlightRequestedAt ?? requestedAt
+      do {
+        let snapshot = try await inFlight.value
+        finish(snapshot, generation: generation, loadFrom: loadFrom, requestedAt: startedAt)
+        if covers(requiredStart) { return snapshot }
+        return try await self.snapshot(earliestDate: requiredStart)
+      } catch {
+        clearInFlight(generation: generation)
+        markFailed()
+        throw error
+      }
+    }
+    if !forceRefresh,
+       let requiredStart,
+       let historicalTask,
+       let historicalStart,
+       historicalStart <= requiredStart {
+      let generation = historicalGeneration
+      do {
+        let snapshot = try await historicalTask.value
+        finishHistorical(snapshot, generation: generation, loadFrom: historicalStart)
+        return snapshot
+      } catch {
+        clearHistorical(generation: generation)
+        markFailed()
+        throw error
+      }
+    }
 
-    let task = Task { try await loader() }
+    let loadFrom = requiredStart ?? coverageStart
+    if latest == nil {
+      loadStatus = DashboardLoadStatus(
+        phase: .loadingWeek,
+        message: "Loading this week",
+        completed: 0,
+        total: 1,
+        isLoading: true
+      )
+    } else if forceRefresh {
+      loadStatus = DashboardLoadStatus(
+        phase: .refreshing,
+        message: "Refreshing usage data",
+        completed: 0,
+        total: 1,
+        isLoading: true
+      )
+    } else {
+      loadStatus = DashboardLoadStatus(
+        phase: .loadingRange,
+        message: "Loading history by week",
+        completed: 0,
+        total: 1,
+        isLoading: true
+      )
+    }
+    inFlightGeneration += 1
+    let generation = inFlightGeneration
+    let isInitialLoad = latest == nil
+    let task = Task {
+      try await loader(loadFrom) { progress in
+        await self.updateInFlightProgress(
+          progress,
+          generation: generation,
+          isInitialLoad: isInitialLoad,
+          forceRefresh: forceRefresh
+        )
+      }
+    }
     inFlight = task
+    inFlightStart = loadFrom
+    inFlightRequestedAt = requestedAt
     do {
       let snapshot = try await task.value
-      latest = snapshot
-      loadedAt = now()
-      inFlight = nil
+      finish(snapshot, generation: generation, loadFrom: loadFrom, requestedAt: requestedAt)
       return snapshot
     } catch {
-      inFlight = nil
+      clearInFlight(generation: generation)
+      markFailed()
       throw error
     }
+  }
+
+  public func status() -> DashboardLoadStatus { loadStatus }
+
+  public func clear() {
+    inFlight?.cancel()
+    inFlightGeneration += 1
+    inFlight = nil
+    inFlightStart = nil
+    inFlightRequestedAt = nil
+    historicalTask?.cancel()
+    historicalGeneration += 1
+    historicalTask = nil
+    historicalStart = nil
+    historicalProgress = SnapshotLoadProgress(completed: 0, total: 1)
+    latest = nil
+    loadedAt = nil
+    coverageStart = nil
+    loadStatus = DashboardLoadStatus(
+      phase: .idle,
+      message: "Cache cleared",
+      completed: 0,
+      total: 1,
+      isLoading: false
+    )
+  }
+
+  public func warmHistoricalCoverage() async throws -> CostSnapshot {
+    startHistoricalWarm()
+    guard let historicalTask, let historicalStart else {
+      guard let latest else { throw CancellationError() }
+      return latest
+    }
+    let generation = historicalGeneration
+    do {
+      let result = try await historicalTask.value
+      finishHistorical(result, generation: generation, loadFrom: historicalStart)
+      return result
+    } catch {
+      clearHistorical(generation: generation)
+      markFailed()
+      throw error
+    }
+  }
+
+  public func startHistoricalWarm() {
+    guard historicalTask == nil else { return }
+    let requestedAt = now()
+    let calendar = Calendar.current
+    let currentMonthStart = calendar.dateInterval(of: .month, for: requestedAt)?.start
+      ?? calendar.startOfDay(for: requestedAt)
+    let previousMonthStart = calendar.date(byAdding: .month, value: -1, to: currentMonthStart)
+      ?? currentMonthStart
+    guard !covers(previousMonthStart) else {
+      loadStatus = DashboardLoadStatus(
+        phase: .ready,
+        message: "Usage data is ready",
+        completed: 1,
+        total: 1,
+        isLoading: false
+      )
+      return
+    }
+    historicalGeneration += 1
+    let generation = historicalGeneration
+    historicalStart = previousMonthStart
+    historicalProgress = SnapshotLoadProgress(completed: 0, total: 1)
+    historicalTask = Task(priority: .utility) {
+      try await loader(previousMonthStart) { progress in
+        await self.updateHistoricalProgress(progress, generation: generation)
+      }
+    }
+  }
+
+  private func finish(_ snapshot: CostSnapshot, generation: Int, loadFrom: Date?, requestedAt: Date) {
+    guard generation == inFlightGeneration else { return }
+    let replacesLatest = loadFrom.map { requestedStart in
+      coverageStart.map { requestedStart <= $0 } ?? true
+    } ?? (coverageStart == nil)
+    if replacesLatest {
+      latest = snapshot
+    }
+    loadedAt = now()
+    if let loadFrom {
+      coverageStart = min(coverageStart ?? defaultCoverageStart(at: requestedAt), loadFrom)
+    } else if coverageStart == nil {
+      coverageStart = defaultCoverageStart(at: requestedAt)
+    }
+    if loadStatus.phase == .loadingWeek {
+      loadStatus = DashboardLoadStatus(
+        phase: .loadingHistory,
+        message: "Loading this month and previous month",
+        completed: historicalProgress.completed,
+        total: max(historicalProgress.total, 1),
+        isLoading: true
+      )
+    } else if loadStatus.phase == .refreshing || loadStatus.phase == .loadingRange {
+      loadStatus = DashboardLoadStatus(
+        phase: .ready,
+        message: "Usage data is ready",
+        completed: loadStatus.total,
+        total: loadStatus.total,
+        isLoading: false
+      )
+    }
+    clearInFlight(generation: generation)
+  }
+
+  private func markFailed() {
+    loadStatus = DashboardLoadStatus(
+      phase: .failed,
+      message: "Usage data loading failed",
+      completed: loadStatus.completed,
+      total: loadStatus.total,
+      isLoading: false
+    )
+  }
+
+  private func updateInFlightProgress(
+    _ progress: SnapshotLoadProgress,
+    generation: Int,
+    isInitialLoad: Bool,
+    forceRefresh: Bool
+  ) {
+    guard generation == inFlightGeneration else { return }
+    let total = max(progress.total, 1)
+    let completed = progress.total == 0 ? 0 : progress.completed
+    if isInitialLoad {
+      loadStatus = DashboardLoadStatus(
+        phase: .loadingWeek,
+        message: "Loading this week",
+        completed: completed,
+        total: total,
+        isLoading: true
+      )
+    } else if forceRefresh {
+      loadStatus = DashboardLoadStatus(
+        phase: .refreshing,
+        message: "Refreshing usage data",
+        completed: completed,
+        total: total,
+        isLoading: true
+      )
+    } else {
+      loadStatus = DashboardLoadStatus(
+        phase: .loadingRange,
+        message: "Loading history by week",
+        completed: completed,
+        total: total,
+        isLoading: true
+      )
+    }
+  }
+
+  private func updateHistoricalProgress(_ progress: SnapshotLoadProgress, generation: Int) {
+    guard generation == historicalGeneration else { return }
+    historicalProgress = progress
+    guard latest != nil, loadStatus.phase == .loadingHistory else { return }
+    loadStatus = DashboardLoadStatus(
+      phase: .loadingHistory,
+      message: "Loading this month and previous month",
+      completed: progress.completed,
+      total: max(progress.total, 1),
+      isLoading: true
+    )
+  }
+
+  private func finishHistorical(
+    _ snapshot: CostSnapshot,
+    generation: Int,
+    loadFrom: Date
+  ) {
+    guard generation == historicalGeneration else { return }
+    if coverageStart.map({ loadFrom <= $0 }) ?? true {
+      latest = snapshot
+    }
+    loadedAt = now()
+    coverageStart = min(coverageStart ?? loadFrom, loadFrom)
+    if loadStatus.phase == .loadingHistory || loadStatus.phase == .loadingWeek {
+      let total = max(historicalProgress.total, 1)
+      loadStatus = DashboardLoadStatus(
+        phase: .ready,
+        message: "Usage data is ready",
+        completed: total,
+        total: total,
+        isLoading: false
+      )
+    }
+    clearHistorical(generation: generation)
+  }
+
+  private func clearHistorical(generation: Int) {
+    guard generation == historicalGeneration else { return }
+    historicalTask = nil
+    historicalStart = nil
+  }
+
+  private func clearInFlight(generation: Int) {
+    guard generation == inFlightGeneration else { return }
+    inFlight = nil
+    inFlightStart = nil
+    inFlightRequestedAt = nil
+  }
+
+  private func defaultCoverageStart(at date: Date) -> Date {
+    let calendar = Calendar.current
+    return calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? calendar.startOfDay(for: date)
+  }
+
+  private func covers(_ requiredStart: Date?) -> Bool {
+    guard let requiredStart else { return true }
+    guard let coverageStart else { return false }
+    return coverageStart <= requiredStart
   }
 }
 
 public struct DashboardRouter: Sendable {
   public typealias SnapshotProvider = @Sendable () async throws -> CostSnapshot
+  public typealias RangeSnapshotProvider = @Sendable (Date?) async throws -> CostSnapshot
+  public typealias ProgressiveRangeSnapshotProvider = @Sendable (Date?, SnapshotLoadProgressHandler?) async throws -> CostSnapshot
+  public typealias CacheClearer = @Sendable () async -> Void
   private let snapshotCache: DashboardSnapshotCache
   private let queryService: DashboardQueryService
   private let assetResolver: StaticAssetResolver
+  private let cacheClearer: CacheClearer
 
   public init(
     snapshotProvider: @escaping SnapshotProvider,
     snapshotCacheMaxAgeSeconds: TimeInterval = 60,
     queryService: DashboardQueryService = DashboardQueryService(),
-    assetResolver: StaticAssetResolver
+    assetResolver: StaticAssetResolver,
+    cacheClearer: @escaping CacheClearer = {}
   ) {
-    snapshotCache = DashboardSnapshotCache(maxAgeSeconds: snapshotCacheMaxAgeSeconds, loader: snapshotProvider)
+    snapshotCache = DashboardSnapshotCache(maxAgeSeconds: snapshotCacheMaxAgeSeconds) { _ in try await snapshotProvider() }
     self.queryService = queryService
     self.assetResolver = assetResolver
+    self.cacheClearer = cacheClearer
+  }
+
+  public init(
+    progressiveRangeSnapshotProvider: @escaping ProgressiveRangeSnapshotProvider,
+    snapshotCacheMaxAgeSeconds: TimeInterval = 60,
+    queryService: DashboardQueryService = DashboardQueryService(),
+    assetResolver: StaticAssetResolver,
+    cacheClearer: @escaping CacheClearer = {}
+  ) {
+    snapshotCache = DashboardSnapshotCache(
+      maxAgeSeconds: snapshotCacheMaxAgeSeconds,
+      progressiveLoader: progressiveRangeSnapshotProvider
+    )
+    self.queryService = queryService
+    self.assetResolver = assetResolver
+    self.cacheClearer = cacheClearer
+  }
+
+  public init(
+    rangeSnapshotProvider: @escaping RangeSnapshotProvider,
+    snapshotCacheMaxAgeSeconds: TimeInterval = 60,
+    queryService: DashboardQueryService = DashboardQueryService(),
+    assetResolver: StaticAssetResolver,
+    cacheClearer: @escaping CacheClearer = {}
+  ) {
+    snapshotCache = DashboardSnapshotCache(maxAgeSeconds: snapshotCacheMaxAgeSeconds, loader: rangeSnapshotProvider)
+    self.queryService = queryService
+    self.assetResolver = assetResolver
+    self.cacheClearer = cacheClearer
   }
 
   public func preloadSnapshot() async {
+    await snapshotCache.startHistoricalWarm()
     _ = try? await snapshotCache.snapshot()
+    _ = try? await snapshotCache.warmHistoricalCoverage()
   }
 
   public func route(target: String, method: String = "GET") async -> HTTPResponse {
-    guard method == "GET" else { return errorResponse(status: 405, code: "method_not_allowed", message: "Only GET is supported") }
     guard let components = URLComponents(string: "http://127.0.0.1\(target)") else {
       return errorResponse(status: 400, code: "invalid_request", message: "Invalid request target")
     }
     let path = components.path
+    let isCacheClear = path == "/api/cache" && method == "DELETE"
+    guard method == "GET" || isCacheClear else {
+      return errorResponse(status: 405, code: "method_not_allowed", message: "Method is not supported for this route")
+    }
     if path.hasPrefix("/api/") {
+      if isCacheClear {
+        await snapshotCache.clear()
+        await cacheClearer()
+        Task(priority: .utility) { await preloadSnapshot() }
+        return json(["status": "ok"])
+      }
       if path == "/api/health" {
         return HTTPResponse(status: 200, contentType: "application/json", body: Data("{\"status\":\"ok\"}".utf8))
+      }
+      if path == "/api/load-status" {
+        return json(await snapshotCache.status())
       }
       do {
         if path == "/api/refresh" {
           _ = try await snapshotCache.snapshot(forceRefresh: true)
           return json(["status": "ok"])
         }
-        let snapshot = try await snapshotCache.snapshot()
+        let snapshot = try await snapshotCache.snapshot(earliestDate: requestedCoverageStart(for: path, components: components))
         switch path {
         case "/api/recent":
           let limit = components.queryItems?.first(where: { $0.name == "limit" })?.value.flatMap(Int.init) ?? 48
@@ -197,6 +574,29 @@ public struct DashboardRouter: Sendable {
       return errorResponse(status: 503, code: "assets_missing", message: "Dashboard assets are not installed")
     }
     return HTTPResponse(status: 200, contentType: Self.contentType(for: file.pathExtension), body: data)
+  }
+
+  private func requestedCoverageStart(for path: String, components: URLComponents) -> Date? {
+    if path == "/api/day",
+       let text = components.queryItems?.first(where: { $0.name == "date" })?.value {
+      return queryService.parseDay(text)
+    }
+    guard ["/api/period", "/api/metrics", "/api/cost-series"].contains(path),
+          let range = components.queryItems?.first(where: { $0.name == "range" })?.value else { return nil }
+    if range == "custom",
+       let text = components.queryItems?.first(where: { $0.name == "start" })?.value {
+      return queryService.parseDay(text)
+    }
+    let now = Date()
+    let calendar = queryService.calendar
+    switch range {
+    case "recent12h": return now.addingTimeInterval(-12 * 3_600)
+    case "today": return calendar.startOfDay(for: now)
+    case "yesterday": return calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now))
+    case "week": return calendar.dateInterval(of: .weekOfYear, for: now)?.start
+    case "month": return calendar.dateInterval(of: .month, for: now)?.start
+    default: return nil
+    }
   }
 
   private func json<T: Encodable>(_ value: T) -> HTTPResponse {

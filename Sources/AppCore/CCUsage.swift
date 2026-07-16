@@ -129,6 +129,16 @@ public struct ProcessResult: Sendable {
   public let exitStatus: Int32
 }
 
+public struct CCUsageDetailedUsage: Equatable, Sendable {
+  public let metrics: [CCUsageMetricRecord]
+  public let sessions: [CCUsageSessionMetricRecord]
+
+  public init(metrics: [CCUsageMetricRecord], sessions: [CCUsageSessionMetricRecord]) {
+    self.metrics = metrics
+    self.sessions = sessions
+  }
+}
+
 public struct CCUsageProcessRunner: Sendable {
   public init() {}
 
@@ -168,6 +178,7 @@ public struct CCUsageProcessRunner: Sendable {
       return ProcessResult(stdout: output, stderr: errorOutput, exitStatus: process.terminationStatus)
     }.value
   }
+
 }
 
 public enum CCUsageDecoder {
@@ -203,6 +214,10 @@ public enum CCUsageDecoder {
     let cacheReadTokens: Int
   }
   private struct DetailedSessionEnvelope: Decodable { let session: [DetailedSession] }
+  private struct DetailedUsageEnvelope: Decodable {
+    let daily: [DetailedDay]
+    let session: [DetailedSession]?
+  }
   private struct DetailedSession: Decodable {
     let agent: String
     let metadata: SessionMetadata
@@ -274,6 +289,57 @@ public enum CCUsageDecoder {
     }
   }
 
+  public static func detailedUsage(from data: Data) throws -> CCUsageDetailedUsage {
+    do {
+      let envelope = try decoder.decode(DetailedUsageEnvelope.self, from: data)
+      return CCUsageDetailedUsage(
+        metrics: metricRecords(from: envelope.daily),
+        sessions: try sessionRecords(from: envelope.session ?? [])
+      )
+    } catch let error as CCUsageError {
+      throw error
+    } catch {
+      throw CCUsageError.invalidJSON
+    }
+  }
+
+  private static func metricRecords(from days: [DetailedDay]) -> [CCUsageMetricRecord] {
+    days.flatMap { day in
+      day.agents.flatMap { agent in
+        agent.modelBreakdowns.map { breakdown in
+          CCUsageMetricRecord(
+            date: day.period,
+            agent: agent.agent,
+            model: breakdown.modelName,
+            costUSD: breakdown.cost,
+            inputTokens: breakdown.inputTokens,
+            outputTokens: breakdown.outputTokens,
+            cacheCreationTokens: breakdown.cacheCreationTokens,
+            cacheReadTokens: breakdown.cacheReadTokens
+          )
+        }
+      }
+    }
+  }
+
+  private static func sessionRecords(from sessions: [DetailedSession]) throws -> [CCUsageSessionMetricRecord] {
+    try sessions.flatMap { session in
+      guard let timestamp = parseTimestamp(session.metadata.lastActivity) else { throw CCUsageError.invalidJSON }
+      return session.modelBreakdowns.map { breakdown in
+        CCUsageSessionMetricRecord(
+          timestamp: timestamp,
+          agent: session.agent,
+          model: breakdown.modelName,
+          costUSD: breakdown.cost,
+          inputTokens: breakdown.inputTokens,
+          outputTokens: breakdown.outputTokens,
+          cacheCreationTokens: breakdown.cacheCreationTokens,
+          cacheReadTokens: breakdown.cacheReadTokens
+        )
+      }
+    }
+  }
+
   private static func parseTimestamp(_ text: String) -> Date? {
     let fractional = ISO8601DateFormatter()
     fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -284,6 +350,134 @@ public enum CCUsageDecoder {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     return decoder
+  }
+}
+
+private actor CCUsageDetailedUsageLoader {
+  private enum ArgumentMode {
+    case flagFree
+    case byAgent
+  }
+
+  private struct LoadedUsage: Sendable {
+    let usage: CCUsageDetailedUsage
+    let mode: ArgumentMode
+  }
+
+  private var argumentMode: ArgumentMode?
+  private var cachedUsage: CCUsageDetailedUsage?
+  private var cachedAt: Date?
+  private var inFlight: Task<LoadedUsage, Error>?
+
+  func load(
+    executable: URL,
+    runner: CCUsageProcessRunner,
+    maxAgeSeconds: TimeInterval = 1
+  ) async throws -> CCUsageDetailedUsage {
+    let now = Date()
+    if let cachedUsage, let cachedAt, now.timeIntervalSince(cachedAt) <= maxAgeSeconds {
+      return cachedUsage
+    }
+    if let inFlight { return try await inFlight.value.usage }
+    let preferredMode = argumentMode
+    let task = Task {
+      try await Self.load(executable: executable, runner: runner, preferredMode: preferredMode)
+    }
+    inFlight = task
+    do {
+      let loaded = try await task.value
+      argumentMode = loaded.mode
+      cachedUsage = loaded.usage
+      cachedAt = Date()
+      inFlight = nil
+      return loaded.usage
+    } catch {
+      inFlight = nil
+      throw error
+    }
+  }
+
+  private static func load(
+    executable: URL,
+    runner: CCUsageProcessRunner,
+    preferredMode: ArgumentMode?
+  ) async throws -> LoadedUsage {
+    if preferredMode == .byAgent {
+      return try await load(executable: executable, runner: runner, mode: .byAgent)
+    }
+    if preferredMode == .flagFree {
+      return try await load(executable: executable, runner: runner, mode: .flagFree)
+    }
+    do {
+      return try await load(executable: executable, runner: runner, mode: .flagFree)
+    } catch CCUsageError.invalidJSON {
+      return try await load(executable: executable, runner: runner, mode: .byAgent)
+    }
+  }
+
+  private static func load(
+    executable: URL,
+    runner: CCUsageProcessRunner,
+    mode: ArgumentMode
+  ) async throws -> LoadedUsage {
+    var arguments = ["daily", "--json", "--sections", "daily,session"]
+    if mode == .byAgent { arguments.insert("--by-agent", at: 2) }
+    let result = try await runner.run(executable: executable, arguments: arguments)
+    return LoadedUsage(usage: try CCUsageDecoder.detailedUsage(from: result.stdout), mode: mode)
+  }
+}
+
+private actor CCUsageBlocksLoader {
+  private struct CachedBlocks: Sendable {
+    let since: String?
+    let until: String?
+    let records: [CCUsageCostRecord]
+    let loadedAt: Date
+  }
+
+  private struct InFlightBlocks: Sendable {
+    let since: String?
+    let until: String?
+    let task: Task<[CCUsageCostRecord], Error>
+  }
+
+  private var cached: CachedBlocks?
+  private var inFlight: InFlightBlocks?
+
+  func load(
+    executable: URL,
+    runner: CCUsageProcessRunner,
+    since: String?,
+    until: String?,
+    maxAgeSeconds: TimeInterval = 1
+  ) async throws -> [CCUsageCostRecord] {
+    let now = Date()
+    if let cached,
+       cached.since == since,
+       cached.until == until,
+       now.timeIntervalSince(cached.loadedAt) <= maxAgeSeconds {
+      return cached.records
+    }
+    if let inFlight, inFlight.since == since, inFlight.until == until {
+      return try await inFlight.task.value
+    }
+    let task = Task {
+      var arguments = ["blocks", "--json"]
+      if let since { arguments += ["--since", since] }
+      if let until { arguments += ["--until", until] }
+      let result = try await runner.run(executable: executable, arguments: arguments)
+      return try CCUsageDecoder.blocks(from: result.stdout)
+    }
+    inFlight = InFlightBlocks(since: since, until: until, task: task)
+    do {
+      let records = try await task.value
+      cached = CachedBlocks(since: since, until: until, records: records, loadedAt: Date())
+      inFlight = nil
+      return records
+    } catch {
+      inFlight = nil
+      throw error
+    }
   }
 }
 
@@ -343,16 +537,24 @@ public struct CCUsageClient: Sendable {
   public let executable: URL
   public let runner: CCUsageProcessRunner
   private let detailedDailyLoader: CCUsageDetailedDailyLoader
+  private let detailedUsageLoader: CCUsageDetailedUsageLoader
+  private let blocksLoader: CCUsageBlocksLoader
 
   public init(executable: URL, runner: CCUsageProcessRunner = CCUsageProcessRunner()) {
     self.executable = executable
     self.runner = runner
     detailedDailyLoader = CCUsageDetailedDailyLoader()
+    detailedUsageLoader = CCUsageDetailedUsageLoader()
+    blocksLoader = CCUsageBlocksLoader()
   }
 
-  public func blocks() async throws -> [CCUsageCostRecord] {
-    let result = try await runner.run(executable: executable, arguments: ["blocks", "--json"])
-    return try CCUsageDecoder.blocks(from: result.stdout)
+  public func blocks(since: String? = nil, until: String? = nil) async throws -> [CCUsageCostRecord] {
+    try await blocksLoader.load(
+      executable: executable,
+      runner: runner,
+      since: since,
+      until: until
+    )
   }
 
   public func daily() async throws -> [CCUsageDailyRecord] {
@@ -374,6 +576,10 @@ public struct CCUsageClient: Sendable {
       arguments: filteredArguments(command: "session", since: since, until: until)
     )
     return try CCUsageDecoder.detailedSessions(from: result.stdout)
+  }
+
+  public func detailedUsage() async throws -> CCUsageDetailedUsage {
+    try await detailedUsageLoader.load(executable: executable, runner: runner)
   }
 
   private func filteredArguments(command: String, since: String?, until: String?) -> [String] {

@@ -6,12 +6,14 @@ private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self
 private struct CacheMetadata {
   let createdAt: Date
   let updatedAt: Date
+  let cachedFrom: String?
   let cachedThrough: String
 }
 
 public struct AggregationCachePayload: Equatable, Sendable {
   public let createdAt: Date
   public let updatedAt: Date
+  public let cachedFrom: String
   public let cachedThrough: String
   public let metrics: [CCUsageMetricRecord]
   public let sessions: [CCUsageSessionMetricRecord]
@@ -19,12 +21,14 @@ public struct AggregationCachePayload: Equatable, Sendable {
   public init(
     createdAt: Date,
     updatedAt: Date,
+    cachedFrom: String,
     cachedThrough: String,
     metrics: [CCUsageMetricRecord],
     sessions: [CCUsageSessionMetricRecord]
   ) {
     self.createdAt = createdAt
     self.updatedAt = updatedAt
+    self.cachedFrom = cachedFrom
     self.cachedThrough = cachedThrough
     self.metrics = metrics
     self.sessions = sessions
@@ -74,6 +78,7 @@ public actor UsageAggregationCache {
   public func save(
     metrics: [CCUsageMetricRecord],
     sessions: [CCUsageSessionMetricRecord],
+    cachedFrom: String,
     cachedThrough: String,
     createdAt: Date? = nil,
     now: Date = Date()
@@ -81,6 +86,7 @@ public actor UsageAggregationCache {
     let payload = AggregationCachePayload(
       createdAt: createdAt ?? now,
       updatedAt: now,
+      cachedFrom: cachedFrom,
       cachedThrough: cachedThrough,
       metrics: metrics,
       sessions: sessions
@@ -103,12 +109,15 @@ public actor UsageAggregationCache {
     defer { sqlite3_close(database) }
     try createSchema(in: database)
     let metadata = try readMetadata(from: database)
+    let metrics = try readMetrics(from: database)
+    let sessions = try readSessions(from: database)
     return AggregationCachePayload(
       createdAt: metadata.createdAt,
       updatedAt: metadata.updatedAt,
+      cachedFrom: metadata.cachedFrom ?? metrics.map(\.date).min() ?? metadata.cachedThrough,
       cachedThrough: metadata.cachedThrough,
-      metrics: try readMetrics(from: database),
-      sessions: try readSessions(from: database)
+      metrics: metrics,
+      sessions: sessions
     )
   }
 
@@ -147,6 +156,7 @@ public actor UsageAggregationCache {
       CREATE TABLE IF NOT EXISTS cache_metadata (
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL,
+        cached_from TEXT,
         cached_through TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS daily_metrics (
@@ -173,16 +183,23 @@ public actor UsageAggregationCache {
       CREATE INDEX IF NOT EXISTS daily_metrics_date_idx ON daily_metrics(date);
       CREATE INDEX IF NOT EXISTS session_metrics_timestamp_idx ON session_metrics(timestamp);
       """, in: database)
+    if try !hasColumn("cached_from", in: "cache_metadata", database: database) {
+      try execute("ALTER TABLE cache_metadata ADD COLUMN cached_from TEXT", in: database)
+    }
   }
 
   private func readMetadata(from database: OpaquePointer) throws -> CacheMetadata {
-    let statement = try prepare("SELECT created_at, updated_at, cached_through FROM cache_metadata LIMIT 1", in: database)
+    let statement = try prepare(
+      "SELECT created_at, updated_at, cached_from, cached_through FROM cache_metadata LIMIT 1",
+      in: database
+    )
     defer { sqlite3_finalize(statement) }
     guard sqlite3_step(statement) == SQLITE_ROW else { throw AggregationCacheError.invalidDatabase }
     return CacheMetadata(
       createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 0)),
       updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
-      cachedThrough: try text(statement, column: 2)
+      cachedFrom: optionalText(statement, column: 2),
+      cachedThrough: try text(statement, column: 3)
     )
   }
 
@@ -244,13 +261,14 @@ public actor UsageAggregationCache {
 
   private func insertMetadata(_ payload: AggregationCachePayload, into database: OpaquePointer) throws {
     let statement = try prepare(
-      "INSERT INTO cache_metadata(created_at, updated_at, cached_through) VALUES (?, ?, ?)",
+      "INSERT INTO cache_metadata(created_at, updated_at, cached_from, cached_through) VALUES (?, ?, ?, ?)",
       in: database
     )
     defer { sqlite3_finalize(statement) }
     sqlite3_bind_double(statement, 1, payload.createdAt.timeIntervalSince1970)
     sqlite3_bind_double(statement, 2, payload.updatedAt.timeIntervalSince1970)
-    try bind(payload.cachedThrough, to: 3, in: statement)
+    try bind(payload.cachedFrom, to: 3, in: statement)
+    try bind(payload.cachedThrough, to: 4, in: statement)
     try stepDone(statement)
   }
 
@@ -325,6 +343,20 @@ public actor UsageAggregationCache {
       throw AggregationCacheError.invalidDatabase
     }
     return String(cString: value)
+  }
+
+  private func optionalText(_ statement: OpaquePointer, column: Int32) -> String? {
+    guard let value = sqlite3_column_text(statement, column) else { return nil }
+    return String(cString: value)
+  }
+
+  private func hasColumn(_ column: String, in table: String, database: OpaquePointer) throws -> Bool {
+    let statement = try prepare("PRAGMA table_info(\(table))", in: database)
+    defer { sqlite3_finalize(statement) }
+    while sqlite3_step(statement) == SQLITE_ROW {
+      if optionalText(statement, column: 1) == column { return true }
+    }
+    return false
   }
 
   private func stepDone(_ statement: OpaquePointer) throws {

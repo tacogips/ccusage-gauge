@@ -268,13 +268,13 @@ task build:homebrew -- darwin-arm64 darwin-x64
 Render a formula after both platform archives exist:
 
 ```bash
-task homebrew:formula -- 0.1.5
+task homebrew:formula -- 0.1.6
 ```
 
 Render directly into the default sibling tap checkout:
 
 ```bash
-task homebrew:tap-formula -- 0.1.5
+task homebrew:tap-formula -- 0.1.6
 ```
 
 Install from the tap after the formula is published:
@@ -307,14 +307,14 @@ kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID --
 Render a Cask:
 
 ```bash
-task homebrew:cask -- 0.1.5
+task homebrew:cask -- 0.1.6
 ```
 
 For a tagged release, build, upload, and render the tap Cask:
 
 ```bash
 kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID -- \
-  task release:homebrew-cask-local -- v0.1.5
+  task release:homebrew-cask-local -- v0.1.6
 ```
 
 See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.

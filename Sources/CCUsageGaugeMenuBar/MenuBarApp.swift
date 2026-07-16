@@ -119,9 +119,8 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       snapshotService = service
       errorMessage = nil
       isUsageUnavailable = false
-      if loaded.dashboardAutostart { startDashboard() }
       startPolling(interval: currentState?.refreshIntervalSeconds ?? loaded.pollIntervalSeconds)
-      await refresh()
+      if loaded.dashboardAutostart { startDashboard() }
     } catch {
       errorMessage = "ccusage unavailable. Install ccusage or correct ~/.config/ccusage-gauge/ccusage-config.json. \(error)"
       isUsageUnavailable = true
@@ -148,7 +147,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       return
     }
     do {
-      let snapshot = try await snapshotService.snapshot(defaultCycle: defaultResetCycle)
+      let snapshot = try await snapshotService.menuBarSnapshot(defaultCycle: defaultResetCycle)
       let state = try await stateStore?.load(defaultCycle: defaultResetCycle)
       guard refreshGeneration == stateMutationGeneration else { return }
       latestSnapshot = snapshot
@@ -373,8 +372,15 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     guard dashboardServer?.isRunning != true, let snapshotService, let configuration else { return }
     let defaultResetCycle = self.defaultResetCycle
     let router = DashboardRouter(
-      snapshotProvider: { try await snapshotService.snapshot(defaultCycle: defaultResetCycle) },
-      assetResolver: StaticAssetResolver()
+      progressiveRangeSnapshotProvider: { earliestDate, progress in
+        try await snapshotService.snapshot(
+          defaultCycle: defaultResetCycle,
+          earliestDate: earliestDate,
+          progress: progress
+        )
+      },
+      assetResolver: StaticAssetResolver(),
+      cacheClearer: { await snapshotService.clearAggregationCache() }
     )
     let server = DashboardHTTPServer(router: router)
     do {

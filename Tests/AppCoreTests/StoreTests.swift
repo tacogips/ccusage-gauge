@@ -65,6 +65,7 @@ import Testing
     try await cache.save(
       metrics: metrics,
       sessions: sessions,
+      cachedFrom: "2026-06-01",
       cachedThrough: "2026-07-15",
       now: createdAt
     )
@@ -72,6 +73,7 @@ import Testing
     #expect(String(data: header, encoding: .utf8) == "SQLite format 3\0")
     #expect(await cache.load(now: createdAt.addingTimeInterval(364 * 86_400))?.metrics == metrics)
     #expect(await cache.load(now: createdAt.addingTimeInterval(364 * 86_400))?.sessions == sessions)
+    #expect(await cache.load(now: createdAt.addingTimeInterval(364 * 86_400))?.cachedFrom == "2026-06-01")
     #expect(await cache.load(now: createdAt.addingTimeInterval(365 * 86_400)) == nil)
     #expect(!FileManager.default.fileExists(atPath: file.path))
   }

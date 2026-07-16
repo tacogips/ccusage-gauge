@@ -30,8 +30,19 @@ export interface BudgetResponse {
   usagePercentage?: number; visualFraction?: number; resetCycle: string; activeBoundaryAt: string;
   refreshIntervalSeconds: number;
 }
+export interface LoadStatusResponse {
+  phase: "idle" | "loadingWeek" | "loadingHistory" | "refreshing" | "ready" | "failed";
+  message: string;
+  completed: number;
+  total: number;
+  isLoading: boolean;
+}
 export async function getJSON<T>(path: string): Promise<T> {
-  const response = await fetch(path);
+  return requestJSON<T>(path);
+}
+
+export async function requestJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, init);
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload?.error?.message ?? `Request failed (${response.status})`);

@@ -12,6 +12,57 @@ private struct AgentModelBucket: Hashable {
   let model: String
 }
 
+private struct UsageLoadResult: Sendable {
+  let metrics: [CCUsageMetricRecord]
+  let sessions: [CCUsageSessionMetricRecord]
+}
+
+private struct UsagePartition: Sendable {
+  var metrics: [CCUsageMetricRecord] = []
+  var sessions: [CCUsageSessionMetricRecord] = []
+  var events: [TimestampedUsageEvent] = []
+}
+
+public struct SnapshotLoadProgress: Equatable, Sendable {
+  public let completed: Int
+  public let total: Int
+
+  public init(completed: Int, total: Int) {
+    self.completed = completed
+    self.total = total
+  }
+}
+
+public typealias SnapshotLoadProgressHandler = @Sendable (SnapshotLoadProgress) async -> Void
+
+let maximumConcurrentRangeLoads = 20
+
+func boundedConcurrentMap<Input: Sendable, Output: Sendable>(
+  _ inputs: [Input],
+  limit: Int,
+  progress: (@Sendable (Int, Int) async -> Void)? = nil,
+  operation: @escaping @Sendable (Input) async throws -> Output
+) async throws -> [Output] {
+  await progress?(0, inputs.count)
+  guard !inputs.isEmpty else { return [] }
+  return try await withThrowingTaskGroup(of: Output.self) { group in
+    var iterator = inputs.makeIterator()
+    for _ in 0..<min(max(1, limit), inputs.count) {
+      guard let input = iterator.next() else { break }
+      group.addTask { try await operation(input) }
+    }
+    var results: [Output] = []
+    for try await result in group {
+      results.append(result)
+      await progress?(results.count, inputs.count)
+      if let input = iterator.next() {
+        group.addTask { try await operation(input) }
+      }
+    }
+    return results
+  }
+}
+
 private struct UsageBucketTotals {
   var costUSD = Decimal.zero
   var inputTokens = 0
@@ -283,63 +334,45 @@ public struct SnapshotService: Sendable {
     usageEventCoordinator = TimestampedUsageEventLoadCoordinator()
   }
 
-  public func snapshot(now: Date = Date(), defaultCycle: ResetCycle = .daily) async throws -> CostSnapshot {
+  public func snapshot(
+    now: Date = Date(),
+    defaultCycle: ResetCycle = .daily,
+    earliestDate: Date? = nil,
+    progress: SnapshotLoadProgressHandler? = nil
+  ) async throws -> CostSnapshot {
     let loaded = try await stateStore.load(defaultCycle: defaultCycle)
     let state = try calculator.validatedState(loaded, now: now)
     if state != loaded { try await stateStore.save(state) }
     guard let baseline = state.baseline else { throw SnapshotError.missingBaseline }
     let todayStart = calculator.calendar.startOfDay(for: now)
     let today = formatDay(todayStart)
-    var cached = await aggregationCache?.load(now: now)
-    if let cachedThrough = cached?.cachedThrough, parseDay(cachedThrough) == nil {
-      await aggregationCache?.purge()
-      cached = nil
-    }
-    let since = cached.flatMap { nextUncachedDay(after: $0.cachedThrough, today: todayStart) }
-    let currentMonthStart = calculator.calendar.dateInterval(of: .month, for: now)?.start ?? todayStart
-    let rawEventSince = since ?? formatDay(currentMonthStart)
-    async let blockRecords = client.blocks()
-    async let metricRecords = client.detailedDaily(since: since, until: since == nil ? nil : today)
-    async let sessionRecords = client.detailedSessions(since: since, until: since == nil ? nil : today)
-    async let timestampedUsageEvents = usageEventCoordinator.events(
-      claudeLoader: claudeUsageEventLoader,
-      codexLoader: codexUsageEventLoader,
-      since: rawEventSince,
-      until: today,
-      calendar: calculator.calendar
-    )
-    let points = try await blockRecords
-    let freshMetrics = try await metricRecords
-    let unifiedSessions = try await sessionRecords
-    let timestampedEvents = try await timestampedUsageEvents
-    let timestampedKeys = Set(timestampedEvents.map {
-      AgentModelDay(day: formatDay($0.timestamp), agent: $0.agent, model: $0.model)
-    })
-    let fallbackSessions = unifiedSessions.filter { row in
-      !timestampedKeys.contains(AgentModelDay(
-        day: formatDay(row.timestamp),
-        agent: row.agent.lowercased(),
-        model: row.model
-      ))
-    }
-    let freshSessions = fallbackSessions + reconciledTimestampedSessions(
-      events: timestampedEvents,
-      metrics: freshMetrics,
-      calendar: calculator.calendar
-    )
+    let cached = await validAggregationCache(now: now)
+    let initialFrom = initialCoverageStart(for: todayStart)
+    let requestedFrom = earliestDate.map { calculator.calendar.startOfDay(for: $0) }
+    let desiredFrom = min(requestedFrom ?? initialFrom, initialFrom)
+    let ranges = missingUsageRanges(desiredFrom: desiredFrom, todayStart: todayStart, cached: cached)
+    async let blockRecords = client.blocks(since: formatDay(initialFrom), until: today)
+    async let usageRecords = loadUsage(ranges: ranges, progress: progress)
+    let (points, loadedRanges) = try await (blockRecords, usageRecords)
+    let freshMetrics = loadedRanges.flatMap(\.metrics)
+    let freshSessions = loadedRanges.flatMap(\.sessions)
     let historicalMetrics = (cached?.metrics ?? []) + freshMetrics.filter { $0.date < today }
     let historicalSessions = (cached?.sessions ?? []) + freshSessions.filter { $0.timestamp < todayStart }
     let dashboardMetrics = (cached == nil ? freshMetrics : historicalMetrics + freshMetrics.filter { $0.date >= today })
       .sorted { ($0.date, $0.agent, $0.model) < ($1.date, $1.agent, $1.model) }
     let dashboardSessions = (cached == nil ? freshSessions : historicalSessions + freshSessions.filter { $0.timestamp >= todayStart })
       .sorted { $0.timestamp < $1.timestamp }
+    try Task.checkCancellation()
     if let aggregationCache,
        let yesterday = calculator.calendar.date(byAdding: .day, value: -1, to: todayStart) {
       let cachedThrough = formatDay(yesterday)
-      if cached == nil || cached?.cachedThrough != cachedThrough {
+      let existingFrom = cached.flatMap { parseDay($0.cachedFrom) } ?? desiredFrom
+      let cachedFrom = formatDay(min(existingFrom, desiredFrom))
+      if cached == nil || cached?.cachedFrom != cachedFrom || cached?.cachedThrough != cachedThrough {
         try? await aggregationCache.save(
           metrics: historicalMetrics,
           sessions: historicalSessions,
+          cachedFrom: cachedFrom,
           cachedThrough: cachedThrough,
           createdAt: cached?.createdAt,
           now: now
@@ -367,10 +400,218 @@ public struct SnapshotService: Sendable {
     )
   }
 
+  public func menuBarSnapshot(now: Date = Date(), defaultCycle: ResetCycle = .daily) async throws -> CostSnapshot {
+    let loaded = try await stateStore.load(defaultCycle: defaultCycle)
+    let state = try calculator.validatedState(loaded, now: now)
+    if state != loaded { try await stateStore.save(state) }
+    guard let baseline = state.baseline else { throw SnapshotError.missingBaseline }
+    let interval = try calculator.aggregationInterval(for: state.resetCycle, now: now)
+    let todayStart = calculator.calendar.startOfDay(for: now)
+    let desiredFrom = calculator.calendar.startOfDay(for: interval.start)
+    let cached = await validAggregationCache(now: now)
+    let ranges = missingUsageRanges(desiredFrom: desiredFrom, todayStart: todayStart, cached: cached)
+    let metrics: [CCUsageMetricRecord]
+    let sessions: [CCUsageSessionMetricRecord]
+    switch state.resetCycle {
+    case .daily, .weekly, .monthly:
+      metrics = (cached?.metrics ?? []) + (try await loadMetrics(ranges: ranges))
+      sessions = []
+    case .hourly, .customHours:
+      let loadedRanges = try await loadUsage(ranges: ranges)
+      metrics = (cached?.metrics ?? []) + loadedRanges.flatMap(\.metrics)
+      sessions = (cached?.sessions ?? []) + loadedRanges.flatMap(\.sessions)
+    }
+    let cost = selectedPeriodCost(
+      cycle: state.resetCycle,
+      interval: interval,
+      metrics: metrics,
+      sessions: sessions,
+      calendar: calculator.calendar
+    )
+    return CostSnapshot(
+      generatedAt: now,
+      activeBoundaryAt: baseline.activeBoundaryAt,
+      costSinceResetUSD: cost,
+      budget: BudgetSummary(spentUSD: cost, budgetUSD: state.budgetUSD),
+      resetCycle: state.resetCycle,
+      refreshIntervalSeconds: state.refreshIntervalSeconds ?? defaultRefreshIntervalSeconds,
+      points: [],
+      dashboardMetrics: metrics,
+      dashboardSessions: sessions
+    )
+  }
+
+  public func clearAggregationCache() async {
+    await aggregationCache?.purge()
+  }
+
   private func nextUncachedDay(after text: String, today: Date) -> String? {
     guard let cachedThrough = parseDay(text),
           let next = calculator.calendar.date(byAdding: .day, value: 1, to: cachedThrough) else { return nil }
     return formatDay(min(next, today))
+  }
+
+  private func initialCoverageStart(for today: Date) -> Date {
+    calculator.calendar.dateInterval(of: .weekOfYear, for: today)?.start ?? today
+  }
+
+  private func validAggregationCache(now: Date) async -> AggregationCachePayload? {
+    guard let cached = await aggregationCache?.load(now: now) else { return nil }
+    guard parseDay(cached.cachedFrom) != nil,
+          parseDay(cached.cachedThrough) != nil,
+          cached.cachedFrom <= cached.cachedThrough else {
+      await aggregationCache?.purge()
+      return nil
+    }
+    return cached
+  }
+
+  private func missingUsageRanges(
+    desiredFrom: Date,
+    todayStart: Date,
+    cached: AggregationCachePayload?
+  ) -> [(since: String, until: String)] {
+    let today = formatDay(todayStart)
+    guard let cached, let cachedFrom = parseDay(cached.cachedFrom) else {
+      return weekPartitionedRanges(from: desiredFrom, through: todayStart)
+    }
+    var ranges: [(since: String, until: String)] = []
+    if desiredFrom < cachedFrom,
+       let olderUntil = calculator.calendar.date(byAdding: .day, value: -1, to: cachedFrom) {
+      ranges.append(contentsOf: weekPartitionedRanges(from: desiredFrom, through: olderUntil))
+    }
+    if let since = nextUncachedDay(after: cached.cachedThrough, today: todayStart) {
+      ranges.append((since, today))
+    }
+    return ranges
+  }
+
+  private func weekPartitionedRanges(from start: Date, through end: Date) -> [(since: String, until: String)] {
+    guard start <= end else { return [] }
+    var ranges: [(since: String, until: String)] = []
+    var cursor = start
+    while cursor <= end {
+      guard let week = calculator.calendar.dateInterval(of: .weekOfYear, for: cursor),
+            let weekEnd = calculator.calendar.date(byAdding: .day, value: -1, to: week.end) else {
+        return [(formatDay(start), formatDay(end))]
+      }
+      let rangeEnd = min(weekEnd, end)
+      ranges.append((formatDay(cursor), formatDay(rangeEnd)))
+      guard let next = calculator.calendar.date(byAdding: .day, value: 1, to: rangeEnd) else { break }
+      cursor = next
+    }
+    return ranges
+  }
+
+  private func loadMetrics(ranges: [(since: String, until: String)]) async throws -> [CCUsageMetricRecord] {
+    guard !ranges.isEmpty else { return [] }
+    let usage = try await client.detailedUsage()
+    return usage.metrics.filter { record in
+      ranges.contains { $0.since <= record.date && record.date <= $0.until }
+    }
+  }
+
+  private func loadUsage(
+    ranges: [(since: String, until: String)],
+    progress: SnapshotLoadProgressHandler? = nil
+  ) async throws -> [UsageLoadResult] {
+    await progress?(SnapshotLoadProgress(completed: 0, total: ranges.count))
+    async let detailedUsage = client.detailedUsage()
+    async let timestampedUsageEvents = loadRecentTimestampedEvents(ranges: ranges)
+    let (usage, timestampedEvents) = try await (detailedUsage, timestampedUsageEvents)
+    let partitions = partitionUsage(usage, timestampedEvents: timestampedEvents, ranges: ranges)
+    return try await boundedConcurrentMap(
+      Array(partitions.indices),
+      limit: maximumConcurrentRangeLoads,
+      progress: { completed, total in
+        await progress?(SnapshotLoadProgress(completed: completed, total: total))
+      },
+      operation: { index in
+        let partition = partitions[index]
+        return usageResult(
+          metrics: partition.metrics,
+          sessions: partition.sessions,
+          timestampedEvents: partition.events
+        )
+      }
+    )
+  }
+
+  private func partitionUsage(
+    _ usage: CCUsageDetailedUsage,
+    timestampedEvents: [TimestampedUsageEvent],
+    ranges: [(since: String, until: String)]
+  ) -> [UsagePartition] {
+    var rangeIndexByDay: [String: Int] = [:]
+    for (index, range) in ranges.enumerated() {
+      guard var day = parseDay(range.since), let end = parseDay(range.until) else { continue }
+      while day <= end {
+        rangeIndexByDay[formatDay(day)] = index
+        guard let next = calculator.calendar.date(byAdding: .day, value: 1, to: day) else { break }
+        day = next
+      }
+    }
+    var partitions = Array(repeating: UsagePartition(), count: ranges.count)
+    for record in usage.metrics {
+      guard let index = rangeIndexByDay[record.date] else { continue }
+      partitions[index].metrics.append(record)
+    }
+    for record in usage.sessions {
+      guard let index = rangeIndexByDay[formatDay(record.timestamp)] else { continue }
+      partitions[index].sessions.append(record)
+    }
+    for event in timestampedEvents {
+      guard let index = rangeIndexByDay[formatDay(event.timestamp)] else { continue }
+      partitions[index].events.append(event)
+    }
+    return partitions
+  }
+
+  private func loadRecentTimestampedEvents(
+    ranges: [(since: String, until: String)]
+  ) async throws -> [TimestampedUsageEvent] {
+    guard let latestDayText = ranges.map(\.until).max(),
+          let latestDay = parseDay(latestDayText),
+          let currentMonth = calculator.calendar.dateInterval(of: .month, for: latestDay),
+          let recentStartDate = calculator.calendar.date(byAdding: .month, value: -1, to: currentMonth.start) else {
+      return []
+    }
+    let recentStart = formatDay(recentStartDate)
+    let recentRanges = ranges.filter { $0.until >= recentStart }
+    guard let since = recentRanges.map({ max($0.since, recentStart) }).min(),
+          let until = recentRanges.map(\.until).max() else { return [] }
+    return try await usageEventCoordinator.events(
+      claudeLoader: claudeUsageEventLoader,
+      codexLoader: codexUsageEventLoader,
+      since: since,
+      until: until,
+      calendar: calculator.calendar
+    )
+  }
+
+  private func usageResult(
+    metrics: [CCUsageMetricRecord],
+    sessions: [CCUsageSessionMetricRecord],
+    timestampedEvents: [TimestampedUsageEvent]
+  ) -> UsageLoadResult {
+    let timestampedKeys = Set(timestampedEvents.map {
+      AgentModelDay(day: formatDay($0.timestamp), agent: $0.agent, model: $0.model)
+    })
+    let fallbackSessions = sessions.filter { row in
+      !timestampedKeys.contains(AgentModelDay(
+        day: formatDay(row.timestamp),
+        agent: row.agent.lowercased(),
+        model: row.model
+      ))
+    }
+    return UsageLoadResult(
+      metrics: metrics,
+      sessions: fallbackSessions + reconciledTimestampedSessions(
+        events: timestampedEvents,
+        metrics: metrics,
+        calendar: calculator.calendar
+      )
+    )
   }
 
   private func parseDay(_ text: String) -> Date? { dayFormatter.date(from: text) }

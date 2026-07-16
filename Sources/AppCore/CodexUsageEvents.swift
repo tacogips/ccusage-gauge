@@ -34,6 +34,16 @@ public struct CodexUsageEventLoader: Sendable {
   ) throws -> [TimestampedUsageEvent] {
     let formatter = dayFormatter(calendar: calendar)
     let minimumModificationDate = since.flatMap(formatter.date(from:))
+    let scanFloor = minimumModificationDate
+      .flatMap { calendar.date(byAdding: .day, value: -1, to: $0) }
+      .map(formatter.string(from:))
+    let scanCeiling = until
+      .flatMap(formatter.date(from:))
+      .flatMap { calendar.date(byAdding: .day, value: 1, to: $0) }
+      .map(formatter.string(from:))
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let wholeSeconds = ISO8601DateFormatter()
     var eventsByIdentity: [String: TimestampedUsageEvent] = [:]
     for file in UsageEventLogReader.jsonlFiles(roots: roots, modifiedSince: minimumModificationDate) {
       var sessionID = file.deletingPathExtension().lastPathComponent
@@ -43,6 +53,40 @@ public struct CodexUsageEventLoader: Sendable {
         Data(#""type":"turn_context""#.utf8),
         Data(#""type":"token_count""#.utf8)
       ]
+      if let since {
+        var pending: [CodexEnvelope] = []
+        try UsageEventLogReader.forEachLineFromEnd(in: file, matchingAny: relevantTypes) { line in
+          if let rawDay = UsageEventLogReader.timestampDay(in: line) {
+            if let scanFloor, rawDay < scanFloor { return pending.isEmpty ? false : true }
+            if let scanCeiling, rawDay > scanCeiling { return true }
+          }
+          guard let envelope = try? JSONDecoder().decode(CodexEnvelope.self, from: line),
+                let timestamp = fractional.date(from: envelope.timestamp) ?? wholeSeconds.date(from: envelope.timestamp) else { return true }
+          let day = formatter.string(from: timestamp)
+          if envelope.type == "event_msg", envelope.payload.type == "token_count" {
+            if day < since { return pending.isEmpty ? false : true }
+            if until.map({ day <= $0 }) ?? true { pending.append(envelope) }
+            return true
+          }
+          if envelope.type == "turn_context",
+             let pendingModel = envelope.payload.model,
+             !pendingModel.isEmpty {
+            for pendingEnvelope in pending {
+              addCodexEvent(
+                pendingEnvelope,
+                sessionID: sessionID,
+                model: pendingModel,
+                fractional: fractional,
+                wholeSeconds: wholeSeconds,
+                to: &eventsByIdentity
+              )
+            }
+            pending.removeAll(keepingCapacity: true)
+          }
+          return day >= since || !pending.isEmpty
+        }
+        continue
+      }
       try UsageEventLogReader.forEachLine(in: file, matchingAny: relevantTypes) { line in
         guard let envelope = try? JSONDecoder().decode(CodexEnvelope.self, from: line) else { return }
         if envelope.type == "session_meta", let id = envelope.payload.id { sessionID = id }
@@ -86,6 +130,42 @@ public struct CodexUsageEventLoader: Sendable {
     return eventsByIdentity.values.sorted {
       ($0.timestamp, $0.identity) < ($1.timestamp, $1.identity)
     }
+  }
+
+  private static func addCodexEvent(
+    _ envelope: CodexEnvelope,
+    sessionID: String,
+    model: String,
+    fractional: ISO8601DateFormatter,
+    wholeSeconds: ISO8601DateFormatter,
+    to eventsByIdentity: inout [String: TimestampedUsageEvent]
+  ) {
+    guard let timestamp = fractional.date(from: envelope.timestamp) ?? wholeSeconds.date(from: envelope.timestamp),
+          let info = envelope.payload.info,
+          let last = info.lastTokenUsage,
+          let total = info.totalTokenUsage else { return }
+    let watermark = [
+      total.inputTokens,
+      total.cachedInputTokens,
+      total.outputTokens,
+      total.reasoningOutputTokens,
+      total.totalTokens
+    ].map(String.init).joined(separator: ":")
+    let event = TimestampedUsageEvent(
+      timestamp: timestamp,
+      agent: "codex",
+      sessionID: sessionID,
+      requestID: watermark,
+      messageID: "",
+      model: model,
+      inputTokens: max(0, last.inputTokens - last.cachedInputTokens),
+      outputTokens: last.outputTokens,
+      cacheCreationTokens: 0,
+      cacheReadTokens: last.cachedInputTokens,
+      cacheCreationFiveMinuteTokens: 0,
+      cacheCreationOneHourTokens: 0
+    )
+    if eventsByIdentity[event.identity] == nil { eventsByIdentity[event.identity] = event }
   }
 
   private static func dayFormatter(calendar: Calendar) -> DateFormatter {

@@ -64,7 +64,13 @@ struct CCUsageGaugeCLI {
     let config = try ConfigStore(fileURL: paths.configFile).loadOrCreate()
     let service = try makeSnapshotService(configuration: config, paths: paths)
     let resolver = StaticAssetResolver(explicitRoot: assets.map { URL(fileURLWithPath: $0, isDirectory: true) })
-    let router = DashboardRouter(snapshotProvider: { try await service.snapshot() }, assetResolver: resolver)
+    let router = DashboardRouter(
+      progressiveRangeSnapshotProvider: { earliestDate, progress in
+        try await service.snapshot(earliestDate: earliestDate, progress: progress)
+      },
+      assetResolver: resolver,
+      cacheClearer: { await service.clearAggregationCache() }
+    )
     let server = DashboardHTTPServer(router: router)
     let selectedPort = port ?? config.dashboardPort
     try server.start(port: UInt16(selectedPort))

@@ -43,13 +43,16 @@ case "${1:-}" in
 esac
 FAKE
 chmod +x "$fake"
-mkdir -p "$root/config/ccusage-gauge" "$root/state/ccusage-gauge"
+mkdir -p "$root/config/ccusage-gauge" "$root/state/ccusage-gauge" "$root/cache/ccusage-gauge" "$root/claude/projects" "$root/codex/sessions"
 cat >"$root/config/ccusage-gauge/ccusage-config.json" <<JSON
 {"ccusagePath":"$fake","defaultResetTerm":"daily","dashboardPort":$port,"dashboardAutostart":false,"pollIntervalSeconds":60}
 JSON
 
 export CCUSAGE_GAUGE_CONFIG_HOME="$root/config"
 export CCUSAGE_GAUGE_STATE_HOME="$root/state"
+export CCUSAGE_GAUGE_CACHE_HOME="$root/cache"
+export CLAUDE_CONFIG_DIR="$root/claude"
+export CODEX_HOME="$root/codex"
 binary="${binary:-$(swift build --show-bin-path)/ccusage-gauge}"
 today="$(date '+%Y-%m-%d')"
 
@@ -76,6 +79,8 @@ run_once() {
   curl -fsS "http://127.0.0.1:$port/api/cost-series?range=today&granularity=hourly" | grep -q 'gpt-5.6-sol'
   curl -fsS "http://127.0.0.1:$port/api/cost-series?range=today&granularity=daily" | grep -q 'claude-opus-4-8'
   curl -fsS "http://127.0.0.1:$port/api/budget" | grep -q 'spentUSD'
+  curl -fsS -X DELETE "http://127.0.0.1:$port/api/cache" | grep -q '"status":"ok"'
+  curl -fsS "http://127.0.0.1:$port/api/metrics?range=today" | grep -q 'gpt-5.6-sol'
   kill -TERM "$pid"
   wait "$pid"
   pid=""

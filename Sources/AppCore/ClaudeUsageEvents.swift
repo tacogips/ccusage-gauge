@@ -88,10 +88,20 @@ public struct ClaudeUsageEventLoader: Sendable {
   }
 
   static func decode(line: Data) -> TimestampedUsageEvent? {
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return decode(line: line, fractional: fractional, wholeSeconds: ISO8601DateFormatter())
+  }
+
+  private static func decode(
+    line: Data,
+    fractional: ISO8601DateFormatter,
+    wholeSeconds: ISO8601DateFormatter
+  ) -> TimestampedUsageEvent? {
     guard let envelope = try? JSONDecoder().decode(EventEnvelope.self, from: line),
           envelope.type == "assistant",
           envelope.message.role == "assistant",
-          let timestamp = parseTimestamp(envelope.timestamp),
+          let timestamp = fractional.date(from: envelope.timestamp) ?? wholeSeconds.date(from: envelope.timestamp),
           !envelope.message.model.isEmpty else { return nil }
     let usage = envelope.message.usage
     return TimestampedUsageEvent(
@@ -118,8 +128,35 @@ public struct ClaudeUsageEventLoader: Sendable {
   ) throws -> [TimestampedUsageEvent] {
     let formatter = dayFormatter(calendar: calendar)
     let minimumModificationDate = since.flatMap(formatter.date(from:))
+    let scanFloor = minimumModificationDate
+      .flatMap { calendar.date(byAdding: .day, value: -1, to: $0) }
+      .map(formatter.string(from:))
+    let scanCeiling = until
+      .flatMap(formatter.date(from:))
+      .flatMap { calendar.date(byAdding: .day, value: 1, to: $0) }
+      .map(formatter.string(from:))
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let wholeSeconds = ISO8601DateFormatter()
+    let assistantNeedle = Data(#""type":"assistant""#.utf8)
     var latestByIdentity: [String: TimestampedUsageEvent] = [:]
     for file in UsageEventLogReader.jsonlFiles(roots: roots, modifiedSince: minimumModificationDate) {
+      if let since {
+        try UsageEventLogReader.forEachLineFromEnd(in: file, matchingAny: [assistantNeedle]) { line in
+          if let rawDay = UsageEventLogReader.timestampDay(in: line) {
+            if let scanFloor, rawDay < scanFloor { return false }
+            if let scanCeiling, rawDay > scanCeiling { return true }
+          }
+          guard let event = decode(line: line, fractional: fractional, wholeSeconds: wholeSeconds) else { return true }
+          let day = formatter.string(from: event.timestamp)
+          if day < since { return false }
+          guard until.map({ day <= $0 }) ?? true,
+                latestByIdentity[event.identity] == nil else { return true }
+          latestByIdentity[event.identity] = event
+          return true
+        }
+        continue
+      }
       try UsageEventLogReader.forEachLine(in: file) { line in
         guard let event = decode(line: line) else { return }
         let day = formatter.string(from: event.timestamp)
@@ -143,14 +180,20 @@ public struct ClaudeUsageEventLoader: Sendable {
     return formatter
   }
 
-  private static func parseTimestamp(_ text: String) -> Date? {
-    let fractional = ISO8601DateFormatter()
-    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return fractional.date(from: text) ?? ISO8601DateFormatter().date(from: text)
-  }
 }
 
 enum UsageEventLogReader {
+  private static let compactTimestampNeedle = Data(#""timestamp":""#.utf8)
+  private static let spacedTimestampNeedle = Data(#""timestamp": ""#.utf8)
+
+  static func timestampDay(in line: Data) -> String? {
+    let match = line.range(of: compactTimestampNeedle) ?? line.range(of: spacedTimestampNeedle)
+    guard let match else { return nil }
+    let end = line.index(match.upperBound, offsetBy: 10, limitedBy: line.endIndex) ?? line.endIndex
+    guard line.distance(from: match.upperBound, to: end) == 10 else { return nil }
+    return String(data: Data(line[match.upperBound..<end]), encoding: .utf8)
+  }
+
   static func jsonlFiles(roots: [URL], modifiedSince: Date?) -> [URL] {
     let manager = FileManager.default
     let keys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey]
@@ -190,6 +233,37 @@ enum UsageEventLogReader {
       }
     }
     if !pending.isEmpty { body(pending) }
+  }
+
+  static func forEachLineFromEnd(
+    in url: URL,
+    matchingAny needles: [Data] = [],
+    body: (Data) -> Bool
+  ) throws {
+    let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+    var upperBound = data.endIndex
+    while upperBound > data.startIndex {
+      if Task.isCancelled { return }
+      while upperBound > data.startIndex,
+            data[data.index(before: upperBound)] == 0x0A {
+        upperBound = data.index(before: upperBound)
+      }
+      guard upperBound > data.startIndex else { return }
+      var lowerBound = upperBound
+      while lowerBound > data.startIndex {
+        let previous = data.index(before: lowerBound)
+        if data[previous] == 0x0A { break }
+        lowerBound = previous
+      }
+      let lineRange = lowerBound..<upperBound
+      if !lineRange.isEmpty,
+         needles.isEmpty || needles.contains(where: { data.range(of: $0, in: lineRange) != nil }),
+         !body(Data(data[lineRange])) {
+        return
+      }
+      guard lowerBound > data.startIndex else { return }
+      upperBound = data.index(before: lowerBound)
+    }
   }
 
 }
