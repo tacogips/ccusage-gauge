@@ -221,7 +221,7 @@ private func reconciledTokenCount(
   return target / count
 }
 
-private func selectedPeriodCost(
+func selectedPeriodCost(
   cycle: ResetCycle,
   interval: DateInterval,
   metrics: [CCUsageMetricRecord],
@@ -681,6 +681,7 @@ public struct RecentPoint: Codable, Equatable, Sendable {
   public let timestamp: Date
   public let costUSD: Decimal
   public let models: [String]
+  public let machine: String
 }
 
 public struct RecentResponse: Codable, Equatable, Sendable { public let series: [RecentPoint]; public let totalUSD: Decimal }
@@ -724,6 +725,7 @@ public struct DashboardCostRow: Codable, Equatable, Sendable {
   public let cacheReadTokens: Int
   public let totalTokens: Int
   public let dataQuality: String
+  public let machine: String
 }
 
 public struct DashboardCostResponse: Codable, Equatable, Sendable {
@@ -742,14 +744,14 @@ public struct DashboardQueryService: Sendable {
 
   public func recent(snapshot: CostSnapshot, limit: Int = 48) -> RecentResponse {
     let points = snapshot.points.suffix(max(1, min(limit, 500))).map {
-      RecentPoint(timestamp: $0.timestamp, costUSD: $0.costUSD, models: $0.models)
+      RecentPoint(timestamp: $0.timestamp, costUSD: $0.costUSD, models: $0.models, machine: $0.machine)
     }
     return RecentResponse(series: points, totalUSD: points.reduce(0) { $0 + $1.costUSD })
   }
 
   public func day(snapshot: CostSnapshot, date: Date) -> DayResponse {
     let points = snapshot.points.filter { calendar.isDate($0.timestamp, inSameDayAs: date) }.map {
-      RecentPoint(timestamp: $0.timestamp, costUSD: $0.costUSD, models: $0.models)
+      RecentPoint(timestamp: $0.timestamp, costUSD: $0.costUSD, models: $0.models, machine: $0.machine)
     }
     return DayResponse(date: formatDay(date), series: points, totalUSD: points.reduce(0) { $0 + $1.costUSD })
   }
@@ -767,7 +769,7 @@ public struct DashboardQueryService: Sendable {
     default: throw DashboardQueryError.invalidRange
     }
     let points = snapshot.points.filter { isWithin($0.timestamp, interval: interval) }.map {
-      RecentPoint(timestamp: $0.timestamp, costUSD: $0.costUSD, models: $0.models)
+      RecentPoint(timestamp: $0.timestamp, costUSD: $0.costUSD, models: $0.models, machine: $0.machine)
     }
     return PeriodResponse(range: range, series: points, totalUSD: points.reduce(0) { $0 + $1.costUSD })
   }
@@ -781,7 +783,7 @@ public struct DashboardQueryService: Sendable {
     }
     let points = snapshot.points
       .filter { $0.timestamp >= start && $0.timestamp < endExclusive }
-      .map { RecentPoint(timestamp: $0.timestamp, costUSD: $0.costUSD, models: $0.models) }
+      .map { RecentPoint(timestamp: $0.timestamp, costUSD: $0.costUSD, models: $0.models, machine: $0.machine) }
     return PeriodResponse(range: "custom", series: points, totalUSD: points.reduce(0) { $0 + $1.costUSD })
   }
 
@@ -842,7 +844,8 @@ public struct DashboardQueryService: Sendable {
           cacheCreationTokens: record.cacheCreationTokens,
           cacheReadTokens: record.cacheReadTokens,
           totalTokens: record.totalTokens,
-          dataQuality: record.dataQuality.rawValue
+          dataQuality: record.dataQuality.rawValue,
+          machine: record.machine
         )
       }
     case "daily":
@@ -858,7 +861,8 @@ public struct DashboardQueryService: Sendable {
           cacheCreationTokens: record.cacheCreationTokens,
           cacheReadTokens: record.cacheReadTokens,
           totalTokens: record.totalTokens,
-          dataQuality: "daily"
+          dataQuality: "daily",
+          machine: record.machine
         )
       }
     default: throw DashboardQueryError.invalidGranularity
@@ -897,7 +901,7 @@ public struct DashboardQueryService: Sendable {
     _ sessions: [CCUsageSessionMetricRecord],
     interval: DateInterval?
   ) -> [CCUsageMetricRecord] {
-    struct Key: Hashable { let date: String; let agent: String; let model: String }
+    struct Key: Hashable { let date: String; let agent: String; let model: String; let machine: String }
     struct Values {
       var costUSD = Decimal.zero
       var inputTokens = 0
@@ -907,7 +911,7 @@ public struct DashboardQueryService: Sendable {
     }
     var groups: [Key: Values] = [:]
     for session in sessions where isWithin(session.timestamp, interval: interval) {
-      let key = Key(date: formatDay(session.timestamp), agent: session.agent, model: session.model)
+      let key = Key(date: formatDay(session.timestamp), agent: session.agent, model: session.model, machine: session.machine)
       var values = groups[key, default: Values()]
       values.costUSD += session.costUSD
       values.inputTokens += session.inputTokens
@@ -925,7 +929,8 @@ public struct DashboardQueryService: Sendable {
         inputTokens: values.inputTokens,
         outputTokens: values.outputTokens,
         cacheCreationTokens: values.cacheCreationTokens,
-        cacheReadTokens: values.cacheReadTokens
+        cacheReadTokens: values.cacheReadTokens,
+        machine: key.machine
       )
     }.sorted { ($0.date, $0.agent, $0.model) < ($1.date, $1.agent, $1.model) }
   }

@@ -41,3 +41,4 @@ temp/
 .cache/
 logs/
 *.log
+deploy/emulation/.runtime/

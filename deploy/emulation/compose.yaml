@@ -1,0 +1,52 @@
+services:
+  keygen:
+    build:
+      context: ../..
+      dockerfile: deploy/emulation/Dockerfile.keygen
+    tmpfs:
+      - /run/ccusage-keygen:mode=0700
+
+  machine-a:
+    build:
+      context: ../..
+      dockerfile: deploy/emulation/Dockerfile.machine
+      args:
+        MACHINE_SEED: "1"
+    ports:
+      - "22221:22"
+    tmpfs:
+      - /run/ccusage-auth:mode=0700,uid=1000,gid=1000
+      - /run/ccusage-hostkeys:mode=0700
+
+  machine-b:
+    build:
+      context: ../..
+      dockerfile: deploy/emulation/Dockerfile.machine
+      args:
+        MACHINE_SEED: "2"
+    ports:
+      - "22222:22"
+    tmpfs:
+      - /run/ccusage-auth:mode=0700,uid=1000,gid=1000
+      - /run/ccusage-hostkeys:mode=0700
+
+  collector:
+    build:
+      context: ../..
+      dockerfile: deploy/emulation/Dockerfile.collector
+    user: "1000:1000"
+    depends_on:
+      - keygen
+      - machine-a
+      - machine-b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./.runtime:/runtime
+    tmpfs:
+      - /run/ccusage-secrets:mode=0700,uid=1000,gid=1000
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:18081/api/health"]
+      interval: 1s
+      timeout: 2s
+      retries: 60

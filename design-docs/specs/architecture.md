@@ -104,8 +104,9 @@ do not mutate the file.
 
 ### Aggregate cache
 
-Path: `~/.cache/ccusage-gauge/aggregates-v1.sqlite3`, or the equivalent root set by
-`CCUSAGE_GAUGE_CACHE_HOME`.
+Path: `~/.cache/ccusage-gauge/aggregates-<machineId>.sqlite3`, or the equivalent
+root set by `CCUSAGE_GAUGE_CACHE_HOME`. The synthetic local source uses
+`aggregates-local.sqlite3`.
 
 The cache stores completed historical daily and session aggregates. Snapshot
 loading checks expiry on every regular polling pass, using `createdAt` and
@@ -118,6 +119,25 @@ The cache uses the macOS system SQLite library with separate metadata, daily
 metric, and session metric tables. Decimal costs are stored as text to preserve
 exact values, writes use a transaction, and the legacy JSON cache is removed
 when the SQLite store initializes.
+
+Each cache file has one owning machine. Rows loaded from it are stamped with
+that machine id before aggregation, even when older encoded records omitted the
+machine field. Machine ids are validated slugs before they can influence a path;
+callers cannot supply arbitrary path components. Remote caches exist only on the
+host and nothing is persisted on a remote machine by ccusage-gauge.
+
+The former single-local-machine path `aggregates.sqlite3` has a locked upgrade
+contract. Before opening the local cache, a sole valid regular legacy database
+is checkpointed, closed, permissioned to `0600`, and atomically renamed in the
+same mode-`0700` directory to `aggregates-local.sqlite3`; there is no copy
+fallback. If the destination already exists it is authoritative, is never
+merged or overwritten, and any legacy source is retained but ignored with a
+sanitized conflict warning. An invalid or unsafe legacy path is retained and
+ignored while local history is rebuilt. A permission, checkpoint, race, or
+rename failure is `cache_failed`, publishes no partial destination, and retries
+later. Clearing a scope containing `local` serializes with collection and
+atomically stages both path namespaces plus SQLite sidecars before publishing
+the empty store, preventing later resurrection of legacy data.
 
 ### Mutable state
 
@@ -306,9 +326,14 @@ resources, which then resolve from the refreshed cache.
 Successful responses use JSON and stable field names. Bad parameters return
 `400`; missing routes return `404`; `ccusage` or internal query failures return
 `503` or `500` with a machine-readable error code and non-sensitive message.
-No route accepts filesystem paths or executes arbitrary commands. State-changing
-HTTP endpoints are out of scope for version one; budget and aggregation-period
-mutations remain menu-bar actions.
+No route accepts arbitrary filesystem paths or executes arbitrary commands. The
+explicit state-changing HTTP control surface comprises machine-registry create,
+replace, patch, and delete, `GET /api/refresh`, and `DELETE /api/cache`.
+Read-through historical queries may populate their selected machine caches but
+cannot change configuration or delete retained data. Budget and
+aggregation-period mutations remain menu-bar actions. Every explicit control
+mutation uses the common loopback authority, exact same-origin/fetch-metadata,
+and `X-CCUsage-Gauge-Mutation: 1` gate defined by the remote-machine design.
 
 Static assets are resolved in this order: an explicit development override,
 SwiftPM resources in development, then resources adjacent to the packaged
@@ -316,10 +341,80 @@ executable/application bundle. Resolution is read-only and failure produces a
 diagnostic response rather than exposing a directory listing. Formula and Cask
 build validation must exercise their respective layouts.
 
+## Remote Machine Collection
+
+The dedicated behavior and security design is
+`design-docs/specs/design-remote-machine-collection.md`. `serve` loads
+`~/.config/ccusage-gauge/machines.json`, always adds the reserved synthetic
+`local` descriptor, and creates one independently cancellable poller per enabled
+machine. Local collection retains local event reconciliation. SSH collection
+executes the configured remote ccusage binary through an already-open forwarded
+port and reuses the existing JSON decoder, but does not read host event logs or
+install a remote daemon.
+
+The registry stores connection configuration only and is atomically written
+with mode `0600` inside a mode-`0700`, current-user-owned directory. Registry
+load is fail-closed: only an absent file means an empty SSH registry; unsafe
+ownership/type/permissions, malformed JSON, invalid descriptors, or an unsafe
+persistence path fail service startup without quarantine or local-only fallback.
+Recovery requires an offline correction or intentional removal of the file.
+The persisted representation is the dedicated design's closed version-1
+`schemaVersion` plus `machines` envelope: it stores SSH descriptors only,
+rejects unknown/duplicate fields and every unsupported or missing version, and
+normalizes API defaults before deterministic persistence. There is no implicit
+unversioned or additive-field compatibility.
+Machine ids are immutable, unique safe slugs; `local` cannot be disabled,
+replaced, or deleted. SSH host, user, port, identity path reference, extra
+options, and remote executable are validated before use. Process arguments are
+arrays rather than local-shell strings. Ambient SSH config is disabled, remote
+tokens are POSIX-quoted, options use the closed allowlist, and values capable of
+changing config, proxying, hooks, environment, forwarding, or the remote-command
+boundary are rejected as specified in the dedicated design.
+
+An actor-owned snapshot store retains the latest successful snapshot and
+sanitized health status independently for each machine. A failed refresh does
+not erase the last successful snapshot. One mutation owner serializes candidate
+validation, synchronized atomic persistence, immutable revision publication,
+old-generation cancellation, and affected-poller replacement before replying.
+Poll publications are revision/generation fenced; unaffected pollers continue
+running.
+
+Every existing query route accepts `machine=<id|all>`, defaulting to `all`.
+Concrete ids select exactly one snapshot. Unknown ids return `404`; invalid
+parameters return `400`; disabled ids return `409`; enabled ids without a
+snapshot return `503`. Retained stale snapshots remain readable. The
+all-machines view includes usable enabled snapshots, returns partial `200`
+results when necessary, stamps every block/timeline, daily, and session record
+with non-optional source provenance, and emits `machine` on every recent/day/
+period series point, metric row, and cost-series row. Aggregation keys preserve
+machine identity, and totals and the single host-budget summary are recomputed
+from merged rows instead of summing precomputed values. Query responses expose common
+scope metadata for included, stale, and unavailable machines. Host calendar and
+reset rules define aggregate boundaries, while the oldest included generation
+time describes aggregate freshness. `GET /api/machines` provides registry
+listing and SSH CRUD, while `GET /api/machine-status` reports healthy, stale,
+disabled, and never-collected states. Registry mutations, manual refresh, and
+cache deletion share the dedicated design's loopback authority, same-origin,
+fetch-metadata, and mutation-header policy; rejected requests change no state
+and receive no CORS authorization.
+
+Cache clear is atomic for each selected machine and partial across `all`.
+Complete, mixed, and zero-success results use stable `200`, `207`, and `500`
+responses with per-item `cache_failed`; `all` includes disabled descriptors. A
+clean rollback retains and resumes the old store, while an unrecoverable
+interruption retains stale data and stops only that machine's poller. Startup
+must resolve an interrupted clear to either the complete prior state or the
+complete empty state before opening the cache. Concrete durability and recovery
+mechanisms belong to the implementation plan.
+
 ## Frontend Contract
 
 The SolidJS SPA is built by bun and produces static assets. A left sidebar
-filters exact `ccusage` daily breakdown rows by model and agent. The top-right
+selects All machines or one registered machine and filters exact `ccusage`
+daily breakdown rows by model and agent. The selected scope is visible, and
+rows expose machine attribution in all-machines scope. A Machines screen manages
+SSH descriptors, enablement, and collection health without displaying secret
+contents. The top-right
 aggregation control provides Today, Yesterday, This week, This month, and a
 Custom choice that reveals From/To date calendar controls. The graph always
 shows cost and provides Hourly and Daily aggregation controls, defaulting to
@@ -331,12 +426,17 @@ first-class UI states, and does not invoke `ccusage` or access local files.
 
 ## Security and Privacy Boundaries
 
-- The server is loopback-only and provides read-only version-one APIs.
-- `ccusage` arguments are fixed and never composed through a shell.
+- The server is loopback-only. Registry create/replace/patch/delete, manual
+  refresh, and cache deletion are the explicit state-changing HTTP controls and
+  all use one fail-closed same-origin plus mutation-header gate.
+- `ccusage` arguments are fixed and never composed through a local shell.
+- SSH destinations, ports, option arguments, identity path references, and the
+  remote executable are validated; no inline private key is accepted or logged.
 - API errors, logs, and UI guidance exclude environment values, raw usage
   payloads, and unrelated local paths.
-- Configuration and state files use user-only permissions when created where the
-  platform permits it.
+- Registry safety is mandatory rather than best-effort: unsafe ownership, file
+  type, links, permissions, JSON, descriptors, or persistence paths fail startup.
+  Other configuration and state files use user-only permissions when created.
 - The user-provided HEIC image is a visual reference only and must not be
   copied into the repository, build resources, release archives, or Git.
 
@@ -353,6 +453,23 @@ The feature must not disturb existing Homebrew formula or Cask scripts. Built
 frontend assets must have an explicit packaged-resource location for both release
 forms. No commit or push is implied by this design.
 
+Remote-machine rollout additionally requires `swift build`, `swift test`,
+`task test:coverage`, a clean `cd frontend && bun install && bun run build`,
+and `bash scripts/smoke-remote-machines.sh`. `task test:coverage` is the single
+repository-supported unit-coverage command: it runs SwiftPM with coverage,
+reports executable line coverage for `Sources/AppCore` and `Sources/AppCLI`
+while excluding tests, generated code, and copied web resources, and fails
+below 80.0%. Phase G uses Docker Compose under
+Colima only. An emulation-only collector keeps `serve` loopback-bound and
+unpublished; smoke calls run through `docker compose exec`. One keygen container
+creates the ephemeral SSH keypair in tmpfs and provisioning pipes it only into
+the collector and SSH-machine tmpfs mounts. Compose file-backed secrets, Swarm,
+host key files, host `~/.ssh` mounts, credential bind mounts or volumes, and key
+material in writable layers, runtime data, environments, arguments, or logs are
+forbidden. Missing Colima, Docker, Compose, host-gateway, or tmpfs prerequisites
+are explicit verification limitations, never authorization for a weaker
+fallback.
+
 ## Risks Requiring Implementation Evidence
 
 - The exact v20.0.17 payload variants must be captured as sanitized fixtures
@@ -365,3 +482,17 @@ forms. No commit or push is implied by this design.
   layouts.
 - The selected HTTP implementation must preserve loopback-only binding without
   regressing package and release portability.
+- SSH argument-boundary tests must prove registry values cannot add commands or
+  override the validated destination and remote executable.
+- Registry/poller concurrency tests must prove cancelled generations cannot
+  publish status after replacement.
+- Aggregate tests must prove block/timeline, metric, session, and serialized
+  response-row provenance and totals without double counting across machine
+  snapshots.
+- Registry tests must prove the exact version-1 envelope, normalized persisted
+  defaults, deterministic ordering, and fail-closed unknown/version behavior.
+- Cache-clear tests must prove per-machine atomicity, cross-machine partial
+  results, rollback/store/poller rules, and recovery before and after logical
+  publication of an empty cache.
+- Cache-path and registry validation must prevent traversal and inline secret
+  persistence.

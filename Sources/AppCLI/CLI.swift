@@ -62,35 +62,78 @@ struct CCUsageGaugeCLI {
   static func serve(port: Int?, assets: String?) async throws {
     let paths = AppPaths.production()
     let config = try ConfigStore(fileURL: paths.configFile).loadOrCreate()
-    let service = try makeSnapshotService(configuration: config, paths: paths)
+    let registryStore = MachineRegistryStore(fileURL: paths.machinesFile)
+    let registry = try registryStore.load()
+    try LocalCacheMigrator(
+      legacyURL: paths.aggregationCacheFile,
+      destinationURL: paths.aggregationCacheFile(forMachine: "local")
+    ).migrateIfNeeded()
+    for descriptor in registry.machines {
+      try MachineCacheRecovery.reconcile(
+        machineID: descriptor.id,
+        cacheURL: paths.aggregationCacheFile(forMachine: descriptor.id)
+      )
+    }
+    let executable = try CCUsageExecutableResolver().resolve(configuredPath: config.ccusagePath)
+    let stateStore = StateStore(fileURL: paths.stateFile)
+    let snapshotStore = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: config.pollIntervalSeconds)
+    let collector = try MachineCollector(registry: registry, store: snapshotStore) { descriptor in
+      let client: CCUsageClient
+      if descriptor.kind == .local {
+        client = CCUsageClient(executable: executable, machine: descriptor.id)
+      } else {
+        guard let connection = descriptor.ssh else { throw MachineValidationError(fieldErrors: ["ssh": "is required"]) }
+        client = CCUsageClient(commandRunner: try SSHCCUsageCommandRunner(connection: connection), machine: descriptor.id)
+      }
+      return SnapshotService(
+        stateStore: stateStore,
+        client: client,
+        defaultRefreshIntervalSeconds: config.pollIntervalSeconds,
+        aggregationCache: UsageAggregationCache(
+          fileURL: paths.aggregationCacheFile(forMachine: descriptor.id),
+          retentionDays: config.cacheRetentionDays,
+          machineID: descriptor.id
+        ),
+        claudeUsageEventLoader: descriptor.kind == .local ? .production() : nil,
+        codexUsageEventLoader: descriptor.kind == .local ? .production() : nil
+      )
+    }
+    let mutationOwner = MachineRegistryMutationOwner(store: registryStore, registry: registry)
     let resolver = StaticAssetResolver(explicitRoot: assets.map { URL(fileURLWithPath: $0, isDirectory: true) })
-    let router = DashboardRouter(
-      progressiveRangeSnapshotProvider: { earliestDate, progress in
-        try await service.snapshot(earliestDate: earliestDate, progress: progress)
-      },
-      assetResolver: resolver,
-      dashboardStateStore: DashboardStateStore(fileURL: paths.dashboardStateFile),
-      cacheClearer: { await service.clearAggregationCache() }
+    let machineRouter = MachineDashboardRouter(
+      store: snapshotStore,
+      collector: collector,
+      mutationOwner: mutationOwner,
+      paths: paths,
+      dashboardStateStore: DashboardStateStore(fileURL: paths.dashboardStateFile)
     )
+    let router = DashboardRouter(machineRouter: machineRouter, assetResolver: resolver)
     let server = DashboardHTTPServer(router: router)
     let selectedPort = port ?? config.dashboardPort
+    await collector.start()
     try server.start(port: UInt16(selectedPort))
     print("Dashboard listening on http://127.0.0.1:\(selectedPort)")
     await waitForTerminationSignal()
     server.stop()
+    await collector.stop()
   }
 
   static func makeSnapshotService(configuration: AppConfiguration? = nil, paths: AppPaths? = nil) throws -> SnapshotService {
     let resolvedPaths = paths ?? AppPaths.production()
     let config = try configuration ?? ConfigStore(fileURL: resolvedPaths.configFile).loadOrCreate()
     let executable = try CCUsageExecutableResolver().resolve(configuredPath: config.ccusagePath)
+    try LocalCacheMigrator(
+      legacyURL: resolvedPaths.aggregationCacheFile,
+      destinationURL: resolvedPaths.aggregationCacheFile(forMachine: "local")
+    ).migrateIfNeeded()
     return SnapshotService(
       stateStore: StateStore(fileURL: resolvedPaths.stateFile),
       client: CCUsageClient(executable: executable),
       defaultRefreshIntervalSeconds: config.pollIntervalSeconds,
       aggregationCache: UsageAggregationCache(
-        fileURL: resolvedPaths.aggregationCacheFile,
-        retentionDays: config.cacheRetentionDays
+        fileURL: resolvedPaths.aggregationCacheFile(forMachine: "local"),
+        retentionDays: config.cacheRetentionDays,
+        machineID: "local"
       ),
       claudeUsageEventLoader: .production(),
       codexUsageEventLoader: .production()

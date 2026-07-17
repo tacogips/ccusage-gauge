@@ -59,6 +59,9 @@ The SolidJS dashboard provides:
 - selected-period cost/token totals and detailed agent/model rows;
 - budget and aggregation-period summaries from the same AppCore snapshot.
 - automatic data refresh using the menu bar's effective refresh interval.
+- an All machines aggregate, per-machine filtering and row attribution, SSH
+  machine registration, enable/disable/remove controls, and sanitized collection
+  health without exposing command, connection, or credential details.
 
 Automatic refreshes retain the current dashboard while data loads in the
 background, then replace it with the completed response without flashing the
@@ -230,7 +233,9 @@ data but does not reload configuration. For example, to use port `19090`, set
 dashboard** to open `http://127.0.0.1:19090/`.
 
 Historical daily and timestamped event aggregates are cached at
-`~/.cache/ccusage-gauge/aggregates.sqlite3`. After the initial cache build,
+`~/.cache/ccusage-gauge/aggregates-<machine-id>.sqlite3`. The first multi-machine
+startup atomically migrates a valid legacy `aggregates.sqlite3` to
+`aggregates-local.sqlite3` when no destination exists. After the initial cache build,
 refreshes run the block, daily, and session queries concurrently while limiting
 daily/session and raw Claude event reads to uncached and current dates. Set
 `CCUSAGE_GAUGE_CACHE_HOME` to override the `.cache` root.
@@ -257,6 +262,38 @@ a persistent positive whole-number override in seconds or return to the
 `pollIntervalSeconds` configuration default. The dashboard automatically uses
 the same effective interval and adopts menu-bar interval changes after its next
 refresh.
+
+## Remote machines
+
+`serve` always exposes the synthetic `local` machine and loads SSH descriptors
+from the closed, versioned `~/.config/ccusage-gauge/machines.json` registry.
+Registry creation and edits are available from the dashboard. SSH collection
+executes the remote `ccusage` binary through an operator-provided forwarded port;
+it does not deploy an agent, push data, or persist a cache remotely. Identity
+files remain operator-managed references and are never copied into the registry.
+
+The registry directory must be owned by the current user with mode `0700`; an
+existing registry must be a regular, single-link, current-user-owned mode-`0600`
+file. Unsafe metadata, malformed JSON, or invalid descriptors fail startup before
+the loopback listener binds. Recovery is offline: stop the service, repair or
+intentionally remove `machines.json`, then restart.
+
+Local emulation uses standalone Docker Compose under Colima only. It creates two
+SSH machines, an unprivileged collector, and one key-generation service. Client
+and host private keys live only in service-scoped tmpfs mounts and are transferred
+through non-logging pipes; the collector HTTP port is not published.
+
+```bash
+task emulation:config
+task smoke:remote-machines
+task test:coverage
+```
+
+If Colima, Docker, Compose, host-gateway, or tmpfs support is unavailable, the
+smoke script reports an explicit limitation and does not claim runtime or
+credential-isolation verification. Docker Swarm, file-backed Compose secrets,
+host SSH mounts, credential bind mounts, and named volumes are not supported
+fallbacks.
 
 ## E2E testing
 

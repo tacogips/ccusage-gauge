@@ -1,0 +1,24 @@
+FROM swift:6.0-jammy AS builder
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libsqlite3-dev \
+  && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY Package.swift ./
+COPY Sources ./Sources
+COPY Tests ./Tests
+RUN swift build -c release --product ccusage-gauge
+
+# Use the matching Swift runtime image so the dynamically linked binary finds
+# libswiftCore.so and friends; a bare ubuntu base lacks the Swift runtime.
+FROM swift:6.0-jammy-slim
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl libsqlite3-0 openssh-client libatomic1 \
+  && rm -rf /var/lib/apt/lists/* \
+  && (userdel -r ubuntu 2>/dev/null || true) \
+  && useradd --create-home --uid 1000 --shell /usr/sbin/nologin collector
+COPY --from=builder /src/.build/release/ccusage-gauge /usr/local/bin/ccusage-gauge
+COPY deploy/emulation/collector-ccusage-stub.sh /usr/local/bin/ccusage
+COPY deploy/emulation/collector-entrypoint.sh /usr/local/bin/collector-entrypoint
+RUN chmod 0755 /usr/local/bin/ccusage-gauge /usr/local/bin/ccusage /usr/local/bin/collector-entrypoint
+USER collector
+ENTRYPOINT ["/usr/local/bin/collector-entrypoint"]

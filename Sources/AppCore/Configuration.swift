@@ -135,13 +135,25 @@ public struct AppPaths: Sendable {
   public let stateFile: URL
   public let aggregationCacheFile: URL
   public let dashboardStateFile: URL
+  public let machinesFile: URL
 
-  public init(configFile: URL, stateFile: URL, aggregationCacheFile: URL, dashboardStateFile: URL? = nil) {
+  public init(
+    configFile: URL,
+    stateFile: URL,
+    aggregationCacheFile: URL,
+    dashboardStateFile: URL? = nil,
+    machinesFile: URL? = nil
+  ) {
     self.configFile = configFile
     self.stateFile = stateFile
     self.aggregationCacheFile = aggregationCacheFile
     self.dashboardStateFile = dashboardStateFile
       ?? aggregationCacheFile.deletingLastPathComponent().appendingPathComponent("dashboard-state.sqlite3")
+    self.machinesFile = machinesFile ?? configFile.deletingLastPathComponent().appendingPathComponent("machines.json")
+  }
+
+  public func aggregationCacheFile(forMachine machineID: String) -> URL {
+    aggregationCacheFile.deletingLastPathComponent().appendingPathComponent("aggregates-\(machineID).sqlite3")
   }
 
   public static func production(environment: [String: String] = ProcessInfo.processInfo.environment) -> AppPaths {
@@ -173,6 +185,7 @@ public struct ConfigStore {
   public func loadOrCreate() throws -> AppConfiguration {
     if !fileManager.fileExists(atPath: fileURL.path) {
       try fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fileURL.deletingLastPathComponent().path)
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
       var data = try encoder.encode(AppConfiguration())
