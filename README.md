@@ -35,6 +35,19 @@ and dashboard controls.
 
 ![ccusage-gauge dashboard showing model filters, cost metrics, and hourly usage](design-docs/screenshots/dashboard.png)
 
+## Install with Homebrew
+
+Install the `ccusage` data source and the CCUsage Gauge Cask:
+
+```bash
+brew install ccusage
+brew install --cask tacogips/tap/ccusage-gauge
+```
+
+The Cask installs the macOS menu-bar app and the `ccusage-gauge` command-line
+tool. Open **CCUsage Gauge** from Applications after installation, or run
+`ccusage-gauge serve` to start the local dashboard.
+
 The SolidJS dashboard provides:
 
 - exact per-agent and per-model rows from `ccusage daily --json --by-agent` on
