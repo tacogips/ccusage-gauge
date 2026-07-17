@@ -380,6 +380,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
         )
       },
       assetResolver: StaticAssetResolver(),
+      dashboardStateStore: DashboardStateStore(fileURL: paths.dashboardStateFile),
       cacheClearer: { await snapshotService.clearAggregationCache() }
     )
     let server = DashboardHTTPServer(router: router)

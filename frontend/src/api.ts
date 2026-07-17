@@ -37,6 +37,16 @@ export interface LoadStatusResponse {
   total: number;
   isLoading: boolean;
 }
+export interface DashboardUIState {
+  range: "recent12h" | "today" | "yesterday" | "week" | "month" | "custom";
+  customStart: string;
+  customEnd: string;
+  selectedModels: string[];
+  selectedAgents: string[];
+  granularity: "15min" | "hourly" | "6hour" | "daily";
+  chartMetric: "costUSD" | "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens";
+}
+export interface DashboardUIStateResponse { state?: DashboardUIState }
 export async function getJSON<T>(path: string): Promise<T> {
   return requestJSON<T>(path);
 }

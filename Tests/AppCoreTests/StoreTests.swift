@@ -3,6 +3,13 @@ import Testing
 @testable import AppCore
 
 @Suite("ConfigStoreTests") struct ConfigStoreTests {
+  @Test func productionPathsUseDedicatedDashboardSQLiteFile() {
+    let paths = AppPaths.production(environment: ["HOME": "/tmp/ccusage-gauge-test-home"])
+
+    #expect(paths.dashboardStateFile.path == "/tmp/ccusage-gauge-test-home/.cache/ccusage-gauge/dashboard-state.sqlite3")
+    #expect(paths.dashboardStateFile != paths.aggregationCacheFile)
+  }
+
   @Test func createsExactDefaultsAndDoesNotRewrite() throws {
     let root = try temporaryDirectory()
     let file = root.appendingPathComponent("config/ccusage-config.json")
@@ -126,6 +133,45 @@ import Testing
     try Data(json.utf8).write(to: file)
     let state = try await StateStore(fileURL: file).load()
     #expect(state.resetCycle == .daily)
+  }
+}
+
+@Suite("DashboardStateStoreTests") struct DashboardStateStoreTests {
+  @Test func roundTripsStateInDedicatedSQLiteFile() async throws {
+    let file = try temporaryDirectory().appendingPathComponent("cache/dashboard-state.sqlite3")
+    let store = DashboardStateStore(fileURL: file)
+    let state = DashboardUIState(
+      range: "custom",
+      customStart: "2026-07-01",
+      customEnd: "2026-07-17",
+      selectedModels: ["gpt-5"],
+      selectedAgents: ["codex"],
+      granularity: "6hour",
+      chartMetric: "totalTokens"
+    )
+
+    try await store.save(state)
+
+    #expect(try await store.load() == state)
+    let header = Data(try Data(contentsOf: file).prefix(16))
+    #expect(String(data: header, encoding: .utf8) == "SQLite format 3\0")
+  }
+
+  @Test func rejectsInvalidStateWithoutCreatingDatabase() async throws {
+    let file = try temporaryDirectory().appendingPathComponent("cache/dashboard-state.sqlite3")
+    let store = DashboardStateStore(fileURL: file)
+    let state = DashboardUIState(
+      range: "unknown",
+      customStart: "2026-07-01",
+      customEnd: "2026-07-17",
+      selectedModels: [],
+      selectedAgents: [],
+      granularity: "hourly",
+      chartMetric: "costUSD"
+    )
+
+    await #expect(throws: DashboardStateError.invalidState) { try await store.save(state) }
+    #expect(!FileManager.default.fileExists(atPath: file.path))
   }
 }
 

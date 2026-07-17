@@ -69,6 +69,7 @@ struct CCUsageGaugeCLI {
         try await service.snapshot(earliestDate: earliestDate, progress: progress)
       },
       assetResolver: resolver,
+      dashboardStateStore: DashboardStateStore(fileURL: paths.dashboardStateFile),
       cacheClearer: { await service.clearAggregationCache() }
     )
     let server = DashboardHTTPServer(router: router)

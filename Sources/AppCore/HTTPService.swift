@@ -432,17 +432,20 @@ public struct DashboardRouter: Sendable {
   private let queryService: DashboardQueryService
   private let assetResolver: StaticAssetResolver
   private let cacheClearer: CacheClearer
+  private let dashboardStateStore: DashboardStateStore?
 
   public init(
     snapshotProvider: @escaping SnapshotProvider,
     snapshotCacheMaxAgeSeconds: TimeInterval = 60,
     queryService: DashboardQueryService = DashboardQueryService(),
     assetResolver: StaticAssetResolver,
+    dashboardStateStore: DashboardStateStore? = nil,
     cacheClearer: @escaping CacheClearer = {}
   ) {
     snapshotCache = DashboardSnapshotCache(maxAgeSeconds: snapshotCacheMaxAgeSeconds) { _ in try await snapshotProvider() }
     self.queryService = queryService
     self.assetResolver = assetResolver
+    self.dashboardStateStore = dashboardStateStore
     self.cacheClearer = cacheClearer
   }
 
@@ -451,6 +454,7 @@ public struct DashboardRouter: Sendable {
     snapshotCacheMaxAgeSeconds: TimeInterval = 60,
     queryService: DashboardQueryService = DashboardQueryService(),
     assetResolver: StaticAssetResolver,
+    dashboardStateStore: DashboardStateStore? = nil,
     cacheClearer: @escaping CacheClearer = {}
   ) {
     snapshotCache = DashboardSnapshotCache(
@@ -459,6 +463,7 @@ public struct DashboardRouter: Sendable {
     )
     self.queryService = queryService
     self.assetResolver = assetResolver
+    self.dashboardStateStore = dashboardStateStore
     self.cacheClearer = cacheClearer
   }
 
@@ -467,11 +472,13 @@ public struct DashboardRouter: Sendable {
     snapshotCacheMaxAgeSeconds: TimeInterval = 60,
     queryService: DashboardQueryService = DashboardQueryService(),
     assetResolver: StaticAssetResolver,
+    dashboardStateStore: DashboardStateStore? = nil,
     cacheClearer: @escaping CacheClearer = {}
   ) {
     snapshotCache = DashboardSnapshotCache(maxAgeSeconds: snapshotCacheMaxAgeSeconds, loader: rangeSnapshotProvider)
     self.queryService = queryService
     self.assetResolver = assetResolver
+    self.dashboardStateStore = dashboardStateStore
     self.cacheClearer = cacheClearer
   }
 
@@ -481,16 +488,18 @@ public struct DashboardRouter: Sendable {
     _ = try? await snapshotCache.warmHistoricalCoverage()
   }
 
-  public func route(target: String, method: String = "GET") async -> HTTPResponse {
+  public func route(target: String, method: String = "GET", body: Data = Data()) async -> HTTPResponse {
     guard let components = URLComponents(string: "http://127.0.0.1\(target)") else {
       return errorResponse(status: 400, code: "invalid_request", message: "Invalid request target")
     }
     let path = components.path
     let isCacheClear = path == "/api/cache" && method == "DELETE"
-    guard method == "GET" || isCacheClear else {
+    let isDashboardStateSave = path == "/api/dashboard-state" && method == "PUT"
+    guard method == "GET" || isCacheClear || isDashboardStateSave else {
       return errorResponse(status: 405, code: "method_not_allowed", message: "Method is not supported for this route")
     }
     if path.hasPrefix("/api/") {
+      if let response = await dashboardStateResponse(path: path, method: method, body: body) { return response }
       if isCacheClear {
         await snapshotCache.clear()
         await cacheClearer()
@@ -574,6 +583,27 @@ public struct DashboardRouter: Sendable {
       return errorResponse(status: 503, code: "assets_missing", message: "Dashboard assets are not installed")
     }
     return HTTPResponse(status: 200, contentType: Self.contentType(for: file.pathExtension), body: data)
+  }
+
+  private func dashboardStateResponse(path: String, method: String, body: Data) async -> HTTPResponse? {
+    guard path == "/api/dashboard-state" else { return nil }
+    guard let dashboardStateStore else {
+      return errorResponse(status: 503, code: "state_unavailable", message: "Dashboard state storage is unavailable")
+    }
+    do {
+      if method == "PUT" {
+        let state = try JSONDecoder().decode(DashboardUIState.self, from: body)
+        try await dashboardStateStore.save(state)
+        return json(["status": "ok"])
+      }
+      return json(DashboardUIStateResponse(state: try await dashboardStateStore.load()))
+    } catch DashboardStateError.invalidState {
+      return errorResponse(status: 400, code: "invalid_dashboard_state", message: "Dashboard state is invalid")
+    } catch is DecodingError {
+      return errorResponse(status: 400, code: "invalid_dashboard_state", message: "Dashboard state is invalid")
+    } catch {
+      return errorResponse(status: 503, code: "state_unavailable", message: "Dashboard state storage is unavailable")
+    }
   }
 
   private func requestedCoverageStart(for path: String, components: URLComponents) -> Date? {
@@ -735,7 +765,7 @@ public final class DashboardHTTPServer: @unchecked Sendable {
       Self.closeSocket(descriptor)
       return
     }
-    let parts = request.split(separator: " ")
+    let parts = request.requestLine.split(separator: " ")
     guard parts.count >= 2 else {
       Self.closeSocket(descriptor)
       return
@@ -744,32 +774,52 @@ public final class DashboardHTTPServer: @unchecked Sendable {
     let target = String(parts[1])
     let router = router
     Task {
-      let response = await router.route(target: target, method: method)
+      let response = await router.route(target: target, method: method, body: request.body)
       Self.send(response, through: descriptor)
       Self.closeSocket(descriptor)
     }
   }
 
-  private static func readRequest(from descriptor: Int32) -> String? {
+  private struct Request {
+    let requestLine: String
+    let body: Data
+  }
+
+  private static func readRequest(from descriptor: Int32) -> Request? {
     let headerTerminator = Data("\r\n\r\n".utf8)
     var received = Data()
     var buffer = [UInt8](repeating: 0, count: 4_096)
-    while received.count < 16_384 {
+    var headerRange: Range<Data.Index>?
+    var expectedBytes: Int?
+    while received.count < 81_920 {
       let count = buffer.withUnsafeMutableBytes { bytes in
         recv(descriptor, bytes.baseAddress, bytes.count, 0)
       }
       if count > 0 {
         received.append(contentsOf: buffer.prefix(count))
-        if received.range(of: headerTerminator) != nil { break }
+        if headerRange == nil, let range = received.range(of: headerTerminator) {
+          headerRange = range
+          guard range.lowerBound <= 16_384,
+                let headers = String(data: received[..<range.lowerBound], encoding: .utf8) else { return nil }
+          let contentLength = headers.components(separatedBy: "\r\n")
+            .first(where: { $0.lowercased().hasPrefix("content-length:") })?
+            .split(separator: ":", maxSplits: 1).last
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .flatMap(Int.init) ?? 0
+          guard (0...65_536).contains(contentLength) else { return nil }
+          expectedBytes = range.upperBound + contentLength
+        }
+        if let expectedBytes, received.count >= expectedBytes { break }
       } else if count == 0 {
         return nil
       } else if errno != EINTR {
         return nil
       }
     }
-    guard received.range(of: headerTerminator) != nil,
-          let request = String(data: received, encoding: .utf8) else { return nil }
-    return request.components(separatedBy: "\r\n")[0]
+    guard let headerRange, let expectedBytes, received.count >= expectedBytes,
+          let headers = String(data: received[..<headerRange.lowerBound], encoding: .utf8),
+          let requestLine = headers.components(separatedBy: "\r\n").first else { return nil }
+    return Request(requestLine: requestLine, body: Data(received[headerRange.upperBound..<expectedBytes]))
   }
 
   private static func send(_ response: HTTPResponse, through descriptor: Int32) {
