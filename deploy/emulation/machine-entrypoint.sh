@@ -1,5 +1,7 @@
 #!/bin/sh
 set -eu
+export HOME=/home/ccusage
+export TZ=UTC
 
 is_tmpfs() {
   awk -v path="$1" '$2 == path && $3 == "tmpfs" { found=1 } END { exit !found }' /proc/mounts
@@ -7,8 +9,9 @@ is_tmpfs() {
 
 is_tmpfs /run/ccusage-auth
 is_tmpfs /run/ccusage-hostkeys
-test ! -e /run/ccusage-hostkeys/ssh_host_ed25519_key
-ssh-keygen -q -t ed25519 -N '' -f /run/ccusage-hostkeys/ssh_host_ed25519_key
+if test ! -e /run/ccusage-hostkeys/ssh_host_ed25519_key; then
+  ssh-keygen -q -t ed25519 -N '' -f /run/ccusage-hostkeys/ssh_host_ed25519_key
+fi
 chown root:root /run/ccusage-hostkeys/ssh_host_ed25519_key*
 chmod 0600 /run/ccusage-hostkeys/ssh_host_ed25519_key
 chmod 0644 /run/ccusage-hostkeys/ssh_host_ed25519_key.pub
@@ -18,6 +21,8 @@ chmod 0644 /run/ccusage-hostkeys/ssh_host_ed25519_key.pub
 # persist the seed to a file the ccusage stub can read during SSH collection.
 printf '%s' "${MACHINE_SEED:-0}" > /etc/ccusage-machine-seed
 chmod 0644 /etc/ccusage-machine-seed
+printf '%s' "${CCUSAGE_EMULATION_MODE:-real}" > /etc/ccusage-emulation-mode
+chmod 0644 /etc/ccusage-emulation-mode
 
 while test ! -s /run/ccusage-auth/authorized_keys; do sleep 0.1; done
 chown -R ccusage:ccusage /run/ccusage-auth

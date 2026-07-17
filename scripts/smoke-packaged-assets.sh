@@ -26,9 +26,11 @@ fake="$root/ccusage"
 printf '%s\n' '#!/usr/bin/env bash' "printf '%s' '{\"blocks\":[]}'" >"$fake"
 chmod +x "$fake"
 mkdir -p "$root/config/ccusage-gauge"
+chmod 0700 "$root" "$root/config" "$root/config/ccusage-gauge"
 cat >"$root/config/ccusage-gauge/ccusage-config.json" <<JSON
 {"ccusagePath":"$fake","defaultResetTerm":"daily","dashboardPort":18082,"dashboardAutostart":false,"pollIntervalSeconds":60}
 JSON
+chmod 0600 "$root/config/ccusage-gauge/ccusage-config.json"
 export CCUSAGE_GAUGE_CONFIG_HOME="$root/config" CCUSAGE_GAUGE_STATE_HOME="$root/state"
 
 probe() {

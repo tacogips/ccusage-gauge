@@ -8,6 +8,10 @@ COPY Sources ./Sources
 COPY Tests ./Tests
 RUN swift build -c release --product ccusage-gauge
 
+FROM node:22-bookworm-slim AS ccusage-runtime
+RUN npm install --global ccusage@20.0.17 \
+  && test "$(ccusage --version | head -n1)" = "ccusage 20.0.17"
+
 # Use the matching Swift runtime image so the dynamically linked binary finds
 # libswiftCore.so and friends; a bare ubuntu base lacks the Swift runtime.
 FROM swift:6.0-jammy-slim
@@ -16,9 +20,13 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && (userdel -r ubuntu 2>/dev/null || true) \
   && useradd --create-home --uid 1000 --shell /usr/sbin/nologin collector
+COPY --from=ccusage-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=ccusage-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s ../lib/node_modules/ccusage/src/cli.js /usr/local/bin/ccusage.real
 COPY --from=builder /src/.build/release/ccusage-gauge /usr/local/bin/ccusage-gauge
-COPY deploy/emulation/collector-ccusage-stub.sh /usr/local/bin/ccusage
+COPY deploy/emulation/collector-ccusage-stub.sh /usr/local/libexec/ccusage-stub
+COPY deploy/emulation/ccusage-dispatcher.sh /usr/local/bin/ccusage
 COPY deploy/emulation/collector-entrypoint.sh /usr/local/bin/collector-entrypoint
-RUN chmod 0755 /usr/local/bin/ccusage-gauge /usr/local/bin/ccusage /usr/local/bin/collector-entrypoint
-USER collector
+RUN test "$(ccusage.real --version | head -n1)" = "ccusage 20.0.17" \
+  && chmod 0755 /usr/local/bin/ccusage-gauge /usr/local/bin/ccusage /usr/local/bin/ccusage.real /usr/local/libexec/ccusage-stub /usr/local/bin/collector-entrypoint
 ENTRYPOINT ["/usr/local/bin/collector-entrypoint"]

@@ -24,6 +24,11 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
 }
 
 @Suite("SSHCommandRunnerTests") struct SSHCommandRunnerTests {
+  @Test func usesSystemSSHExecutable() throws {
+    let runner = try SSHCCUsageCommandRunner(connection: SSHConnection(host: "localhost", port: 22, user: "user"))
+    #expect(runner.sshExecutable.path == "/usr/bin/ssh")
+  }
+
   @Test func emitsCanonicalArgumentsAndQuotesEveryRemoteToken() throws {
     let connection = SSHConnection(
       host: "2001:db8::1",

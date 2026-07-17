@@ -21,6 +21,7 @@ state="$home/state/ccusage-gauge/state.json"
 
 rm -rf "$output_root"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/Web" "$output_root/bin" "$(dirname "$config")" "$(dirname "$state")"
+chmod 0700 "$output_root" "$home" "$home/config" "$(dirname "$config")" "$home/state" "$(dirname "$state")"
 
 swift build --package-path "$project_root" --product ccusage-gauge-menubar >/dev/null
 bin_dir="$(swift build --package-path "$project_root" --show-bin-path)"

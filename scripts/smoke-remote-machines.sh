@@ -3,8 +3,15 @@ set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 compose_file="$repository_root/deploy/emulation/compose.yaml"
-runtime_dir="$repository_root/deploy/emulation/.runtime"
 project_name="ccusage-gauge-remote-smoke"
+
+# Stub mode remains a fast deterministic check. Real mode is explicit and can
+# never silently fall back when Docker, fixtures, or parity checks are missing.
+case "${1:---stub}" in
+  --real) exec "$repository_root/scripts/smoke-remote-machines-real.sh" ;;
+  --stub) ;;
+  *) printf 'usage: %s [--stub|--real]\n' "$0" >&2; exit 2 ;;
+esac
 
 limitation() {
   printf 'LIMITATION: remote-machine emulation not executed: %s\n' "$1" >&2
@@ -20,22 +27,40 @@ if ! docker info >/dev/null 2>&1; then
 fi
 docker info >/dev/null 2>&1 || limitation "Docker Engine is unavailable"
 
+read -r MACHINE_A_SSH_PORT MACHINE_B_SSH_PORT < <(python3 - <<'PY'
+import socket
+sockets = [socket.socket() for _ in range(2)]
+for sock in sockets:
+    sock.bind(("127.0.0.1", 0))
+print(*(sock.getsockname()[1] for sock in sockets))
+for sock in sockets:
+    sock.close()
+PY
+)
+export MACHINE_A_SSH_PORT MACHINE_B_SSH_PORT
+
 compose=(docker compose --project-name "$project_name" -f "$compose_file")
 cleanup() {
-  "${compose[@]}" down --remove-orphans >/dev/null 2>&1 || true
-  if [[ -d "$runtime_dir" ]]; then
-    find "$runtime_dir" -mindepth 1 -delete
-    rmdir "$runtime_dir" 2>/dev/null || true
-  fi
+  cleanup_status=$?
+  "${compose[@]}" down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || cleanup_status=1
   if docker ps -a --format '{{.Names}}' | grep -q "^${project_name}-"; then
     printf 'remote-machine cleanup left project containers behind\n' >&2
-    exit 1
+    cleanup_status=1
   fi
+  if docker volume ls --format '{{.Name}}' | grep -q "^${project_name}_"; then
+    printf 'remote-machine cleanup left project volumes behind\n' >&2
+    cleanup_status=1
+  fi
+  if docker images --format '{{.Repository}}' | grep -q "^${project_name}-"; then
+    printf 'remote-machine cleanup left project images behind\n' >&2
+    cleanup_status=1
+  fi
+  trap - EXIT INT TERM
+  exit "$cleanup_status"
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$runtime_dir/config" "$runtime_dir/state" "$runtime_dir/cache"
-chmod 0777 "$runtime_dir" "$runtime_dir/config" "$runtime_dir/state" "$runtime_dir/cache"
+export CCUSAGE_EMULATION_MODE=stub
 
 "${compose[@]}" config >/dev/null
 "${compose[@]}" build
@@ -80,16 +105,17 @@ done
 "${compose[@]}" exec -T collector curl --fail --silent http://127.0.0.1:18081/api/health >/dev/null
 
 register_machine() {
-  local id="$1"
-  local port="$2"
+  local id="$1" port
+  port="$("${compose[@]}" port "$id" 22 | awk -F: 'NR == 1 { print $NF }')"
+  test -n "$port"
   "${compose[@]}" exec -T collector curl --fail --silent \
     -H 'Content-Type: application/json' \
     -H 'X-CCUsage-Gauge-Mutation: 1' \
     -X POST http://127.0.0.1:18081/api/machines \
     --data "{\"id\":\"$id\",\"displayName\":\"$id\",\"kind\":\"ssh\",\"enabled\":true,\"ssh\":{\"host\":\"host.docker.internal\",\"port\":$port,\"user\":\"ccusage\",\"identityFile\":\"/run/ccusage-secrets/id_ed25519\",\"extraOptions\":[\"-o ConnectTimeout=5\",\"-o StrictHostKeyChecking=accept-new\",\"-o UserKnownHostsFile=/run/ccusage-secrets/known_hosts\"],\"remoteCcusagePath\":\"ccusage\"}}" >/dev/null
 }
-register_machine machine-a 22221
-register_machine machine-b 22222
+register_machine machine-a
+register_machine machine-b
 
 # Wait until both remote machines have completed their first collection. The
 # `local` machine reports healthy almost immediately, so gate on machine-a and
@@ -124,7 +150,9 @@ PY
 # refresh returns 503 when the only target fails, so do not use --fail here.
 degraded_json=""
 for _ in $(seq 1 60); do
-  "${compose[@]}" exec -T collector curl --silent -o /dev/null 'http://127.0.0.1:18081/api/refresh?machine=machine-b' || true
+  "${compose[@]}" exec -T collector curl --silent -o /dev/null \
+    -H 'X-CCUsage-Gauge-Mutation: 1' \
+    'http://127.0.0.1:18081/api/refresh?machine=machine-b' || true
   degraded_json="$("${compose[@]}" exec -T collector curl --fail --silent 'http://127.0.0.1:18081/api/metrics?range=all&machine=all')"
   if printf '%s' "$degraded_json" | python3 -c 'import json,sys
 s = json.load(sys.stdin)["scope"]
@@ -146,16 +174,12 @@ if "${compose[@]}" port collector 18081 2>/dev/null | grep -q .; then
   printf 'collector HTTP port was published\n' >&2
   exit 1
 fi
-if find "$runtime_dir" -type f -exec grep -Il 'OPENSSH PRIVATE KEY' {} + | grep -q .; then
-  printf 'private key material entered runtime bind data\n' >&2
-  exit 1
-fi
 if "${compose[@]}" logs 2>&1 | grep -q 'OPENSSH PRIVATE KEY'; then
   printf 'private key material entered service logs\n' >&2
   exit 1
 fi
 for service in keygen machine-a machine-b collector; do
-  container_id="$("${compose[@]}" ps -q "$service")"
+  container_id="$("${compose[@]}" ps --all -q "$service")"
   if docker diff "$container_id" | grep -E 'id_ed25519|ssh_host_ed25519_key|authorized_keys' >/dev/null; then
     printf 'credential path entered the writable layer for %s\n' "$service" >&2
     exit 1
@@ -170,9 +194,4 @@ if "${compose[@]}" config | grep -E '^[[:space:]]*secrets:|/\.ssh' >/dev/null; t
   printf 'compose configuration contains a forbidden secret or host SSH mount\n' >&2
   exit 1
 fi
-if docker volume ls --format '{{.Name}}' | grep -q "^${project_name}"; then
-  printf 'emulation created a named volume\n' >&2
-  exit 1
-fi
-
 printf 'remote-machine emulation passed: local/two-remote aggregate, degraded partial state, provenance, and tmpfs credential isolation verified\n'
