@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
-import { type BudgetResponse, type CostRow, type CostSeriesResponse, type LoadStatusResponse, type MetricRow, type MetricsResponse, getJSON, requestJSON } from "./api";
+import { type BudgetResponse, type CostRow, type CostSeriesResponse, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type MetricRow, type MetricsResponse, getJSON, requestJSON } from "./api";
 
 type QuickRange = "recent12h" | "today" | "yesterday" | "week" | "month";
 type Range = QuickRange | "custom";
@@ -324,6 +324,7 @@ export default function App() {
   const [rangeLoadStarted, setRangeLoadStarted] = createSignal(false);
   const [isClearingCache, setIsClearingCache] = createSignal(false);
   const [cacheStatus, setCacheStatus] = createSignal<string>();
+  const [isDashboardStateLoaded, setIsDashboardStateLoaded] = createSignal(false);
 
   const periodPath = createMemo(() => range() === "custom"
     ? `/api/metrics?range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`
@@ -350,6 +351,7 @@ export default function App() {
   const modelSourceNote = (model: string) => unavailableModelReason(model)
     ?? (estimatedModels().has(model) ? `${model} uses session-level timing for part or all of this period, so sub-daily placement is estimated.` : undefined);
   createEffect(() => {
+    if (!isDashboardStateLoaded() || period()?.range !== range() || costSeries()?.range !== range() || costSeries()?.granularity !== granularity()) return;
     const available = chartModels();
     setSelectedModels((current) => {
       const next = current.filter((model) => available.has(model));
@@ -357,6 +359,7 @@ export default function App() {
     });
   });
   createEffect(() => {
+    if (!isDashboardStateLoaded() || period()?.range !== range()) return;
     const available = new Set(agents());
     setSelectedAgents((current) => {
       const next = current.filter((agent) => available.has(agent));
@@ -488,8 +491,42 @@ export default function App() {
     }
   });
   onMount(() => {
+    void getJSON<DashboardUIStateResponse>("/api/dashboard-state")
+      .then(({ state }) => {
+        if (!state) return;
+        setRange(state.range);
+        setCustomStart(state.customStart);
+        setCustomEnd(state.customEnd);
+        setAppliedCustomRange({ start: state.customStart, end: state.customEnd });
+        setSelectedModels(state.selectedModels);
+        setSelectedAgents(state.selectedAgents);
+        setGranularity(state.granularity);
+        setChartMetric(state.chartMetric);
+      })
+      .catch(() => undefined)
+      .finally(() => setIsDashboardStateLoaded(true));
     const timer = window.setInterval(refreshLoadStatus, 250);
     onCleanup(() => window.clearInterval(timer));
+  });
+  let dashboardStateSave = Promise.resolve<unknown>(undefined);
+  createEffect(() => {
+    if (!isDashboardStateLoaded()) return;
+    const state: DashboardUIState = {
+      range: range(),
+      customStart: appliedCustomRange().start,
+      customEnd: appliedCustomRange().end,
+      selectedModels: selectedModels(),
+      selectedAgents: selectedAgents(),
+      granularity: granularity(),
+      chartMetric: chartMetric(),
+    };
+    dashboardStateSave = dashboardStateSave
+      .catch(() => undefined)
+      .then(() => requestJSON<{ status: string }>("/api/dashboard-state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(state),
+      }));
   });
   createEffect(() => {
     const intervalSeconds = budget()?.refreshIntervalSeconds ?? 20;

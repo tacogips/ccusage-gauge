@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Testing
 @testable import AppCore
 
@@ -452,6 +455,74 @@ private actor CacheClearCounter {
     #expect(await router.route(target: "/api/cost-series?range=today&granularity=15min").status == 200)
     #expect(await router.route(target: "/api/cost-series?range=today&granularity=weekly").status == 400)
     #expect(await router.route(target: "/api/missing").status == 404)
+  }
+
+  @Test func dashboardStateRoutePersistsAndReloadsSelections() async throws {
+    let root = try temporaryDirectory()
+    try Data("<h1>dashboard</h1>".utf8).write(to: root.appendingPathComponent("index.html"))
+    let stateFile = root.appendingPathComponent("cache/dashboard-state.sqlite3")
+    let store = DashboardStateStore(fileURL: stateFile)
+    let snapshot = CostSnapshot(
+      generatedAt: Date(), activeBoundaryAt: Date(), costSinceResetUSD: 0,
+      budget: BudgetSummary(spentUSD: 0, budgetUSD: nil), resetCycle: .daily, points: []
+    )
+    let router = DashboardRouter(
+      snapshotProvider: { snapshot },
+      assetResolver: StaticAssetResolver(explicitRoot: root),
+      dashboardStateStore: store
+    )
+    let body = Data(#"{"range":"week","customStart":"2026-07-01","customEnd":"2026-07-17","selectedModels":["gpt-5"],"selectedAgents":["codex"],"granularity":"daily","chartMetric":"inputTokens"}"#.utf8)
+
+    #expect(await router.route(target: "/api/dashboard-state", method: "PUT", body: body).status == 200)
+    let response = await router.route(target: "/api/dashboard-state")
+    #expect(response.status == 200)
+    let decoded = try JSONDecoder().decode(DashboardUIStateResponse.self, from: response.body)
+    #expect(decoded.state?.range == "week")
+    #expect(decoded.state?.selectedModels == ["gpt-5"])
+    #expect(FileManager.default.fileExists(atPath: stateFile.path))
+  }
+
+  @Test func dashboardStateRouteRejectsInvalidPayload() async throws {
+    let root = try temporaryDirectory()
+    try Data("<h1>dashboard</h1>".utf8).write(to: root.appendingPathComponent("index.html"))
+    let snapshot = CostSnapshot(
+      generatedAt: Date(), activeBoundaryAt: Date(), costSinceResetUSD: 0,
+      budget: BudgetSummary(spentUSD: 0, budgetUSD: nil), resetCycle: .daily, points: []
+    )
+    let router = DashboardRouter(
+      snapshotProvider: { snapshot },
+      assetResolver: StaticAssetResolver(explicitRoot: root),
+      dashboardStateStore: DashboardStateStore(fileURL: root.appendingPathComponent("dashboard-state.sqlite3"))
+    )
+
+    #expect(await router.route(target: "/api/dashboard-state", method: "PUT", body: Data("{}".utf8)).status == 400)
+  }
+
+  @Test func dashboardHTTPServerAcceptsStateRequestBody() async throws {
+    let root = try temporaryDirectory()
+    let stateFile = root.appendingPathComponent("dashboard-state.sqlite3")
+    let snapshot = CostSnapshot(
+      generatedAt: Date(), activeBoundaryAt: Date(), costSinceResetUSD: 0,
+      budget: BudgetSummary(spentUSD: 0, budgetUSD: nil), resetCycle: .daily, points: []
+    )
+    let router = DashboardRouter(
+      snapshotProvider: { snapshot },
+      assetResolver: StaticAssetResolver(explicitRoot: root),
+      dashboardStateStore: DashboardStateStore(fileURL: stateFile)
+    )
+    let server = DashboardHTTPServer(router: router)
+    let port = UInt16.random(in: 20_000...50_000)
+    try server.start(port: port)
+    defer { server.stop() }
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/api/dashboard-state")!)
+    request.httpMethod = "PUT"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = Data(#"{"range":"today","customStart":"2026-07-01","customEnd":"2026-07-17","selectedModels":[],"selectedAgents":[],"granularity":"hourly","chartMetric":"costUSD"}"#.utf8)
+
+    let (_, response) = try await URLSession.shared.data(for: request)
+
+    #expect((response as? HTTPURLResponse)?.statusCode == 200)
+    #expect(FileManager.default.fileExists(atPath: stateFile.path))
   }
 
   @Test func reportsMissingAssetsWithoutListing() async {

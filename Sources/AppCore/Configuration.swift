@@ -134,11 +134,14 @@ public struct AppPaths: Sendable {
   public let configFile: URL
   public let stateFile: URL
   public let aggregationCacheFile: URL
+  public let dashboardStateFile: URL
 
-  public init(configFile: URL, stateFile: URL, aggregationCacheFile: URL) {
+  public init(configFile: URL, stateFile: URL, aggregationCacheFile: URL, dashboardStateFile: URL? = nil) {
     self.configFile = configFile
     self.stateFile = stateFile
     self.aggregationCacheFile = aggregationCacheFile
+    self.dashboardStateFile = dashboardStateFile
+      ?? aggregationCacheFile.deletingLastPathComponent().appendingPathComponent("dashboard-state.sqlite3")
   }
 
   public static func production(environment: [String: String] = ProcessInfo.processInfo.environment) -> AppPaths {
@@ -152,7 +155,8 @@ public struct AppPaths: Sendable {
     return AppPaths(
       configFile: configRoot.appendingPathComponent("ccusage-gauge/ccusage-config.json"),
       stateFile: stateRoot.appendingPathComponent("ccusage-gauge/state.json"),
-      aggregationCacheFile: cacheRoot.appendingPathComponent("ccusage-gauge/aggregates.sqlite3")
+      aggregationCacheFile: cacheRoot.appendingPathComponent("ccusage-gauge/aggregates.sqlite3"),
+      dashboardStateFile: cacheRoot.appendingPathComponent("ccusage-gauge/dashboard-state.sqlite3")
     )
   }
 }
