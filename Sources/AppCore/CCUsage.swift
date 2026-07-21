@@ -382,61 +382,101 @@ private actor CCUsageDetailedUsageLoader {
     let mode: ArgumentMode
   }
 
+  private struct RangeKey: Hashable {
+    let since: String?
+    let until: String?
+    let timezone: String?
+  }
+
+  private struct CachedUsage: Sendable {
+    let usage: CCUsageDetailedUsage
+    let loadedAt: Date
+  }
+
   private var argumentMode: ArgumentMode?
-  private var cachedUsage: CCUsageDetailedUsage?
-  private var cachedAt: Date?
-  private var inFlight: Task<LoadedUsage, Error>?
+  private var cachedUsage: [RangeKey: CachedUsage] = [:]
+  private var inFlight: [RangeKey: Task<LoadedUsage, Error>] = [:]
 
   func load(
     runner: any CCUsageCommandRunner,
+    since: String? = nil,
+    until: String? = nil,
+    timezone: String? = nil,
     maxAgeSeconds: TimeInterval = 1
   ) async throws -> CCUsageDetailedUsage {
+    let key = RangeKey(since: since, until: until, timezone: timezone)
     let now = Date()
-    if let cachedUsage, let cachedAt, now.timeIntervalSince(cachedAt) <= maxAgeSeconds {
-      return cachedUsage
+    if let cached = cachedUsage[key], now.timeIntervalSince(cached.loadedAt) <= maxAgeSeconds {
+      return cached.usage
     }
-    if let inFlight { return try await inFlight.value.usage }
+    if let existing = inFlight[key] { return try await existing.value.usage }
     let preferredMode = argumentMode
     let task = Task {
-      try await Self.load(runner: runner, preferredMode: preferredMode)
+      try await Self.load(runner: runner, since: since, until: until, timezone: timezone, preferredMode: preferredMode)
     }
-    inFlight = task
+    inFlight[key] = task
     do {
       let loaded = try await task.value
-      argumentMode = loaded.mode
-      cachedUsage = loaded.usage
-      cachedAt = Date()
-      inFlight = nil
+      // Only lock in the detected argument mode when the response actually contained rows.
+      // A scoped range with no usage decodes successfully via the flag-free path without ever
+      // exercising the per-row `agents` field, so caching `.flagFree` from an empty response
+      // would wrongly suppress the `--by-agent` fallback for a later non-empty range on a
+      // ccusage build whose flag-free daily rows omit `agents`. Leaving the mode inconclusive
+      // lets the next non-empty range re-probe flag-free-then-byAgent.
+      if !isEmptyUsage(loaded.usage) {
+        argumentMode = loaded.mode
+      }
+      cachedUsage[key] = CachedUsage(usage: loaded.usage, loadedAt: Date())
+      pruneExpiredCache(maxAgeSeconds: maxAgeSeconds)
+      inFlight[key] = nil
       return loaded.usage
     } catch {
-      inFlight = nil
+      inFlight[key] = nil
       throw error
     }
   }
 
+  private func isEmptyUsage(_ usage: CCUsageDetailedUsage) -> Bool {
+    usage.metrics.isEmpty && usage.sessions.isEmpty
+  }
+
+  private func pruneExpiredCache(maxAgeSeconds: TimeInterval) {
+    let now = Date()
+    cachedUsage = cachedUsage.filter { now.timeIntervalSince($0.value.loadedAt) <= maxAgeSeconds }
+  }
+
   private static func load(
     runner: any CCUsageCommandRunner,
+    since: String?,
+    until: String?,
+    timezone: String?,
     preferredMode: ArgumentMode?
   ) async throws -> LoadedUsage {
     if preferredMode == .byAgent {
-      return try await load(runner: runner, mode: .byAgent)
+      return try await load(runner: runner, since: since, until: until, timezone: timezone, mode: .byAgent)
     }
     if preferredMode == .flagFree {
-      return try await load(runner: runner, mode: .flagFree)
+      return try await load(runner: runner, since: since, until: until, timezone: timezone, mode: .flagFree)
     }
     do {
-      return try await load(runner: runner, mode: .flagFree)
+      return try await load(runner: runner, since: since, until: until, timezone: timezone, mode: .flagFree)
     } catch CCUsageError.invalidJSON {
-      return try await load(runner: runner, mode: .byAgent)
+      return try await load(runner: runner, since: since, until: until, timezone: timezone, mode: .byAgent)
     }
   }
 
   private static func load(
     runner: any CCUsageCommandRunner,
+    since: String?,
+    until: String?,
+    timezone: String?,
     mode: ArgumentMode
   ) async throws -> LoadedUsage {
     var arguments = ["daily", "--json", "--sections", "daily,session"]
     if mode == .byAgent { arguments.insert("--by-agent", at: 2) }
+    if let since { arguments += ["--since", since] }
+    if let until { arguments += ["--until", until] }
+    if let timezone { arguments += ["--timezone", timezone] }
     let result = try await runner.run(arguments: arguments, timeoutSeconds: 30)
     return LoadedUsage(usage: try CCUsageDecoder.detailedUsage(from: result.stdout), mode: mode)
   }
@@ -446,6 +486,7 @@ private actor CCUsageBlocksLoader {
   private struct CachedBlocks: Sendable {
     let since: String?
     let until: String?
+    let timezone: String?
     let records: [CCUsageCostRecord]
     let loadedAt: Date
   }
@@ -453,6 +494,7 @@ private actor CCUsageBlocksLoader {
   private struct InFlightBlocks: Sendable {
     let since: String?
     let until: String?
+    let timezone: String?
     let task: Task<[CCUsageCostRecord], Error>
   }
 
@@ -463,29 +505,32 @@ private actor CCUsageBlocksLoader {
     runner: any CCUsageCommandRunner,
     since: String?,
     until: String?,
+    timezone: String? = nil,
     maxAgeSeconds: TimeInterval = 1
   ) async throws -> [CCUsageCostRecord] {
     let now = Date()
     if let cached,
        cached.since == since,
        cached.until == until,
+       cached.timezone == timezone,
        now.timeIntervalSince(cached.loadedAt) <= maxAgeSeconds {
       return cached.records
     }
-    if let inFlight, inFlight.since == since, inFlight.until == until {
+    if let inFlight, inFlight.since == since, inFlight.until == until, inFlight.timezone == timezone {
       return try await inFlight.task.value
     }
     let task = Task {
       var arguments = ["blocks", "--json"]
       if let since { arguments += ["--since", since] }
       if let until { arguments += ["--until", until] }
+      if let timezone { arguments += ["--timezone", timezone] }
       let result = try await runner.run(arguments: arguments, timeoutSeconds: 30)
       return try CCUsageDecoder.blocks(from: result.stdout)
     }
-    inFlight = InFlightBlocks(since: since, until: until, task: task)
+    inFlight = InFlightBlocks(since: since, until: until, timezone: timezone, task: task)
     do {
       let records = try await task.value
-      cached = CachedBlocks(since: since, until: until, records: records, loadedAt: Date())
+      cached = CachedBlocks(since: since, until: until, timezone: timezone, records: records, loadedAt: Date())
       inFlight = nil
       return records
     } catch {
@@ -516,11 +561,14 @@ private actor CCUsageDetailedDailyLoader {
 
     do {
       let records = try await loadFlagFree(runner: runner, arguments: arguments)
-      argumentMode = .flagFree
+      // Do not lock in the mode from an empty (rowless) response: it never exercises the
+      // per-row `agents` field, so a later non-empty scoped range must stay free to re-probe
+      // and fall back to `--by-agent`. Same hazard as CCUsageDetailedUsageLoader.
+      if !records.isEmpty { argumentMode = .flagFree }
       return records
     } catch CCUsageError.invalidJSON {
       let records = try await loadWithByAgent(runner: runner, arguments: arguments)
-      argumentMode = .byAgent
+      if !records.isEmpty { argumentMode = .byAgent }
       return records
     }
   }
@@ -567,12 +615,13 @@ public struct CCUsageClient: Sendable {
     blocksLoader = CCUsageBlocksLoader()
   }
 
-  public func blocks(since: String? = nil, until: String? = nil) async throws -> [CCUsageCostRecord] {
+  public func blocks(since: String? = nil, until: String? = nil, timezone: String? = nil) async throws -> [CCUsageCostRecord] {
     do {
       let records = try await blocksLoader.load(
         runner: runner,
         since: since,
-        until: until
+        until: until,
+        timezone: timezone
       )
       return records.map {
         CCUsageCostRecord(timestamp: $0.timestamp, costUSD: $0.costUSD, models: $0.models, machine: machine)
@@ -587,11 +636,11 @@ public struct CCUsageClient: Sendable {
     return try CCUsageDecoder.daily(from: result.stdout)
   }
 
-  public func detailedDaily(since: String? = nil, until: String? = nil) async throws -> [CCUsageMetricRecord] {
+  public func detailedDaily(since: String? = nil, until: String? = nil, timezone: String? = nil) async throws -> [CCUsageMetricRecord] {
     do {
       return try await detailedDailyLoader.load(
         runner: runner,
-        arguments: filteredArguments(command: "daily", since: since, until: until)
+        arguments: filteredArguments(command: "daily", since: since, until: until, timezone: timezone)
       ).map { row in
         CCUsageMetricRecord(
           date: row.date,
@@ -610,8 +659,8 @@ public struct CCUsageClient: Sendable {
     }
   }
 
-  public func detailedSessions(since: String? = nil, until: String? = nil) async throws -> [CCUsageSessionMetricRecord] {
-    let result = try await run(filteredArguments(command: "session", since: since, until: until))
+  public func detailedSessions(since: String? = nil, until: String? = nil, timezone: String? = nil) async throws -> [CCUsageSessionMetricRecord] {
+    let result = try await run(filteredArguments(command: "session", since: since, until: until, timezone: timezone))
     return try CCUsageDecoder.detailedSessions(from: result.stdout).map { row in
       CCUsageSessionMetricRecord(
         timestamp: row.timestamp,
@@ -628,9 +677,9 @@ public struct CCUsageClient: Sendable {
     }
   }
 
-  public func detailedUsage() async throws -> CCUsageDetailedUsage {
+  public func detailedUsage(since: String? = nil, until: String? = nil, timezone: String? = nil) async throws -> CCUsageDetailedUsage {
     do {
-      let usage = try await detailedUsageLoader.load(runner: runner)
+      let usage = try await detailedUsageLoader.load(runner: runner, since: since, until: until, timezone: timezone)
       return CCUsageDetailedUsage(
         metrics: usage.metrics.map { row in
           CCUsageMetricRecord(
@@ -665,10 +714,11 @@ public struct CCUsageClient: Sendable {
     }
   }
 
-  private func filteredArguments(command: String, since: String?, until: String?) -> [String] {
+  private func filteredArguments(command: String, since: String?, until: String?, timezone: String? = nil) -> [String] {
     var arguments = [command, "--json"]
     if let since { arguments += ["--since", since] }
     if let until { arguments += ["--until", until] }
+    if let timezone { arguments += ["--timezone", timezone] }
     return arguments
   }
 

@@ -1,0 +1,30 @@
+{
+  "workflowId": "ccusage-gauge-final-review",
+  "description": "Read-only final review of remote collection verification and dashboard layout changes.",
+  "defaults": { "maxLoopIterations": 1, "nodeTimeoutMs": 900000 },
+  "prompts": {
+    "rielaPromptTemplate": "Review completed implementation and verification evidence for concrete blocking defects only.",
+    "workerSystemPromptTemplate": "Work read-only in the repository. Never print credentials, private keys, or raw usage events. Do not edit, stage, commit, or push."
+  },
+  "managerStepId": "codex-final-review",
+  "entryStepId": "codex-final-review",
+  "nodes": [
+    { "id": "codex-final-review", "nodeFile": "nodes/node-codex-final-review.json" },
+    { "id": "workflow-output", "nodeFile": "nodes/node-workflow-output.json", "kind": "output" }
+  ],
+  "steps": [
+    {
+      "id": "codex-final-review",
+      "nodeId": "codex-final-review",
+      "description": "Adversarially inspect the current diff and supplied evidence.",
+      "role": "manager",
+      "transitions": [{ "toStepId": "workflow-output" }]
+    },
+    {
+      "id": "workflow-output",
+      "nodeId": "workflow-output",
+      "description": "Publish the final review decision.",
+      "role": "worker"
+    }
+  ]
+}

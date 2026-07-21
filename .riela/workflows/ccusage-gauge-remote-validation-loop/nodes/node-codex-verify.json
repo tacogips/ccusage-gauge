@@ -1,0 +1,9 @@
+{
+  "id": "codex-verify",
+  "description": "Verify code and real host/Docker collection behavior.",
+  "executionBackend": "codex-agent",
+  "model": "gpt-5.6-sol",
+  "promptTemplateFile": "prompts/codex-verify.md",
+  "variables": {},
+  "output": { "description": "Return exact command results and local, Docker, and combined comparison evidence." }
+}

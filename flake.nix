@@ -61,11 +61,23 @@
 
         checks.pre-commit-check = preCommitCheck;
 
-        devShells.default = pkgs.mkShell {
+        # On Darwin, use mkShellNoCC so Nix apple-sdk setup hooks stay out of
+        # the shell. Swift builds use the selected Xcode toolchain; a Nix
+        # DEVELOPER_DIR/SDKROOT pointing at the pinned apple-sdk is years behind
+        # the Xcode Swift compiler and breaks `swift build`.
+        devShells.default = (if pkgs.stdenv.isDarwin then pkgs.mkShellNoCC else pkgs.mkShell) {
           packages = devPackages;
 
           shellHook = ''
             ${preCommitCheck.shellHook}
+            ${lib.optionalString pkgs.stdenv.isDarwin ''
+              unset SDKROOT
+              if [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild ]; then
+                export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+              else
+                unset DEVELOPER_DIR
+              fi
+            ''}
 
             echo "ccusage-gauge Swift development environment ready"
             echo "Swift version: $(swift --version 2>/dev/null | head -n 1 || echo 'not available')"

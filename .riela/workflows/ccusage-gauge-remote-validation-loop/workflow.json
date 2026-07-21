@@ -1,0 +1,79 @@
+{
+  "workflowId": "ccusage-gauge-remote-validation-loop",
+  "description": "Review, improve, implement, and repeatedly verify ccusage-gauge multi-machine collection with real host data copied into Docker.",
+  "defaults": {
+    "maxLoopIterations": 4,
+    "nodeTimeoutMs": 3600000
+  },
+  "prompts": {
+    "rielaPromptTemplate": "Coordinate the explicit Codex review, Fable proposal, Codex proposal review, Codex implementation, real host/Docker verification, and final Codex review loop. Preserve unrelated work and finish only when verification and final review accept.",
+    "workerSystemPromptTemplate": "Work only in the requested repository. Never print credential or raw usage-event contents. Return concise business JSON with concrete files, findings, changes, commands, and evidence."
+  },
+  "managerStepId": "codex-review",
+  "entryStepId": "codex-review",
+  "nodes": [
+    { "id": "codex-review", "nodeFile": "nodes/node-codex-review.json" },
+    { "id": "fable-proposal", "nodeFile": "nodes/node-fable-proposal.json" },
+    { "id": "codex-proposal-review", "nodeFile": "nodes/node-codex-proposal-review.json" },
+    { "id": "codex-implement", "nodeFile": "nodes/node-codex-implement.json" },
+    { "id": "codex-verify", "nodeFile": "nodes/node-codex-verify.json" },
+    { "id": "codex-final-review", "nodeFile": "nodes/node-codex-final-review.json" },
+    { "id": "workflow-output", "nodeFile": "nodes/node-workflow-output.json", "kind": "output" }
+  ],
+  "steps": [
+    {
+      "id": "codex-review",
+      "nodeId": "codex-review",
+      "description": "Codex performs a read-only adversarial review of the current branch and existing verification evidence.",
+      "role": "manager",
+      "transitions": [{ "toStepId": "fable-proposal" }]
+    },
+    {
+      "id": "fable-proposal",
+      "nodeId": "fable-proposal",
+      "description": "Fable creates or revises a remediation and verification proposal from the latest Codex findings.",
+      "role": "worker",
+      "transitions": [{ "toStepId": "codex-proposal-review" }]
+    },
+    {
+      "id": "codex-proposal-review",
+      "nodeId": "codex-proposal-review",
+      "description": "Codex reviews the Fable proposal for correctness, scope, and testability.",
+      "role": "worker",
+      "transitions": [
+        { "toStepId": "fable-proposal", "label": "needs_revision" },
+        { "toStepId": "codex-implement", "label": "!(needs_revision)" }
+      ]
+    },
+    {
+      "id": "codex-implement",
+      "nodeId": "codex-implement",
+      "description": "Codex implements the accepted proposal without committing or pushing.",
+      "role": "worker",
+      "transitions": [{ "toStepId": "codex-verify" }]
+    },
+    {
+      "id": "codex-verify",
+      "nodeId": "codex-verify",
+      "description": "Codex runs code checks and real host/Docker ccusage comparison with secret-safe handling.",
+      "role": "worker",
+      "transitions": [{ "toStepId": "codex-final-review" }]
+    },
+    {
+      "id": "codex-final-review",
+      "nodeId": "codex-final-review",
+      "description": "Codex reviews the implementation and verification evidence and decides whether another loop is required.",
+      "role": "worker",
+      "transitions": [
+        { "toStepId": "fable-proposal", "label": "needs_fix" },
+        { "toStepId": "workflow-output", "label": "!(needs_fix)" }
+      ]
+    },
+    {
+      "id": "workflow-output",
+      "nodeId": "workflow-output",
+      "description": "Publish the accepted implementation and verification result.",
+      "role": "worker"
+    }
+  ]
+}

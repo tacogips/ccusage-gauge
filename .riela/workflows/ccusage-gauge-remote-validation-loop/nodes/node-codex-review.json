@@ -1,0 +1,9 @@
+{
+  "id": "codex-review",
+  "description": "Perform the initial adversarial review.",
+  "executionBackend": "codex-agent",
+  "model": "gpt-5.6-sol",
+  "promptTemplateFile": "prompts/codex-review.md",
+  "variables": {},
+  "output": { "description": "Return concrete findings and verification gaps for Fable." }
+}

@@ -417,13 +417,321 @@ private actor RangeConcurrencyTracker {
     formatter.dateFormat = "yyyy-MM-dd"
     let weekStart = try #require(calendar.dateInterval(of: .weekOfYear, for: now)?.start)
     let weekStartText = formatter.string(from: weekStart)
-    #expect(arguments.contains("blocks --json --since \(weekStartText) --until 2026-07-16"))
+    let dayBeforeWeekStart = try #require(calendar.date(byAdding: .day, value: -1, to: weekStart))
+    let dayBeforeWeekStartText = formatter.string(from: dayBeforeWeekStart)
+    // Host calendar is GMT (a valid IANA identifier), so every scoped call carries --timezone GMT
+    // to keep ccusage's --since/--until, period strings, and session grouping aligned with the host.
+    #expect(arguments.contains("blocks --json --since \(weekStartText) --until 2026-07-16 --timezone GMT"))
     #expect(!arguments.contains("blocks --json --since 2026-05-10 --until 2026-07-16"))
-    #expect(arguments.components(separatedBy: "daily --json --sections daily,session").count - 1 == 1)
+    // Each missing range (current week, "today" only, and every older backfill week) is fetched
+    // with its own --since/--until instead of one unconditional full-history call: 1 call for the
+    // current week (1st snapshot), 1 call for "today" only (2nd snapshot, cache now covers through
+    // yesterday), and 9 calls for the weekly-partitioned backfill from 2026-05-10 through the day
+    // before the current week (3rd snapshot's "today" range is coalesced with the 2nd snapshot's
+    // identical --since/--until via the loader's short-lived cache, so it does not add an entry).
+    #expect(arguments.components(separatedBy: "daily --json --sections daily,session --since").count - 1 == 11)
+    #expect(arguments.contains("daily --json --sections daily,session --since \(weekStartText) --until 2026-07-16 --timezone GMT"))
+    #expect(arguments.contains("daily --json --sections daily,session --since 2026-07-16 --until 2026-07-16 --timezone GMT"))
+    #expect(arguments.contains("daily --json --sections daily,session --since 2026-05-10 --until 2026-05-16 --timezone GMT"))
+    #expect(arguments.contains("daily --json --sections daily,session --since 2026-07-05 --until \(dayBeforeWeekStartText) --timezone GMT"))
+    // The fix's whole point: never fall back to an unscoped, full-history daily fetch.
+    #expect(!arguments.contains("daily --json --sections daily,session\n"))
+    #expect(!arguments.contains("daily --json --sections daily,session --since 2026-05-10 --until 2026-07-16"))
     #expect(!arguments.contains("session --json"))
     #expect(!arguments.contains("daily --json --since"))
     #expect(!arguments.contains("--by-agent"))
     #expect(await cache.load(now: now)?.cachedFrom == "2026-05-10")
+  }
+
+  @Test func snapshotFetchesOnlyTodayWhenCacheAlreadyCoversThroughYesterday() async throws {
+    let root = try temporaryDirectory()
+    let executable = root.appendingPathComponent("ccusage")
+    let log = root.appendingPathComponent("arguments.log")
+    let blocks = #"{"blocks":[]}"#
+    let daily = #"""
+      {"daily":[{"period":"2026-07-16","agents":[{"agent":"codex","modelBreakdowns":[
+        {"modelName":"gpt-test","cost":1.5,"inputTokens":5,"outputTokens":1,
+         "cacheCreationTokens":0,"cacheReadTokens":0}
+      ]}]}],"session":[]}
+      """#
+    let script = """
+      #!/bin/sh
+      printf '%s\n' "$*" >> '\(log.path)'
+      case "$1" in
+        blocks) printf '%s' '\(blocks)' ;;
+        daily) printf '%s' '\(daily)' ;;
+        session) printf '%s' '{"session":[]}' ;;
+      esac
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let now = ISO8601DateFormatter().date(from: "2026-07-16T12:00:00Z")!
+    let cache = UsageAggregationCache(fileURL: root.appendingPathComponent("cache/aggregates.sqlite3"))
+    try await cache.save(
+      metrics: [CCUsageMetricRecord(
+        date: "2026-07-10",
+        agent: "codex",
+        model: "gpt-test",
+        costUSD: 4,
+        inputTokens: 1,
+        outputTokens: 1,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0
+      )],
+      sessions: [],
+      cachedFrom: "2026-07-01",
+      cachedThrough: "2026-07-15",
+      now: now
+    )
+    let service = SnapshotService(
+      stateStore: StateStore(fileURL: root.appendingPathComponent("state.json")),
+      client: CCUsageClient(executable: executable),
+      calculator: ResetWindowCalculator(calendar: calendar),
+      aggregationCache: cache
+    )
+
+    let snapshot = try await service.snapshot(now: now)
+    let arguments = try String(contentsOf: log, encoding: .utf8)
+
+    // Only the single missing day (today) is requested from ccusage; the cached history
+    // (2026-07-01 .. 2026-07-15) must never be re-fetched or fetched as part of an unscoped call.
+    #expect(arguments.contains("daily --json --sections daily,session --since 2026-07-16 --until 2026-07-16 --timezone GMT"))
+    #expect(arguments.components(separatedBy: "daily --json --sections daily,session --since").count - 1 == 1)
+    #expect(!arguments.contains("daily --json --sections daily,session\n"))
+    #expect(!arguments.contains("--since 2026-07-01"))
+    #expect(!arguments.contains("--since 2026-07-15"))
+    #expect(!arguments.contains("--by-agent"))
+    #expect(snapshot.dashboardMetrics.contains { $0.date == "2026-07-10" })
+    #expect(snapshot.dashboardMetrics.contains { $0.date == "2026-07-16" })
+  }
+
+  @Test func scopedCcusageCallsGroupInHostCalendarTimezone() async throws {
+    let root = try temporaryDirectory()
+    let executable = root.appendingPathComponent("ccusage")
+    let log = root.appendingPathComponent("arguments.log")
+    let daily = #"{"daily":[{"period":"2026-07-16","agents":[]}],"session":[]}"#
+    let script = """
+      #!/bin/sh
+      printf '%s\n' "$*" >> '\(log.path)'
+      case "$1" in
+        blocks) printf '%s' '{"blocks":[]}' ;;
+        daily) printf '%s' '\(daily)' ;;
+        session) printf '%s' '{"session":[]}' ;;
+      esac
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    // A real IANA host timezone (differs from a remote CLI's zone). Every scoped ccusage call must
+    // carry --timezone so ccusage's day grouping matches how the host partitions the results;
+    // otherwise a boundary session/day returned under the remote CLI's zone would be filtered out
+    // by the host and silently dropped. The mock ignores --timezone, so the deterministic
+    // assertion here is that the flag is passed and equals the host calendar's identifier.
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "America/New_York"))
+    let now = ISO8601DateFormatter().date(from: "2026-07-16T16:00:00Z")!
+    let service = SnapshotService(
+      stateStore: StateStore(fileURL: root.appendingPathComponent("state.json")),
+      client: CCUsageClient(executable: executable),
+      calculator: ResetWindowCalculator(calendar: calendar),
+      aggregationCache: UsageAggregationCache(fileURL: root.appendingPathComponent("cache/aggregates.sqlite3"))
+    )
+
+    _ = try await service.snapshot(now: now)
+    let arguments = try String(contentsOf: log, encoding: .utf8).split(separator: "\n").map(String.init)
+
+    #expect(arguments.contains { $0.hasPrefix("blocks ") && $0.contains("--timezone America/New_York") })
+    #expect(arguments.contains { $0.hasPrefix("daily ") && $0.contains("--since") && $0.contains("--timezone America/New_York") })
+    #expect(!arguments.contains { $0.contains("--timezone GMT") })
+    // Every scoped call must carry the timezone; none may be left ungrouped once since/until is set.
+    #expect(arguments.allSatisfy { line in
+      guard line.contains("--since") else { return true }
+      return line.contains("--timezone America/New_York")
+    })
+  }
+
+  @Test func scopedCcusageCallsNormalizeWholeHourFixedOffsetToEtcGMT() async throws {
+    let root = try temporaryDirectory()
+    let executable = root.appendingPathComponent("ccusage")
+    let log = root.appendingPathComponent("arguments.log")
+    let daily = #"{"daily":[{"period":"2026-07-16","agents":[]}],"session":[]}"#
+    let script = """
+      #!/bin/sh
+      printf '%s\n' "$*" >> '\(log.path)'
+      case "$1" in
+        blocks) printf '%s' '{"blocks":[]}' ;;
+        daily) printf '%s' '\(daily)' ;;
+        session) printf '%s' '{"session":[]}' ;;
+      esac
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    // A fixed-offset zone reports identifier "GMT+0900", which is NOT a valid IANA identifier,
+    // but a remote CLI in a different timezone would still mis-group boundary days if the flag
+    // were simply omitted. Whole-hour offsets therefore normalize to the equivalent IANA
+    // "Etc/GMT-9" zone (IANA inverts the sign: Etc/GMT-9 is UTC+9) so scoped grouping still
+    // matches the host calendar.
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(secondsFromGMT: 9 * 3_600))
+    #expect(!TimeZone.knownTimeZoneIdentifiers.contains(calendar.timeZone.identifier))
+    #expect(TimeZone(identifier: "Etc/GMT-9")?.secondsFromGMT() == 9 * 3_600)
+    let now = ISO8601DateFormatter().date(from: "2026-07-16T03:00:00Z")!
+    let service = SnapshotService(
+      stateStore: StateStore(fileURL: root.appendingPathComponent("state.json")),
+      client: CCUsageClient(executable: executable),
+      calculator: ResetWindowCalculator(calendar: calendar),
+      aggregationCache: UsageAggregationCache(fileURL: root.appendingPathComponent("cache/aggregates.sqlite3"))
+    )
+
+    _ = try await service.snapshot(now: now)
+    let arguments = try String(contentsOf: log, encoding: .utf8)
+
+    #expect(arguments.contains("daily --json --sections daily,session --since"))
+    #expect(arguments.contains("blocks --json --since"))
+    let lines = arguments.split(separator: "\n")
+    #expect(lines.allSatisfy { !$0.contains("--since") || $0.contains("--timezone Etc/GMT-9") })
+  }
+
+  @Test func scopedCcusageCallsPreserveResolvableAliasTimezone() async throws {
+    let root = try temporaryDirectory()
+    let executable = root.appendingPathComponent("ccusage")
+    let log = root.appendingPathComponent("arguments.log")
+    let daily = #"{"daily":[{"period":"2026-07-16","agents":[]}],"session":[]}"#
+    let script = """
+      #!/bin/sh
+      printf '%s\n' "$*" >> '\(log.path)'
+      case "$1" in
+        blocks) printf '%s' '{"blocks":[]}' ;;
+        daily) printf '%s' '\(daily)' ;;
+        session) printf '%s' '{"session":[]}' ;;
+      esac
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    // "US/Eastern" is a valid IANA alias that Foundation resolves but omits from
+    // knownTimeZoneIdentifiers. It must be passed through unchanged: demoting it to a
+    // fixed Etc/GMT offset would lose DST behavior for historical ranges, and omitting
+    // the flag would group boundary days in the remote CLI's timezone instead.
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(identifier: "US/Eastern"))
+    try #require(calendar.timeZone.identifier == "US/Eastern")
+    try #require(!TimeZone.knownTimeZoneIdentifiers.contains("US/Eastern"))
+    let now = ISO8601DateFormatter().date(from: "2026-07-16T16:00:00Z")!
+    let service = SnapshotService(
+      stateStore: StateStore(fileURL: root.appendingPathComponent("state.json")),
+      client: CCUsageClient(executable: executable),
+      calculator: ResetWindowCalculator(calendar: calendar),
+      aggregationCache: UsageAggregationCache(fileURL: root.appendingPathComponent("cache/aggregates.sqlite3"))
+    )
+
+    _ = try await service.snapshot(now: now)
+    let arguments = try String(contentsOf: log, encoding: .utf8)
+
+    let lines = arguments.split(separator: "\n")
+    #expect(lines.contains { $0.contains("--since") })
+    #expect(lines.allSatisfy { !$0.contains("--since") || $0.contains("--timezone US/Eastern") })
+    #expect(!arguments.contains("--timezone Etc/GMT"))
+  }
+
+  @Test func scopedCcusageCallsOmitTimezoneForOffsetWithoutIANAEquivalent() async throws {
+    let root = try temporaryDirectory()
+    let executable = root.appendingPathComponent("ccusage")
+    let log = root.appendingPathComponent("arguments.log")
+    let daily = #"{"daily":[{"period":"2026-07-16","agents":[]}],"session":[]}"#
+    let script = """
+      #!/bin/sh
+      printf '%s\n' "$*" >> '\(log.path)'
+      case "$1" in
+        blocks) printf '%s' '{"blocks":[]}' ;;
+        daily) printf '%s' '\(daily)' ;;
+        session) printf '%s' '{"session":[]}' ;;
+      esac
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    // A half-hour fixed offset (+05:30 as a raw offset, not Asia/Kolkata) has no Etc/GMT
+    // equivalent; the guard must omit --timezone entirely rather than pass a value ccusage
+    // may reject, while still scoping --since/--until.
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(secondsFromGMT: 5 * 3_600 + 1_800))
+    #expect(!TimeZone.knownTimeZoneIdentifiers.contains(calendar.timeZone.identifier))
+    let now = ISO8601DateFormatter().date(from: "2026-07-16T03:00:00Z")!
+    let service = SnapshotService(
+      stateStore: StateStore(fileURL: root.appendingPathComponent("state.json")),
+      client: CCUsageClient(executable: executable),
+      calculator: ResetWindowCalculator(calendar: calendar),
+      aggregationCache: UsageAggregationCache(fileURL: root.appendingPathComponent("cache/aggregates.sqlite3"))
+    )
+
+    _ = try await service.snapshot(now: now)
+    let arguments = try String(contentsOf: log, encoding: .utf8)
+
+    #expect(!arguments.contains("--timezone"))
+    #expect(arguments.contains("daily --json --sections daily,session --since"))
+    #expect(arguments.contains("blocks --json --since"))
+  }
+
+  @Test func snapshotAttributesRangesCorrectlyWhenCcusageCallsCompleteOutOfOrder() async throws {
+    let root = try temporaryDirectory()
+    let executable = root.appendingPathComponent("ccusage")
+    let log = root.appendingPathComponent("arguments.log")
+    // Two missing ranges are produced: input index 0 = older week (2026-07-05..2026-07-11),
+    // input index 1 = current week (2026-07-12..2026-07-16). The older range's ccusage call
+    // sleeps so it completes AFTER the current range, inverting completion order relative to
+    // input order. If results were paired to ranges positionally by completion order, each
+    // range's data would be filtered against the wrong since/until window and dropped entirely.
+    let olderUsage = #"""
+      {"daily":[{"period":"2026-07-08","agents":[{"agent":"codex","modelBreakdowns":[
+        {"modelName":"gpt-test","cost":7,"inputTokens":10,"outputTokens":2,
+         "cacheCreationTokens":0,"cacheReadTokens":0}
+      ]}]}],"session":[]}
+      """#
+    let currentUsage = #"""
+      {"daily":[{"period":"2026-07-14","agents":[{"agent":"codex","modelBreakdowns":[
+        {"modelName":"gpt-test","cost":3,"inputTokens":4,"outputTokens":1,
+         "cacheCreationTokens":0,"cacheReadTokens":0}
+      ]}]}],"session":[]}
+      """#
+    let script = """
+      #!/bin/sh
+      printf '%s\n' "$*" >> '\(log.path)'
+      case "$1" in
+        blocks) printf '%s' '{"blocks":[]}' ;;
+        daily)
+          case " $* " in
+            *" --since 2026-07-05 "*) sleep 0.4; printf '%s' '\(olderUsage)' ;;
+            *" --since 2026-07-12 "*) printf '%s' '\(currentUsage)' ;;
+            *) printf '%s' '{"daily":[],"session":[]}' ;;
+          esac ;;
+        session) printf '%s' '{"session":[]}' ;;
+      esac
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let now = ISO8601DateFormatter().date(from: "2026-07-16T12:00:00Z")!
+    let earliest = ISO8601DateFormatter().date(from: "2026-07-05T00:00:00Z")!
+    let cache = UsageAggregationCache(fileURL: root.appendingPathComponent("cache/aggregates.sqlite3"))
+    let service = SnapshotService(
+      stateStore: StateStore(fileURL: root.appendingPathComponent("state.json")),
+      client: CCUsageClient(executable: executable),
+      calculator: ResetWindowCalculator(calendar: calendar),
+      aggregationCache: cache
+    )
+
+    let snapshot = try await service.snapshot(now: now, earliestDate: earliest)
+    let arguments = try String(contentsOf: log, encoding: .utf8)
+
+    // Confirm the ranges were fetched with distinct scoped calls (setup precondition).
+    #expect(arguments.contains("daily --json --sections daily,session --since 2026-07-05 --until 2026-07-11 --timezone GMT"))
+    #expect(arguments.contains("daily --json --sections daily,session --since 2026-07-12 --until 2026-07-16 --timezone GMT"))
+    // Each range's data must land under its own dates regardless of completion order.
+    let olderRow = snapshot.dashboardMetrics.first { $0.date == "2026-07-08" }
+    let currentRow = snapshot.dashboardMetrics.first { $0.date == "2026-07-14" }
+    #expect(olderRow?.costUSD == 7)
+    #expect(currentRow?.costUSD == 3)
+    // The older (historical) row must also survive into the persisted aggregation cache.
+    #expect(await cache.load(now: now)?.metrics.contains { $0.date == "2026-07-08" } == true)
   }
 
   @Test func detailedDailyFallsBackToAndCachesCCUsageTwentyZeroSeventeenArguments() async throws {
@@ -461,12 +769,17 @@ private actor RangeConcurrencyTracker {
     #expect(arguments[2].contains("--by-agent"))
   }
 
-  @Test func detailedDailyCachesFlagFreeCCUsageTwentyOneArguments() async throws {
+  @Test func detailedDailyDoesNotCacheModeFromEmptyResponse() async throws {
     let root = try temporaryDirectory()
     let executable = root.appendingPathComponent("ccusage")
     let count = root.appendingPathComponent("count")
     let log = root.appendingPathComponent("arguments.log")
-    let detailed = #"{"daily":[{"period":"2026-07-16","agents":[]}] }"#
+    // First call decodes flag-free but yields zero rows (empty `agents`). Because an empty
+    // response never exercises the per-row `agents` field, the loader must NOT lock in
+    // `.flagFree`. The second call returns data whose flag-free shape is invalid, so it must
+    // still be free to re-probe and retry with `--by-agent` (which here also fails to decode,
+    // so the call ultimately throws invalidJSON — but only after the fallback was attempted).
+    let empty = #"{"daily":[{"period":"2026-07-16","agents":[]}] }"#
     let script = """
       #!/bin/sh
       current=$(cat '\(count.path)' 2>/dev/null || printf '0')
@@ -474,7 +787,7 @@ private actor RangeConcurrencyTracker {
       printf '%s' "$current" > '\(count.path)'
       printf '%s\n' "$*" >> '\(log.path)'
       if [ "$current" -eq 1 ]; then
-        printf '%s' '\(detailed)'
+        printf '%s' '\(empty)'
       else
         printf '%s' '{"daily":[{"period":"2026-07-16","totalCost":0,"modelsUsed":[]}]}'
       fi
@@ -489,8 +802,11 @@ private actor RangeConcurrencyTracker {
     }
     let arguments = try String(contentsOf: log, encoding: .utf8).split(separator: "\n")
 
-    #expect(arguments.count == 2)
-    #expect(arguments.allSatisfy { !$0.contains("--by-agent") })
+    // 1 empty probe + (flag-free retry + --by-agent fallback) on the second call.
+    #expect(arguments.count == 3)
+    #expect(!arguments[0].contains("--by-agent"))
+    #expect(!arguments[1].contains("--by-agent"))
+    #expect(arguments[2].contains("--by-agent"))
   }
 
   @Test func detailedUsageCoalescesConcurrentFlagFreeScans() async throws {
@@ -543,6 +859,47 @@ private actor RangeConcurrencyTracker {
     #expect(!arguments[0].contains("--by-agent"))
     #expect(arguments[1].contains("--by-agent"))
     #expect(arguments.allSatisfy { $0.contains("--sections daily,session") })
+  }
+
+  @Test func detailedUsageEmptyRangeDoesNotPoisonByAgentFallback() async throws {
+    let root = try temporaryDirectory()
+    let executable = root.appendingPathComponent("ccusage")
+    let log = root.appendingPathComponent("arguments.log")
+    // A scoped range with no usage decodes cleanly via the flag-free path (zero rows never
+    // exercise the missing `agents` field). A later scoped range that DOES contain usage is,
+    // on this ccusage build, only decodable with `--by-agent`. The empty range must not lock
+    // in `.flagFree`, or the data range would throw invalidJSON instead of falling back.
+    let unified = #"{"daily":[{"period":"2026-07-16","totalCost":2.5,"modelsUsed":["gpt-test"]}],"session":[]}"#
+    let detailed = #"""
+      {"daily":[{"period":"2026-07-16","agents":[{"agent":"codex","modelBreakdowns":[
+        {"modelName":"gpt-test","cost":2.5,"inputTokens":10,"outputTokens":3,
+         "cacheCreationTokens":0,"cacheReadTokens":20}
+      ]}]}],"session":[]}
+      """#
+    let script = """
+      #!/bin/sh
+      printf '%s\n' "$*" >> '\(log.path)'
+      case " $* " in
+        *" --since 2026-07-01 "*) printf '%s' '{"daily":[],"session":[]}' ;;
+        *" --by-agent "*) printf '%s' '\(detailed)' ;;
+        *) printf '%s' '\(unified)' ;;
+      esac
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    let client = CCUsageClient(executable: executable)
+
+    let empty = try await client.detailedUsage(since: "2026-07-01", until: "2026-07-07")
+    let populated = try await client.detailedUsage(since: "2026-07-16", until: "2026-07-16")
+    let arguments = try String(contentsOf: log, encoding: .utf8).split(separator: "\n")
+
+    #expect(empty.metrics.isEmpty)
+    #expect(!populated.metrics.isEmpty)
+    #expect(populated.metrics.first?.agent == "codex")
+    // The empty range must have been fetched flag-free (no --by-agent), and the data range must
+    // have re-probed and retried with --by-agent rather than being locked to the poisoned mode.
+    #expect(arguments.contains { $0.contains("--since 2026-07-01") && !$0.contains("--by-agent") })
+    #expect(arguments.contains { $0.contains("--since 2026-07-16") && $0.contains("--by-agent") })
   }
 
   @Test func snapshotUsesClosedBoundaryAndExcludesFuture() async throws {
