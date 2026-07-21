@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import { type BudgetResponse, type CostRow, type CostSeriesResponse, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type Machine, type MachinesResponse, type MachineStatusResponse, type MetricRow, type MetricsResponse, getJSON, mutationJSON, requestJSON } from "./api";
+import { initialMachineLimit, matchesMachineSelection, toggledMachineSelection, visibleMachineItems } from "./machineScope";
 
 type QuickRange = "recent12h" | "today" | "yesterday" | "week" | "month";
 type Range = QuickRange | "custom";
@@ -31,7 +32,6 @@ const yTickCount = 4;
 const lazyRenderWindowMilliseconds = 12 * 60 * 60 * 1_000;
 const chartSlotWidths: Record<Granularity, number> = { "15min": 32, hourly: 96, "6hour": 112, daily: 72 };
 const modelColors = ["#238855", "#3f75b5", "#b86f32", "#7b5eb5", "#b84f6f", "#468a86", "#8a7a35", "#596d7a"];
-
 function bucketMilliseconds(granularity: Granularity) {
   switch (granularity) {
   case "15min": return 15 * 60 * 1_000;
@@ -365,7 +365,9 @@ export default function App() {
   const [isClearingCache, setIsClearingCache] = createSignal(false);
   const [cacheStatus, setCacheStatus] = createSignal<string>();
   const [isDashboardStateLoaded, setIsDashboardStateLoaded] = createSignal(false);
-  const [selectedMachine, setSelectedMachine] = createSignal("all");
+  const [selectedMachines, setSelectedMachines] = createSignal<string[]>([]);
+  const [areAllMachinesVisible, setAreAllMachinesVisible] = createSignal(false);
+  const [isMachineGraphRendering, setIsMachineGraphRendering] = createSignal(false);
   const [machineFormOpen, setMachineFormOpen] = createSignal(false);
   const [machineID, setMachineID] = createSignal("");
   const [machineName, setMachineName] = createSignal("");
@@ -374,33 +376,42 @@ export default function App() {
   const [machineUser, setMachineUser] = createSignal("");
   const [machineIdentity, setMachineIdentity] = createSignal("");
   const [machineError, setMachineError] = createSignal<string>();
-  const machineSuffix = () => `machine=${encodeURIComponent(selectedMachine())}`;
-  const withMachine = (path: string) => `${path}${path.includes("?") ? "&" : "?"}${machineSuffix()}`;
+  const machineSuffix = "machine=all";
+  const withMachine = (path: string) => `${path}${path.includes("?") ? "&" : "?"}${machineSuffix}`;
   const [machines, { refetch: refreshMachines }] = createResource(() => getJSON<MachinesResponse>("/api/machines"));
   const [machineStatuses, { refetch: refreshMachineStatuses }] = createResource(() => getJSON<MachineStatusResponse>("/api/machine-status?machine=all"));
 
   const periodPath = createMemo(() => range() === "custom"
-    ? `/api/metrics?range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}&${machineSuffix()}`
-    : `/api/metrics?range=${range()}&${machineSuffix()}`);
+    ? `/api/metrics?range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}&${machineSuffix}`
+    : `/api/metrics?range=${range()}&${machineSuffix}`);
   const [period, { refetch: refreshPeriod }] = createResource(periodPath, (path) => getJSON<MetricsResponse>(path));
   const costPath = createMemo(() => range() === "custom"
-    ? `/api/cost-series?granularity=${granularity()}&range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}&${machineSuffix()}`
-    : `/api/cost-series?granularity=${granularity()}&range=${range()}&${machineSuffix()}`);
+    ? `/api/cost-series?granularity=${granularity()}&range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}&${machineSuffix}`
+    : `/api/cost-series?granularity=${granularity()}&range=${range()}&${machineSuffix}`);
   const [costSeries, { refetch: refreshCostSeries }] = createResource(costPath, (path) => getJSON<CostSeriesResponse>(path));
-  const [budget, { refetch: refreshBudget }] = createResource(selectedMachine, (machine) => getJSON<BudgetResponse>(`/api/budget?machine=${encodeURIComponent(machine)}`));
-  const [loadStatus, { refetch: refreshLoadStatus }] = createResource(selectedMachine, (machine) => getJSON<LoadStatusResponse>(`/api/load-status?machine=${encodeURIComponent(machine)}`));
+  const [budget, { refetch: refreshBudget }] = createResource(() => getJSON<BudgetResponse>("/api/budget?machine=all"));
+  const [loadStatus, { refetch: refreshLoadStatus }] = createResource(() => getJSON<LoadStatusResponse>("/api/load-status?machine=all"));
 
-  const models = createMemo(() => [...new Set((period()?.rows ?? []).map((row) => row.model))].sort());
-  const agents = createMemo(() => [...new Set((period()?.rows ?? []).map((row) => row.agent))].sort());
-  const chartModels = createMemo(() => new Set((costSeries()?.rows ?? []).map((row) => row.model)));
+  const selectableMachines = createMemo(() => (machines()?.machines ?? []).filter((machine) => machine.enabled));
+  const visibleMachines = createMemo(() => visibleMachineItems(selectableMachines(), areAllMachinesVisible()));
+  const machineScopeLabel = createMemo(() => selectedMachines().length === 0
+    ? "All available machines"
+    : selectedMachines().map((id) => selectableMachines().find((machine) => machine.id === id)?.displayName ?? id).join(", "));
+  const machineFilteredRows = createMemo(() => (period()?.rows ?? [])
+    .filter((row) => matchesMachineSelection(selectedMachines(), row.machine)));
+  const machineFilteredCostRows = createMemo(() => (costSeries()?.rows ?? [])
+    .filter((row) => matchesMachineSelection(selectedMachines(), row.machine)));
+  const models = createMemo(() => [...new Set(machineFilteredRows().map((row) => row.model))].sort());
+  const agents = createMemo(() => [...new Set(machineFilteredRows().map((row) => row.agent))].sort());
+  const chartModels = createMemo(() => new Set(machineFilteredCostRows().map((row) => row.model)));
   // Color follows the entity, not its rank: a machine/model keeps one hue across
   // the stacked chart and its breakdown, from a stable sorted domain.
-  const machineDomain = createMemo(() => [...new Set((period()?.rows ?? []).map((row) => row.machine))].sort());
+  const machineDomain = createMemo(() => [...new Set(machineFilteredRows().map((row) => row.machine))].sort());
   const chartSeriesDomain = createMemo(() => stackBy() === "machine" ? machineDomain() : models());
   const colorFor = (domain: string[], key: string) => modelColors[Math.max(domain.indexOf(key), 0) % modelColors.length];
   const colorForMachine = (machine: string) => colorFor(machineDomain(), machine);
   const colorForModel = (model: string) => colorFor(models(), model);
-  const estimatedModels = createMemo(() => new Set((costSeries()?.rows ?? [])
+  const estimatedModels = createMemo(() => new Set(machineFilteredCostRows()
     .filter((row) => row.dataQuality === "sessionEstimated")
     .map((row) => row.model)));
   const unavailableModelReason = (model: string) => {
@@ -426,10 +437,10 @@ export default function App() {
       return next.length === current.length ? current : next;
     });
   });
-  const filteredRows = createMemo(() => (period()?.rows ?? []).filter((row) =>
+  const filteredRows = createMemo(() => machineFilteredRows().filter((row) =>
     (selectedModels().length === 0 || selectedModels().includes(row.model)) &&
     (selectedAgents().length === 0 || selectedAgents().includes(row.agent))));
-  const filteredCostRows = createMemo(() => (costSeries()?.rows ?? []).filter((row) =>
+  const filteredCostRows = createMemo(() => machineFilteredCostRows().filter((row) =>
     (selectedModels().length === 0 || selectedModels().includes(row.model)) &&
     (selectedAgents().length === 0 || selectedAgents().includes(row.agent))));
   const chartDataQuality = createMemo(() => {
@@ -456,6 +467,28 @@ export default function App() {
   const toggleModel = (model: string) => setSelectedModels((current) => current.includes(model)
     ? current.filter((item) => item !== model)
     : [...current, model]);
+  let machineRenderStartFrame: number | undefined;
+  let machineRenderApplyFrame: number | undefined;
+  let machineRenderEndFrame: number | undefined;
+  let pendingMachineSelection: string[] | undefined;
+  const updateMachineSelection = (update: (current: string[]) => string[]) => {
+    const current = pendingMachineSelection ?? selectedMachines();
+    const next = update(current);
+    if (next.length === current.length && next.every((item, index) => item === current[index])) return;
+    pendingMachineSelection = next;
+    if (machineRenderStartFrame != null) window.cancelAnimationFrame(machineRenderStartFrame);
+    if (machineRenderApplyFrame != null) window.cancelAnimationFrame(machineRenderApplyFrame);
+    if (machineRenderEndFrame != null) window.cancelAnimationFrame(machineRenderEndFrame);
+    setIsMachineGraphRendering(true);
+    machineRenderStartFrame = window.requestAnimationFrame(() => {
+      machineRenderApplyFrame = window.requestAnimationFrame(() => {
+        setSelectedMachines(pendingMachineSelection ?? []);
+        pendingMachineSelection = undefined;
+        machineRenderEndFrame = window.requestAnimationFrame(() => setIsMachineGraphRendering(false));
+      });
+    });
+  };
+  const toggleSelectedMachine = (machine: string) => updateMachineSelection((current) => toggledMachineSelection(current, machine));
   const toggleAgent = (agent: string) => {
     const nextAgents = selectedAgents().includes(agent)
       ? selectedAgents().filter((item) => item !== agent)
@@ -466,7 +499,7 @@ export default function App() {
       return;
     }
     const selectable = chartModels();
-    setSelectedModels([...new Set((period()?.rows ?? [])
+    setSelectedModels([...new Set(machineFilteredRows()
       .filter((row) => nextAgents.includes(row.agent) && selectable.has(row.model))
       .map((row) => row.model))].sort());
   };
@@ -537,7 +570,7 @@ export default function App() {
   const removeMachine = async (machine: Machine) => {
     if (!window.confirm(`Remove ${machine.displayName}? Its host cache will be retained.`)) return;
     await mutationJSON<void>(`/api/machines/${machine.id}`, { method: "DELETE" });
-    if (selectedMachine() === machine.id) setSelectedMachine("all");
+    setSelectedMachines((current) => current.filter((id) => id !== machine.id));
     await Promise.all([refreshMachines(), refreshMachineStatuses()]);
   };
   const beginRangeLoad = () => {
@@ -599,7 +632,12 @@ export default function App() {
       .catch(() => undefined)
       .finally(() => setIsDashboardStateLoaded(true));
     const timer = window.setInterval(refreshLoadStatus, 250);
-    onCleanup(() => window.clearInterval(timer));
+    onCleanup(() => {
+      window.clearInterval(timer);
+      if (machineRenderStartFrame != null) window.cancelAnimationFrame(machineRenderStartFrame);
+      if (machineRenderApplyFrame != null) window.cancelAnimationFrame(machineRenderApplyFrame);
+      if (machineRenderEndFrame != null) window.cancelAnimationFrame(machineRenderEndFrame);
+    });
   });
   let dashboardStateSave = Promise.resolve<unknown>(undefined);
   createEffect(() => {
@@ -633,17 +671,6 @@ export default function App() {
   return (
     <div class="app-shell">
       <aside class="model-sidebar" aria-label="Usage filters">
-        <div class="brand-mark" aria-hidden="true"><span /></div>
-        <div class="machine-filter">
-          <p class="eyebrow">MACHINE SCOPE</p>
-          <select aria-label="Machine scope" value={selectedMachine()} onChange={(event) => setSelectedMachine(event.currentTarget.value)}>
-            <option value="all">All machines</option>
-            <For each={machines()?.machines ?? []}>{(machine) => <option value={machine.id}>{machine.displayName}</option>}</For>
-          </select>
-          <small>{period()?.scope.includedMachineIds.join(", ") || "Waiting for snapshots"}</small>
-          <Show when={(period()?.scope.staleMachineIds.length ?? 0) > 0}><small class="machine-warning">Stale: {period()!.scope.staleMachineIds.join(", ")}</small></Show>
-          <Show when={(period()?.scope.unavailableMachineIds.length ?? 0) > 0}><small class="machine-warning">Unavailable: {period()!.scope.unavailableMachineIds.join(", ")}</small></Show>
-        </div>
         <div><p class="eyebrow">FILTER USAGE</p><h2>Models</h2></div>
         <button classList={{ "model-choice": true, active: selectedModels().length === 0 }} onClick={() => setSelectedModels([])}><span>All models</span></button>
         <div class="model-list">
@@ -657,6 +684,26 @@ export default function App() {
               <span>{model}</span>
             </label>
           )}</For>
+        </div>
+        <div class="machine-filter">
+          <div><p class="eyebrow">MACHINE SCOPE</p><h2>Machines</h2></div>
+          <button classList={{ "model-choice": true, active: selectedMachines().length === 0 }} onClick={() => updateMachineSelection(() => [])}><span>All machines</span></button>
+          <div class="model-list">
+            <For each={visibleMachines()} fallback={<p class="muted">{machines.loading ? "Loading machines…" : "No enabled machines."}</p>}>{(machine) => (
+              <label classList={{ "model-choice": true, active: selectedMachines().includes(machine.id) }} title={`${machine.displayName} (${machine.id})`}>
+                <input type="checkbox" checked={selectedMachines().includes(machine.id)} onChange={() => toggleSelectedMachine(machine.id)} />
+                <span>{machine.displayName}</span>
+              </label>
+            )}</For>
+          </div>
+          <Show when={selectableMachines().length > initialMachineLimit}>
+            <button class="machine-more" onClick={() => setAreAllMachinesVisible(!areAllMachinesVisible())} aria-expanded={areAllMachinesVisible()}>
+              {areAllMachinesVisible() ? "Show less" : `More (${selectableMachines().length - initialMachineLimit})`}
+            </button>
+          </Show>
+          <small>Selected: {machineScopeLabel()}</small>
+          <Show when={(period()?.scope.staleMachineIds.length ?? 0) > 0}><small class="machine-warning">Stale: {period()!.scope.staleMachineIds.join(", ")}</small></Show>
+          <Show when={(period()?.scope.unavailableMachineIds.length ?? 0) > 0}><small class="machine-warning">Unavailable: {period()!.scope.unavailableMachineIds.join(", ")}</small></Show>
         </div>
         <div class="agent-filter"><p class="eyebrow">AGENTS</p><div class="agent-buttons">
           <For each={agents()}>{(agent) => <button classList={{ active: selectedAgents().includes(agent) }} onClick={() => toggleAgent(agent)}>{agent}</button>}</For>
@@ -746,7 +793,7 @@ export default function App() {
             <section class="panel usage-panel">
             <div class="panel-title"><div><p class="eyebrow">AGGREGATED USAGE</p><div class="chart-heading"><h2>{chartTitle()}</h2>
               <span class="data-quality-badge">{chartDataQuality()}</span>
-              <Show when={isGraphLazyLoading()}><span class="graph-loading-status" role="status" aria-label="Rendering earlier graph data"><span class="graph-loading-spinner" aria-hidden="true" /></span></Show>
+              <Show when={isGraphLazyLoading() || isMachineGraphRendering()}><span class="graph-loading-status" role="status" aria-label={isMachineGraphRendering() ? "Rendering selected machine data" : "Rendering earlier graph data"}><span class="graph-loading-spinner" aria-hidden="true" /></span></Show>
             </div></div>
               <div class="granularity-control" aria-label="Graph aggregation">
                 <div><button classList={{ active: granularity() === "15min" }} onClick={() => selectGranularity("15min")}>15 min</button><button classList={{ active: granularity() === "hourly" }} onClick={() => selectGranularity("hourly")}>Hourly</button><button classList={{ active: granularity() === "6hour" }} onClick={() => selectGranularity("6hour")}>6 hour</button><button classList={{ active: granularity() === "daily" }} onClick={() => selectGranularity("daily")}>Daily</button></div>
@@ -795,9 +842,9 @@ export default function App() {
             <section class="panel block-panel">
             <div class="panel-title"><div><p class="eyebrow">CCUSAGE BREAKDOWNS</p><h2>Daily agent and model detail</h2></div></div>
             <div class="metric-table" role="table">
-              <div classList={{ "metric-row": true, "metric-head": true, "with-machine": selectedMachine() === "all" }} role="row"><span>Date</span><Show when={selectedMachine() === "all"}><span>Machine</span></Show><span>Agent</span><span>Model</span><span>Cost</span><span>Total tokens</span></div>
+              <div classList={{ "metric-row": true, "metric-head": true, "with-machine": selectedMachines().length !== 1 }} role="row"><span>Date</span><Show when={selectedMachines().length !== 1}><span>Machine</span></Show><span>Agent</span><span>Model</span><span>Cost</span><span>Total tokens</span></div>
               <For each={filteredRows().slice().reverse()} fallback={<p class="empty compact">No matching metric rows.</p>}>{(row) => (
-                <div classList={{ "metric-row": true, "with-machine": selectedMachine() === "all" }} role="row"><time>{row.date}</time><Show when={selectedMachine() === "all"}><span class="machine-tag">{row.machine}</span></Show><span class="agent-tag">{row.agent}</span><strong title={row.model}>{row.model}</strong><span>{currency.format(row.costUSD)}</span><span>{integer.format(row.totalTokens)}</span></div>
+                <div classList={{ "metric-row": true, "with-machine": selectedMachines().length !== 1 }} role="row"><time>{row.date}</time><Show when={selectedMachines().length !== 1}><span class="machine-tag">{row.machine}</span></Show><span class="agent-tag">{row.agent}</span><strong title={row.model}>{row.model}</strong><span>{currency.format(row.costUSD)}</span><span>{integer.format(row.totalTokens)}</span></div>
               )}</For>
             </div>
             </section>
