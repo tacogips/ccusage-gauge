@@ -253,6 +253,39 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
 }
 
 @Suite("MutationPolicyTests") struct MutationPolicyTests {
+  @Test func machineDashboardRouterPersistsStateUsingItsApplicationPaths() async throws {
+    let runtime = try await routerRuntime()
+    defer { Task { await runtime.collector.stop() } }
+    let body = Data(
+      #"""
+      {"range":"month","customStart":"2026-07-01","customEnd":"2026-07-21","selectedModels":["gpt-5"],
+      "selectedAgents":["codex"],"selectedMachines":["local"],"granularity":"daily","chartMetric":"costUSD","stackBy":"machine"}
+      """#.utf8
+    )
+
+    let saved = await runtime.router.route(
+      target: "/api/dashboard-state",
+      method: "PUT",
+      headers: mutationHeaders,
+      body: body,
+      listenerPort: 18_081
+    )
+    let reloaded = await runtime.router.route(
+      target: "/api/dashboard-state",
+      method: "GET",
+      headers: [:],
+      body: Data(),
+      listenerPort: 18_081
+    )
+    let decoded = try JSONDecoder().decode(DashboardUIStateResponse.self, from: reloaded.body)
+
+    #expect(saved.status == 200)
+    #expect(reloaded.status == 200)
+    #expect(decoded.state?.selectedMachines == ["local"])
+    #expect(decoded.state?.stackBy == "machine")
+    #expect(FileManager.default.fileExists(atPath: runtime.paths.dashboardStateFile.path))
+  }
+
   @Test func rejectedMutationDoesNotChangeRegistryAndAllowedMutationPersistsBeforeResponse() async throws {
     let runtime = try await routerRuntime()
     defer { Task { await runtime.collector.stop() } }

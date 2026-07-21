@@ -146,8 +146,10 @@ import Testing
       customEnd: "2026-07-17",
       selectedModels: ["gpt-5"],
       selectedAgents: ["codex"],
+      selectedMachines: ["local", "build-host"],
       granularity: "6hour",
-      chartMetric: "totalTokens"
+      chartMetric: "totalTokens",
+      stackBy: "machine"
     )
 
     try await store.save(state)
@@ -155,6 +157,15 @@ import Testing
     #expect(try await store.load() == state)
     let header = Data(try Data(contentsOf: file).prefix(16))
     #expect(String(data: header, encoding: .utf8) == "SQLite format 3\0")
+  }
+
+  @Test func decodesStateSavedBeforeMachineFiltersWereAdded() throws {
+    let data = Data(#"{"range":"week","customStart":"2026-07-01","customEnd":"2026-07-17","selectedModels":["gpt-5"],"selectedAgents":["codex"],"granularity":"daily","chartMetric":"inputTokens"}"#.utf8)
+
+    let state = try JSONDecoder().decode(DashboardUIState.self, from: data)
+
+    #expect(state.selectedMachines.isEmpty)
+    #expect(state.stackBy == "model")
   }
 
   @Test func rejectsInvalidStateWithoutCreatingDatabase() async throws {

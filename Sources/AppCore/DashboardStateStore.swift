@@ -9,8 +9,10 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
   public let customEnd: String
   public let selectedModels: [String]
   public let selectedAgents: [String]
+  public let selectedMachines: [String]
   public let granularity: String
   public let chartMetric: String
+  public let stackBy: String
 
   public init(
     range: String,
@@ -18,16 +20,38 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
     customEnd: String,
     selectedModels: [String],
     selectedAgents: [String],
+    selectedMachines: [String] = [],
     granularity: String,
-    chartMetric: String
+    chartMetric: String,
+    stackBy: String = "model"
   ) {
     self.range = range
     self.customStart = customStart
     self.customEnd = customEnd
     self.selectedModels = selectedModels
     self.selectedAgents = selectedAgents
+    self.selectedMachines = selectedMachines
     self.granularity = granularity
     self.chartMetric = chartMetric
+    self.stackBy = stackBy
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case range, customStart, customEnd, selectedModels, selectedAgents, selectedMachines
+    case granularity, chartMetric, stackBy
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    range = try container.decode(String.self, forKey: .range)
+    customStart = try container.decode(String.self, forKey: .customStart)
+    customEnd = try container.decode(String.self, forKey: .customEnd)
+    selectedModels = try container.decode([String].self, forKey: .selectedModels)
+    selectedAgents = try container.decode([String].self, forKey: .selectedAgents)
+    selectedMachines = try container.decodeIfPresent([String].self, forKey: .selectedMachines) ?? []
+    granularity = try container.decode(String.self, forKey: .granularity)
+    chartMetric = try container.decode(String.self, forKey: .chartMetric)
+    stackBy = try container.decodeIfPresent(String.self, forKey: .stackBy) ?? "model"
   }
 
   public func validate() throws {
@@ -35,9 +59,11 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
           ["15min", "hourly", "6hour", "daily"].contains(granularity),
           ["costUSD", "totalTokens", "inputTokens", "outputTokens", "cacheReadTokens", "cacheCreationTokens"].contains(chartMetric),
           Self.isDay(customStart), Self.isDay(customEnd), customStart <= customEnd,
-          selectedModels.count <= 500, selectedAgents.count <= 50,
+          selectedModels.count <= 500, selectedAgents.count <= 50, selectedMachines.count <= 500,
           selectedModels.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 500 }),
-          selectedAgents.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 100 }) else {
+          selectedAgents.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 100 }),
+          selectedMachines.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 100 }),
+          ["model", "machine"].contains(stackBy) else {
       throw DashboardStateError.invalidState
     }
   }

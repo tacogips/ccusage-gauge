@@ -60,8 +60,10 @@ export interface DashboardUIState {
   customEnd: string;
   selectedModels: string[];
   selectedAgents: string[];
+  selectedMachines: string[];
   granularity: "15min" | "hourly" | "6hour" | "daily";
   chartMetric: "costUSD" | "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens";
+  stackBy: "model" | "machine";
 }
 export interface DashboardUIStateResponse { state?: DashboardUIState }
 export interface SSHConnection {
