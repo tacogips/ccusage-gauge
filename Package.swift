@@ -22,11 +22,22 @@ var targets: [Target] = [
   ),
   .executableTarget(
     name: "AppCLI",
-    dependencies: ["AppCore"]
+    dependencies: [
+      "AppCore",
+      .product(name: "ArgumentParser", package: "swift-argument-parser")
+    ]
   ),
   .testTarget(
     name: "AppCoreTests",
     dependencies: ["AppCore"]
+  ),
+  .testTarget(
+    name: "AppCLITests",
+    dependencies: [
+      "AppCLI",
+      "AppCore",
+      .product(name: "ArgumentParser", package: "swift-argument-parser")
+    ]
   )
 ]
 
@@ -47,6 +58,9 @@ let package = Package(
     .macOS(.v14)
   ],
   products: products,
+  dependencies: [
+    .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.8.2")
+  ],
   targets: targets,
   swiftLanguageModes: [.v6]
 )
