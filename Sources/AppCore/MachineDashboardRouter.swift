@@ -7,7 +7,7 @@ public struct MachineDashboardRouter: Sendable {
   private let cacheCoordinator: MachineCacheClearCoordinator
   private let paths: AppPaths
   private let queryService: DashboardQueryService
-  private let dashboardStateStore: DashboardStateStore?
+  private let dashboardStateStore: DashboardStateStore
 
   public init(
     store: MachineSnapshotStore,
@@ -24,7 +24,7 @@ public struct MachineDashboardRouter: Sendable {
     self.paths = paths
     self.queryService = queryService
     self.cacheCoordinator = cacheCoordinator
-    self.dashboardStateStore = dashboardStateStore
+    self.dashboardStateStore = dashboardStateStore ?? DashboardStateStore(fileURL: paths.dashboardStateFile)
   }
 
   public func route(
@@ -74,9 +74,6 @@ public struct MachineDashboardRouter: Sendable {
 
   private func dashboardStateResponse(method: String, body: Data) async -> HTTPResponse {
     guard method == "GET" || method == "PUT" else { return methodNotAllowed("GET, PUT") }
-    guard let dashboardStateStore else {
-      return error(status: 503, code: "state_unavailable", message: "Dashboard state storage is unavailable")
-    }
     do {
       if method == "PUT" {
         let state = try JSONDecoder().decode(DashboardUIState.self, from: body)

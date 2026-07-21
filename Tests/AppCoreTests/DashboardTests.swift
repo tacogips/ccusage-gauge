@@ -471,7 +471,12 @@ private actor CacheClearCounter {
       assetResolver: StaticAssetResolver(explicitRoot: root),
       dashboardStateStore: store
     )
-    let body = Data(#"{"range":"week","customStart":"2026-07-01","customEnd":"2026-07-17","selectedModels":["gpt-5"],"selectedAgents":["codex"],"granularity":"daily","chartMetric":"inputTokens"}"#.utf8)
+    let body = Data(
+      #"""
+      {"range":"week","customStart":"2026-07-01","customEnd":"2026-07-17","selectedModels":["gpt-5"],
+      "selectedAgents":["codex"],"selectedMachines":["local"],"granularity":"daily","chartMetric":"inputTokens","stackBy":"machine"}
+      """#.utf8
+    )
 
     #expect(await router.route(target: "/api/dashboard-state", method: "PUT", body: body).status == 200)
     let response = await router.route(target: "/api/dashboard-state")
@@ -479,6 +484,8 @@ private actor CacheClearCounter {
     let decoded = try JSONDecoder().decode(DashboardUIStateResponse.self, from: response.body)
     #expect(decoded.state?.range == "week")
     #expect(decoded.state?.selectedModels == ["gpt-5"])
+    #expect(decoded.state?.selectedMachines == ["local"])
+    #expect(decoded.state?.stackBy == "machine")
     #expect(FileManager.default.fileExists(atPath: stateFile.path))
   }
 

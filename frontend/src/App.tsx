@@ -626,8 +626,10 @@ export default function App() {
         setAppliedCustomRange({ start: state.customStart, end: state.customEnd });
         setSelectedModels(state.selectedModels);
         setSelectedAgents(state.selectedAgents);
+        setSelectedMachines(state.selectedMachines);
         setGranularity(state.granularity);
         setChartMetric(state.chartMetric);
+        setStackBy(state.stackBy);
       })
       .catch(() => undefined)
       .finally(() => setIsDashboardStateLoaded(true));
@@ -648,8 +650,10 @@ export default function App() {
       customEnd: appliedCustomRange().end,
       selectedModels: selectedModels(),
       selectedAgents: selectedAgents(),
+      selectedMachines: selectedMachines(),
       granularity: granularity(),
       chartMetric: chartMetric(),
+      stackBy: stackBy(),
     };
     dashboardStateSave = dashboardStateSave
       .catch(() => undefined)
@@ -657,6 +661,7 @@ export default function App() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(state),
+        keepalive: true,
       }));
   });
   createEffect(() => {

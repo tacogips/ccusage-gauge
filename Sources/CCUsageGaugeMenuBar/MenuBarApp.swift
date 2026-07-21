@@ -162,7 +162,8 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
         store: machineStore,
         collector: collector,
         mutationOwner: mutationOwner,
-        paths: paths
+        paths: paths,
+        dashboardStateStore: DashboardStateStore(fileURL: paths.dashboardStateFile)
       )
       errorMessage = nil
       isUsageUnavailable = false
