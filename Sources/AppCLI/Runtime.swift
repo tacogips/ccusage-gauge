@@ -7,27 +7,10 @@ import Glibc
 #endif
 import Foundation
 
-@main
-struct CCUsageGaugeCLI {
-  static func main() async {
-    let command = AppCommand(arguments: Array(CommandLine.arguments.dropFirst()))
-    do {
-      switch try command.parse() {
-      case .help: print(command.usage)
-      case .version: print(Version.current)
-      case .configCheck: try await configCheck()
-      case .usageSnapshot(let json): try await usageSnapshot(json: json)
-      case .serve(let port, let assets): try await serve(port: port, assets: assets)
-      }
-    } catch AppCommand.Error.unknownArgument(let value) {
-      fail("Unknown argument: \(value)", code: 2)
-    } catch AppCommand.Error.invalidValue(let value) {
-      fail(value, code: 2)
-    } catch {
-      fail(String(describing: error), code: 1)
-    }
-  }
-
+/// Shared runtime helpers for the local commands (`config-check`,
+/// `usage-snapshot`, and `serve`). These preserve the behavior of the previous
+/// hand-written entry point.
+enum CommandRuntime {
   static func configCheck() async throws {
     let paths = AppPaths.production()
     let config = try ConfigStore(fileURL: paths.configFile).loadOrCreate()
@@ -153,10 +136,5 @@ struct CCUsageGaugeCLI {
       terminate.resume()
     }
     for await _ in stream { break }
-  }
-
-  static func fail(_ message: String, code: Int32) -> Never {
-    FileHandle.standardError.write(Data("Error: \(message)\n".utf8))
-    exit(code)
   }
 }

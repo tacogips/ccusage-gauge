@@ -295,6 +295,94 @@ credential-isolation verification. Docker Swarm, file-backed Compose secrets,
 host SSH mounts, credential bind mounts, and named volumes are not supported
 fallbacks.
 
+## Dashboard client commands
+
+The `ccusage-gauge client` command tree talks to a running dashboard server over
+loopback for operators and scripts that want to inspect or add SSH machines and
+read the same data the dashboard shows. The server remains the only owner of the
+machine registry, collection state, historical expansion, and query semantics;
+the client issues plain HTTP requests to it.
+
+Every client subcommand accepts:
+
+- `--api-port <port>`: loopback dashboard port. When omitted, the configured
+  `dashboardPort` is used (default `18081`).
+- `--json`: emit the server's JSON response verbatim, preserving `scope` and any
+  additive fields for scripting. Without `--json`, a compact text summary is
+  printed.
+
+The host is fixed to `127.0.0.1`; the client never targets a remote host and
+does not add a remote unauthenticated control plane.
+
+### Machines
+
+```bash
+# List registered machines (local plus SSH descriptors).
+ccusage-gauge client machines list
+
+# Show one machine.
+ccusage-gauge client machines show remote-box
+
+# Register a new SSH machine.
+ccusage-gauge client machines add remote-box \
+  --host box.example.internal --user ccusage \
+  --display-name "Remote box" --ssh-port 22 \
+  --identity-file ~/.ssh/id_ed25519 \
+  --remote-ccusage-path /usr/local/bin/ccusage
+```
+
+Machine creation sends the exact closed request shape accepted by the server,
+with `Content-Type: application/json` and the `X-CCUsage-Gauge-Mutation: 1`
+header. Read commands never send the mutation header. Replace, patch, delete,
+manual refresh, and cache clearing remain dashboard-server responsibilities and
+are intentionally not exposed by the client.
+
+SSH options that begin with a dash must use the `--ssh-option=<value>` form so
+they are not mistaken for flags, for example `--ssh-option=-4` or, quoted so the
+shell keeps the embedded space, `'--ssh-option=-o ConnectTimeout=10'`. The
+option is repeatable.
+
+### Dashboard reads
+
+```bash
+ccusage-gauge client dashboard budget [--machine <id|all>]
+ccusage-gauge client dashboard recent [--machine <id|all>] [--limit <1...500>]
+ccusage-gauge client dashboard day --date YYYY-MM-DD [--machine <id|all>]
+ccusage-gauge client dashboard period [--range today|yesterday|week|month|custom]
+  [--start YYYY-MM-DD --end YYYY-MM-DD] [--machine <id|all>]
+ccusage-gauge client dashboard metrics [--range all|recent12h|today|yesterday|week|month|custom]
+  [--start YYYY-MM-DD --end YYYY-MM-DD] [--machine <id|all>]
+ccusage-gauge client dashboard cost-series [--range ...] [--granularity 15min|hourly|6hour|daily]
+  [--start YYYY-MM-DD --end YYYY-MM-DD] [--machine <id|all>]
+ccusage-gauge client dashboard machine-status [--machine <id|all>]
+ccusage-gauge client dashboard load-status [--machine <id|all>]
+```
+
+The `--machine` value is `all` (the default aggregate), `local`, or a canonical
+machine id. A `custom` range requires both `--start` and `--end`; every other
+range rejects them. Dates use strict `YYYY-MM-DD`. Partial aggregate reads are
+never silent: text output lists stale and unavailable machines from the response
+`scope`.
+
+Exit statuses are stable for scripting: `0` success, `2` usage/validation error,
+`3` dashboard unreachable, `4` API rejection (validation, conflict, not found),
+`5` API 5xx or snapshot/range unavailable, and `1` other runtime failures. In
+`--json` mode a server error body is written unchanged to standard error while
+standard output stays empty.
+
+### Connection metadata and security
+
+Machine list and show return the existing `MachineDescriptor` contract: SSH host,
+port, user, identity-file path, extra SSH options, and remote ccusage path. These
+are operationally sensitive topology fields but are not secret key material. The
+client never opens, copies, prints, or transmits the contents of an identity
+file; it only reports the path already stored in the registry.
+
+The dashboard API is unauthenticated loopback: any local process able to reach
+the dashboard port can already retrieve this metadata. JSON output may contain
+hostnames, usernames, and local identity-file paths, so review it before pasting
+into public reports.
+
 ## E2E testing
 
 Build an isolated app bundle with a deterministic `ccusage` fixture:
