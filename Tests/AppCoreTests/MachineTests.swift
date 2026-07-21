@@ -23,6 +23,15 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
   }
 }
 
+private actor CountingCCUsageRunner: CCUsageCommandRunner {
+  private(set) var requestCount = 0
+
+  func run(arguments: [String], timeoutSeconds: TimeInterval) async throws -> ProcessResult {
+    requestCount += 1
+    return try await StubCCUsageRunner().run(arguments: arguments, timeoutSeconds: timeoutSeconds)
+  }
+}
+
 @Suite("SSHCommandRunnerTests") struct SSHCommandRunnerTests {
   @Test func usesSystemSSHExecutable() throws {
     let runner = try SSHCCUsageCommandRunner(connection: SSHConnection(host: "localhost", port: 22, user: "user"))
@@ -249,6 +258,82 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
     let response = try DashboardQueryService().metrics(snapshot: snapshot, range: "recent12h", now: now)
     #expect(response.rows.count == 2)
     #expect(Set(response.rows.map(\.machine)) == ["local", "remote"])
+  }
+}
+
+@Suite("MachineDashboardRouterTests") struct MachineDashboardRouterTests {
+  @Test func coveredDashboardRangesDoNotTriggerCollection() async throws {
+    let root = try machineTemporaryDirectory()
+    let paths = AppPaths(
+      configFile: root.appendingPathComponent("config/ccusage-gauge/ccusage-config.json"),
+      stateFile: root.appendingPathComponent("state/ccusage-gauge/state.json"),
+      aggregationCacheFile: root.appendingPathComponent("cache/ccusage-gauge/aggregates.sqlite3")
+    )
+    let registryStore = MachineRegistryStore(fileURL: paths.machinesFile)
+    let registry = try registryStore.load()
+    let store = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: 20)
+    let runner = CountingCCUsageRunner()
+    let collector = try MachineCollector(registry: registry, store: store) { descriptor in
+      SnapshotService(
+        stateStore: StateStore(fileURL: paths.stateFile),
+        client: CCUsageClient(commandRunner: runner, machine: descriptor.id),
+        aggregationCache: nil
+      )
+    }
+    let owner = MachineRegistryMutationOwner(store: registryStore, registry: registry)
+    let now = Date()
+    let coverageStart = try #require(Calendar.current.date(byAdding: .day, value: -7, to: now))
+    let snapshot = CostSnapshot(
+      generatedAt: now,
+      activeBoundaryAt: Calendar.current.startOfDay(for: now),
+      costSinceResetUSD: 0,
+      budget: BudgetSummary(spentUSD: 0, budgetUSD: nil),
+      resetCycle: .daily,
+      points: []
+    )
+    await store.publish(
+      machineID: "local",
+      snapshot: snapshot,
+      coverageStart: coverageStart,
+      revision: registry.revision,
+      generation: 0,
+      now: now
+    )
+    let router = MachineDashboardRouter(
+      store: store,
+      collector: collector,
+      mutationOwner: owner,
+      paths: paths
+    )
+
+    for _ in 0..<3 {
+      #expect(await router.route(
+        target: "/api/metrics?range=today&machine=local",
+        method: "GET",
+        headers: [:],
+        body: Data(),
+        listenerPort: 18_081
+      ).status == 200)
+      #expect(await router.route(
+        target: "/api/cost-series?range=recent12h&granularity=hourly&machine=local",
+        method: "GET",
+        headers: [:],
+        body: Data(),
+        listenerPort: 18_081
+      ).status == 200)
+    }
+
+    #expect(await runner.requestCount == 0)
+
+    await store.clear(machineID: "local")
+    #expect(await router.route(
+      target: "/api/metrics?range=today&machine=local",
+      method: "GET",
+      headers: [:],
+      body: Data(),
+      listenerPort: 18_081
+    ).status == 200)
+    #expect(await runner.requestCount > 0)
   }
 }
 
