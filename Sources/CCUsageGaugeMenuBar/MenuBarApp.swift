@@ -164,11 +164,18 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
         mutationOwner: mutationOwner,
         paths: paths
       )
-      await collector.start()
       errorMessage = nil
       isUsageUnavailable = false
-      startPolling(interval: currentState?.refreshIntervalSeconds ?? loaded.pollIntervalSeconds)
       if loaded.dashboardAutostart { startDashboard() }
+      await loadInitialMenuBarSnapshot(using: service)
+      await collector.start()
+      let initialCollection = Task { await collector.refresh(machine: "local") }
+      _ = await initialCollection.value
+      await refresh()
+      startPolling(
+        interval: currentState?.refreshIntervalSeconds ?? loaded.pollIntervalSeconds,
+        refreshImmediately: false
+      )
     } catch {
       errorMessage = "ccusage unavailable. Install ccusage or correct ~/.config/ccusage-gauge/ccusage-config.json. \(error)"
       isUsageUnavailable = true
@@ -178,12 +185,33 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     openE2EWindowIfNeeded()
   }
 
-  private func startPolling(interval: Int) {
+  private func loadInitialMenuBarSnapshot(using service: SnapshotService) async {
+    let refreshGeneration = stateMutationGeneration
+    do {
+      let snapshot = try await service.menuBarSnapshot(defaultCycle: defaultResetCycle)
+      guard refreshGeneration == stateMutationGeneration else { return }
+      latestSnapshot = snapshot
+      errorMessage = nil
+      isUsageUnavailable = false
+      updateStatusTitle(Self.statusTitle(snapshot))
+    } catch {
+      guard refreshGeneration == stateMutationGeneration else { return }
+      errorMessage = String(describing: error)
+      isUsageUnavailable = true
+      updateStatusTitle(latestSnapshot.map { Self.statusTitle($0) + " !" } ?? "$!")
+    }
+    rebuildMenu()
+  }
+
+  private func startPolling(interval: Int, refreshImmediately: Bool = true) {
     pollingTask?.cancel()
     pollingTask = Task { [weak self] in
+      if !refreshImmediately {
+        do { try await Task.sleep(for: .seconds(interval)) } catch { return }
+      }
       while !Task.isCancelled {
         await self?.refresh()
-        try? await Task.sleep(for: .seconds(interval))
+        do { try await Task.sleep(for: .seconds(interval)) } catch { break }
       }
     }
   }
