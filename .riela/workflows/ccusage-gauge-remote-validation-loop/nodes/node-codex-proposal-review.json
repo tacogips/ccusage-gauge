@@ -1,0 +1,9 @@
+{
+  "id": "codex-proposal-review",
+  "description": "Review the Fable proposal before implementation.",
+  "executionBackend": "codex-agent",
+  "model": "gpt-5.6-sol",
+  "promptTemplateFile": "prompts/codex-proposal-review.md",
+  "variables": {},
+  "output": { "description": "Return an accepted plan or revision findings and needs_revision routing." }
+}

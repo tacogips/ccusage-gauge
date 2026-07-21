@@ -1,0 +1,9 @@
+{
+  "id": "workflow-output",
+  "description": "Publish the final review result.",
+  "executionBackend": "codex-agent",
+  "model": "gpt-5.6-sol",
+  "promptTemplateFile": "prompts/workflow-output.md",
+  "variables": {},
+  "output": { "description": "Return accepted or needs_fix with evidence." }
+}

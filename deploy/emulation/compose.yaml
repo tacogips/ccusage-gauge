@@ -1,0 +1,71 @@
+services:
+  keygen:
+    build:
+      context: ../..
+      dockerfile: deploy/emulation/Dockerfile.keygen
+    tmpfs:
+      - /run/ccusage-keygen:mode=0700
+
+  machine-a:
+    build:
+      context: ../..
+      dockerfile: deploy/emulation/Dockerfile.machine
+      args:
+        MACHINE_SEED: "1"
+    environment:
+      HOME: /home/ccusage
+      CCUSAGE_EMULATION_MODE: ${CCUSAGE_EMULATION_MODE:-stub}
+    volumes:
+      - machine-a-fixture:/home/ccusage/.claude
+    tmpfs:
+      - /run/ccusage-auth:mode=0700,uid=1000,gid=1000
+      - /run/ccusage-hostkeys:mode=0700
+    ports:
+      - "${MACHINE_A_SSH_PORT:-22221}:22"
+
+  machine-b:
+    build:
+      context: ../..
+      dockerfile: deploy/emulation/Dockerfile.machine
+      args:
+        MACHINE_SEED: "2"
+    environment:
+      HOME: /home/ccusage
+      CCUSAGE_EMULATION_MODE: ${CCUSAGE_EMULATION_MODE:-stub}
+    volumes:
+      - machine-b-fixture:/home/ccusage/.claude
+    tmpfs:
+      - /run/ccusage-auth:mode=0700,uid=1000,gid=1000
+      - /run/ccusage-hostkeys:mode=0700
+    ports:
+      - "${MACHINE_B_SSH_PORT:-22222}:22"
+
+  collector:
+    build:
+      context: ../..
+      dockerfile: deploy/emulation/Dockerfile.collector
+    depends_on:
+      - keygen
+      - machine-a
+      - machine-b
+    volumes:
+      - collector-runtime:/runtime
+      - collector-fixture:/home/collector/.claude
+    environment:
+      HOME: /home/collector
+      CCUSAGE_EMULATION_MODE: ${CCUSAGE_EMULATION_MODE:-stub}
+    tmpfs:
+      - /run/ccusage-secrets:mode=0700,uid=1000,gid=1000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:18081/api/health"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+
+volumes:
+  collector-runtime:
+  collector-fixture:
+  machine-a-fixture:
+  machine-b-fixture:

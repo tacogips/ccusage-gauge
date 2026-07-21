@@ -1,0 +1,9 @@
+{
+  "id": "codex-final-review",
+  "description": "Perform the final adversarial review and loop decision.",
+  "executionBackend": "codex-agent",
+  "model": "gpt-5.6-sol",
+  "promptTemplateFile": "prompts/codex-final-review.md",
+  "variables": {},
+  "output": { "description": "Return blocking findings, residual risks, acceptance, and needs_fix routing." }
+}

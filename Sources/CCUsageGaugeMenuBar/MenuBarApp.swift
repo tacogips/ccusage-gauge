@@ -54,6 +54,9 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   private var defaultResetCycle: ResetCycle = .daily
   private var stateStore: StateStore?
   private var snapshotService: SnapshotService?
+  private var machineSnapshotStore: MachineSnapshotStore?
+  private var machineCollector: MachineCollector?
+  private var machineRouter: MachineDashboardRouter?
   private var dashboardServer: DashboardHTTPServer?
   private var pollingTask: Task<Void, Never>?
   private var latestSnapshot: CostSnapshot?
@@ -87,11 +90,16 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   func applicationWillTerminate(_ notification: Notification) {
     pollingTask?.cancel()
     dashboardServer?.stop()
+    if let machineCollector { Task { await machineCollector.stop() } }
   }
 
   private func bootstrap() async {
     pollingTask?.cancel()
+    if let machineCollector { await machineCollector.stop() }
     snapshotService = nil
+    machineSnapshotStore = nil
+    self.machineCollector = nil
+    machineRouter = nil
     do {
       let loaded = try ConfigStore(fileURL: paths.configFile).loadOrCreate()
       let resetCycle = try ResetCycle(term: loaded.defaultResetTerm)
@@ -105,18 +113,56 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
         configuredPath: loaded.ccusagePath,
         additionalSearchDirectories: ["/opt/homebrew/bin", "/usr/local/bin"]
       )
+      let registryStore = MachineRegistryStore(fileURL: paths.machinesFile)
+      let registry = try registryStore.load()
+      try LocalCacheMigrator(
+        legacyURL: paths.aggregationCacheFile,
+        destinationURL: paths.aggregationCacheFile(forMachine: "local")
+      ).migrateIfNeeded()
+      for descriptor in registry.machines {
+        try MachineCacheRecovery.reconcile(
+          machineID: descriptor.id,
+          cacheURL: paths.aggregationCacheFile(forMachine: descriptor.id)
+        )
+      }
       let service = SnapshotService(
         stateStore: store,
         client: CCUsageClient(executable: executable),
         defaultRefreshIntervalSeconds: loaded.pollIntervalSeconds,
         aggregationCache: UsageAggregationCache(
-          fileURL: paths.aggregationCacheFile,
-          retentionDays: loaded.cacheRetentionDays
+          fileURL: paths.aggregationCacheFile(forMachine: "local"),
+          retentionDays: loaded.cacheRetentionDays,
+          machineID: "local"
         ),
         claudeUsageEventLoader: .production(),
         codexUsageEventLoader: .production()
       )
       snapshotService = service
+      let machineStore = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: loaded.pollIntervalSeconds)
+      let collector = try MachineCollector(registry: registry, store: machineStore) { [paths, loaded, store, service] descriptor in
+        if descriptor.kind == .local { return service }
+        guard let connection = descriptor.ssh else { throw MachineValidationError(fieldErrors: ["ssh": "is required"]) }
+        return SnapshotService(
+          stateStore: store,
+          client: CCUsageClient(commandRunner: try SSHCCUsageCommandRunner(connection: connection), machine: descriptor.id),
+          defaultRefreshIntervalSeconds: loaded.pollIntervalSeconds,
+          aggregationCache: UsageAggregationCache(
+            fileURL: paths.aggregationCacheFile(forMachine: descriptor.id),
+            retentionDays: loaded.cacheRetentionDays,
+            machineID: descriptor.id
+          )
+        )
+      }
+      let mutationOwner = MachineRegistryMutationOwner(store: registryStore, registry: registry)
+      machineSnapshotStore = machineStore
+      machineCollector = collector
+      machineRouter = MachineDashboardRouter(
+        store: machineStore,
+        collector: collector,
+        mutationOwner: mutationOwner,
+        paths: paths
+      )
+      await collector.start()
       errorMessage = nil
       isUsageUnavailable = false
       startPolling(interval: currentState?.refreshIntervalSeconds ?? loaded.pollIntervalSeconds)
@@ -142,12 +188,12 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
 
   private func refresh() async {
     let refreshGeneration = stateMutationGeneration
-    guard let snapshotService else {
+    guard let machineSnapshotStore else {
       rebuildMenu()
       return
     }
     do {
-      let snapshot = try await snapshotService.menuBarSnapshot(defaultCycle: defaultResetCycle)
+      guard let snapshot = try await machineSnapshotStore.selection(machine: "local").snapshot else { return }
       let state = try await stateStore?.load(defaultCycle: defaultResetCycle)
       guard refreshGeneration == stateMutationGeneration else { return }
       latestSnapshot = snapshot
@@ -369,20 +415,8 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func startDashboard() {
-    guard dashboardServer?.isRunning != true, let snapshotService, let configuration else { return }
-    let defaultResetCycle = self.defaultResetCycle
-    let router = DashboardRouter(
-      progressiveRangeSnapshotProvider: { earliestDate, progress in
-        try await snapshotService.snapshot(
-          defaultCycle: defaultResetCycle,
-          earliestDate: earliestDate,
-          progress: progress
-        )
-      },
-      assetResolver: StaticAssetResolver(),
-      dashboardStateStore: DashboardStateStore(fileURL: paths.dashboardStateFile),
-      cacheClearer: { await snapshotService.clearAggregationCache() }
-    )
+    guard dashboardServer?.isRunning != true, let machineRouter, let configuration else { return }
+    let router = DashboardRouter(machineRouter: machineRouter, assetResolver: StaticAssetResolver())
     let server = DashboardHTTPServer(router: router)
     do {
       try server.start(port: UInt16(configuration.dashboardPort))

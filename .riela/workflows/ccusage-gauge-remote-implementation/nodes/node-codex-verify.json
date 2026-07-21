@@ -1,0 +1,9 @@
+{
+  "id": "codex-verify",
+  "description": "Verify code and exact real host/Docker behavior.",
+  "executionBackend": "codex-agent",
+  "model": "gpt-5.6-sol",
+  "promptTemplateFile": "prompts/codex-verify.md",
+  "variables": {},
+  "output": { "description": "Return checks, exact aggregate comparisons, provenance, and cleanup evidence." }
+}

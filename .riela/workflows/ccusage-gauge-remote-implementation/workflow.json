@@ -1,0 +1,52 @@
+{
+  "workflowId": "ccusage-gauge-remote-implementation",
+  "description": "Implement and verify the consolidated result of the completed Codex/Fable proposal-review loop.",
+  "defaults": {
+    "maxLoopIterations": 3,
+    "nodeTimeoutMs": 3600000
+  },
+  "prompts": {
+    "rielaPromptTemplate": "Implement the already-reviewed consolidated plan, verify it with real host and Docker data, and loop only on concrete final-review defects.",
+    "workerSystemPromptTemplate": "Work only in the requested repository. Never print credentials, private keys, or raw usage events. Do not stage, commit, or push. Return concise evidence JSON."
+  },
+  "managerStepId": "codex-implement",
+  "entryStepId": "codex-implement",
+  "nodes": [
+    { "id": "codex-implement", "nodeFile": "nodes/node-codex-implement.json" },
+    { "id": "codex-verify", "nodeFile": "nodes/node-codex-verify.json" },
+    { "id": "codex-final-review", "nodeFile": "nodes/node-codex-final-review.json" },
+    { "id": "workflow-output", "nodeFile": "nodes/node-workflow-output.json", "kind": "output" }
+  ],
+  "steps": [
+    {
+      "id": "codex-implement",
+      "nodeId": "codex-implement",
+      "description": "Implement the consolidated accepted design and any concrete findings from a prior final review.",
+      "role": "manager",
+      "transitions": [{ "toStepId": "codex-verify" }]
+    },
+    {
+      "id": "codex-verify",
+      "nodeId": "codex-verify",
+      "description": "Run code checks and exact real host/Docker verification.",
+      "role": "worker",
+      "transitions": [{ "toStepId": "codex-final-review" }]
+    },
+    {
+      "id": "codex-final-review",
+      "nodeId": "codex-final-review",
+      "description": "Review only concrete implementation or verification defects.",
+      "role": "worker",
+      "transitions": [
+        { "toStepId": "codex-implement", "label": "needs_fix" },
+        { "toStepId": "workflow-output", "label": "!(needs_fix)" }
+      ]
+    },
+    {
+      "id": "workflow-output",
+      "nodeId": "workflow-output",
+      "description": "Publish accepted implementation evidence.",
+      "role": "worker"
+    }
+  ]
+}

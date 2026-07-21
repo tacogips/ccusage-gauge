@@ -1,0 +1,17 @@
+FROM alpine:3.21
+
+RUN apk add --no-cache openssh-server shadow util-linux nodejs npm \
+  && npm install --global ccusage@20.0.17 \
+  && mv /usr/local/bin/ccusage /usr/local/bin/ccusage.real \
+  && adduser -D -u 1000 -s /bin/sh ccusage \
+  && usermod -p '*' ccusage
+
+COPY deploy/emulation/ccusage-stub.sh /usr/local/libexec/ccusage-stub
+COPY deploy/emulation/ccusage-dispatcher.sh /usr/local/bin/ccusage
+COPY deploy/emulation/machine-entrypoint.sh /usr/local/bin/machine-entrypoint
+RUN test "$(ccusage.real --version | head -n1)" = "ccusage 20.0.17" \
+  && chmod 0755 /usr/local/bin/ccusage /usr/local/bin/ccusage.real /usr/local/libexec/ccusage-stub /usr/local/bin/machine-entrypoint
+
+ARG MACHINE_SEED=1
+ENV MACHINE_SEED=${MACHINE_SEED}
+ENTRYPOINT ["/usr/local/bin/machine-entrypoint"]

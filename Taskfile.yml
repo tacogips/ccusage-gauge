@@ -39,6 +39,11 @@ tasks:
     cmds:
       - swift test
 
+  test:coverage:
+    desc: Enforce at least 80 percent executable line coverage for AppCore and AppCLI
+    cmds:
+      - scripts/test-coverage.sh
+
   clean:
     desc: Clean SwiftPM and release artifacts
     cmds:
@@ -87,6 +92,16 @@ tasks:
     deps: [frontend:build]
     cmds:
       - scripts/smoke-dashboard.sh --port 18081 --assets frontend/dist
+
+  emulation:config:
+    desc: Validate the standalone Docker Compose remote-machine topology
+    cmds:
+      - docker compose -f deploy/emulation/compose.yaml config
+
+  smoke:remote-machines:
+    desc: Verify remote-machine collection and ephemeral credential isolation under Colima
+    cmds:
+      - scripts/smoke-remote-machines.sh
 
   e2e:build:
     desc: Build an isolated macOS app bundle for Computer Use E2E testing

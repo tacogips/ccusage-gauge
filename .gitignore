@@ -41,3 +41,8 @@ temp/
 .cache/
 logs/
 *.log
+deploy/emulation/.runtime/
+
+# Riela runtime state (project workflows remain trackable)
+.riela/artifacts/
+.riela/sessions/

@@ -44,11 +44,13 @@ public struct HTTPResponse: Sendable {
   public let status: Int
   public let contentType: String
   public let body: Data
+  public let headers: [String: String]
 
-  public init(status: Int, contentType: String, body: Data) {
+  public init(status: Int, contentType: String, body: Data, headers: [String: String] = [:]) {
     self.status = status
     self.contentType = contentType
     self.body = body
+    self.headers = headers
   }
 }
 
@@ -433,6 +435,7 @@ public struct DashboardRouter: Sendable {
   private let assetResolver: StaticAssetResolver
   private let cacheClearer: CacheClearer
   private let dashboardStateStore: DashboardStateStore?
+  private let machineRouter: MachineDashboardRouter?
 
   public init(
     snapshotProvider: @escaping SnapshotProvider,
@@ -447,6 +450,7 @@ public struct DashboardRouter: Sendable {
     self.assetResolver = assetResolver
     self.dashboardStateStore = dashboardStateStore
     self.cacheClearer = cacheClearer
+    machineRouter = nil
   }
 
   public init(
@@ -465,6 +469,7 @@ public struct DashboardRouter: Sendable {
     self.assetResolver = assetResolver
     self.dashboardStateStore = dashboardStateStore
     self.cacheClearer = cacheClearer
+    machineRouter = nil
   }
 
   public init(
@@ -480,6 +485,16 @@ public struct DashboardRouter: Sendable {
     self.assetResolver = assetResolver
     self.dashboardStateStore = dashboardStateStore
     self.cacheClearer = cacheClearer
+    machineRouter = nil
+  }
+
+  public init(machineRouter: MachineDashboardRouter, assetResolver: StaticAssetResolver) {
+    snapshotCache = DashboardSnapshotCache { _ in throw CancellationError() }
+    queryService = DashboardQueryService()
+    self.assetResolver = assetResolver
+    cacheClearer = {}
+    dashboardStateStore = nil
+    self.machineRouter = machineRouter
   }
 
   public func preloadSnapshot() async {
@@ -488,11 +503,26 @@ public struct DashboardRouter: Sendable {
     _ = try? await snapshotCache.warmHistoricalCoverage()
   }
 
-  public func route(target: String, method: String = "GET", body: Data = Data()) async -> HTTPResponse {
+  public func route(
+    target: String,
+    method: String = "GET",
+    headers: [String: String] = [:],
+    body: Data = Data(),
+    listenerPort: Int = 18_081
+  ) async -> HTTPResponse {
     guard let components = URLComponents(string: "http://127.0.0.1\(target)") else {
       return errorResponse(status: 400, code: "invalid_request", message: "Invalid request target")
     }
     let path = components.path
+    if let machineRouter, path.hasPrefix("/api/") {
+      return await machineRouter.route(
+        target: target,
+        method: method,
+        headers: headers,
+        body: body,
+        listenerPort: listenerPort
+      )
+    }
     let isCacheClear = path == "/api/cache" && method == "DELETE"
     let isDashboardStateSave = path == "/api/dashboard-state" && method == "PUT"
     guard method == "GET" || isCacheClear || isDashboardStateSave else {
@@ -659,6 +689,7 @@ public final class DashboardHTTPServer: @unchecked Sendable {
   private let lock = NSLock()
   private var listener: Int32 = -1
   private var listenerGeneration: UInt64 = 0
+  private var boundPort: Int = 0
 
   public init(router: DashboardRouter) { self.router = router }
 
@@ -703,6 +734,7 @@ public final class DashboardHTTPServer: @unchecked Sendable {
     listenerGeneration &+= 1
     let generation = listenerGeneration
     listener = descriptor
+    boundPort = Int(port)
     acceptQueue.async { [weak self] in self?.acceptConnections(from: descriptor, generation: generation) }
     Task { await router.preloadSnapshot() }
   }
@@ -711,6 +743,7 @@ public final class DashboardHTTPServer: @unchecked Sendable {
     lock.lock()
     let descriptor = listener
     listener = -1
+    boundPort = 0
     listenerGeneration &+= 1
     lock.unlock()
     guard descriptor >= 0 else { return }
@@ -765,73 +798,97 @@ public final class DashboardHTTPServer: @unchecked Sendable {
       Self.closeSocket(descriptor)
       return
     }
-    let parts = request.requestLine.split(separator: " ")
-    guard parts.count >= 2 else {
-      Self.closeSocket(descriptor)
-      return
-    }
-    let method = String(parts[0])
-    let target = String(parts[1])
     let router = router
+    let port = currentBoundPort()
     Task {
-      let response = await router.route(target: target, method: method, body: request.body)
+      let response = await router.route(
+        target: request.target,
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        listenerPort: port
+      )
       Self.send(response, through: descriptor)
       Self.closeSocket(descriptor)
     }
   }
 
-  private struct Request {
-    let requestLine: String
-    let body: Data
-  }
-
-  private static func readRequest(from descriptor: Int32) -> Request? {
+  private static func readRequest(from descriptor: Int32) -> ParsedHTTPRequest? {
     let headerTerminator = Data("\r\n\r\n".utf8)
     var received = Data()
     var buffer = [UInt8](repeating: 0, count: 4_096)
-    var headerRange: Range<Data.Index>?
-    var expectedBytes: Int?
+    var headerEnd: Range<Data.Index>?
+    var expectedLength = 0
     while received.count < 81_920 {
       let count = buffer.withUnsafeMutableBytes { bytes in
         recv(descriptor, bytes.baseAddress, bytes.count, 0)
       }
       if count > 0 {
         received.append(contentsOf: buffer.prefix(count))
-        if headerRange == nil, let range = received.range(of: headerTerminator) {
-          headerRange = range
+        if headerEnd == nil, let range = received.range(of: headerTerminator) {
+          headerEnd = range
           guard range.lowerBound <= 16_384,
-                let headers = String(data: received[..<range.lowerBound], encoding: .utf8) else { return nil }
-          let contentLength = headers.components(separatedBy: "\r\n")
-            .first(where: { $0.lowercased().hasPrefix("content-length:") })?
-            .split(separator: ":", maxSplits: 1).last
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .flatMap(Int.init) ?? 0
-          guard (0...65_536).contains(contentLength) else { return nil }
-          expectedBytes = range.upperBound + contentLength
+                let head = String(data: received[..<range.lowerBound], encoding: .utf8) else { return nil }
+          expectedLength = contentLength(head)
+          guard (0...65_536).contains(expectedLength) else { return nil }
         }
-        if let expectedBytes, received.count >= expectedBytes { break }
+        if let headerEnd, received.count >= headerEnd.upperBound + expectedLength { break }
       } else if count == 0 {
         return nil
       } else if errno != EINTR {
         return nil
       }
     }
-    guard let headerRange, let expectedBytes, received.count >= expectedBytes,
-          let headers = String(data: received[..<headerRange.lowerBound], encoding: .utf8),
-          let requestLine = headers.components(separatedBy: "\r\n").first else { return nil }
-    return Request(requestLine: requestLine, body: Data(received[headerRange.upperBound..<expectedBytes]))
+    guard let headerEnd,
+          let head = String(data: received[..<headerEnd.lowerBound], encoding: .utf8) else { return nil }
+    let lines = head.components(separatedBy: "\r\n")
+    guard let first = lines.first else { return nil }
+    let parts = first.split(separator: " ")
+    guard parts.count >= 2 else { return nil }
+    var headers: [String: String] = [:]
+    for line in lines.dropFirst() {
+      let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+      guard parts.count == 2 else { continue }
+      headers[String(parts[0]).lowercased()] = String(parts[1]).trimmingCharacters(in: .whitespaces)
+    }
+    let bodyStart = headerEnd.upperBound
+    let bodyEnd = min(received.count, bodyStart + expectedLength)
+    return ParsedHTTPRequest(
+      method: String(parts[0]),
+      target: String(parts[1]),
+      headers: headers,
+      body: received.subdata(in: bodyStart..<bodyEnd)
+    )
+  }
+
+  private static func contentLength(_ headers: String) -> Int {
+    for line in headers.components(separatedBy: "\r\n").dropFirst() {
+      let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+      if parts.count == 2, parts[0].lowercased() == "content-length" {
+        return Int(parts[1].trimmingCharacters(in: .whitespaces)) ?? 0
+      }
+    }
+    return 0
   }
 
   private static func send(_ response: HTTPResponse, through descriptor: Int32) {
     let reason: String = switch response.status {
     case 200: "OK"
+    case 201: "Created"
+    case 204: "No Content"
+    case 207: "Multi-Status"
     case 400: "Bad Request"
+    case 403: "Forbidden"
     case 404: "Not Found"
     case 405: "Method Not Allowed"
+    case 409: "Conflict"
+    case 415: "Unsupported Media Type"
+    case 422: "Unprocessable Content"
     case 503: "Service Unavailable"
     default: "Internal Server Error"
     }
-    let header = "HTTP/1.1 \(response.status) \(reason)\r\nContent-Type: \(response.contentType)\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n"
+    let extraHeaders = response.headers.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)\r\n" }.joined()
+    let header = "HTTP/1.1 \(response.status) \(reason)\r\nContent-Type: \(response.contentType)\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\nCache-Control: no-store\r\n\(extraHeaders)\r\n"
     var data = Data(header.utf8)
     data.append(response.body)
     data.withUnsafeBytes { bytes in
@@ -884,6 +941,12 @@ public final class DashboardHTTPServer: @unchecked Sendable {
     systemClose(descriptor)
   }
 
+  private func currentBoundPort() -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return boundPort
+  }
+
   private static var streamSocketType: Int32 {
     #if canImport(Glibc)
     Int32(SOCK_STREAM.rawValue)
@@ -891,6 +954,13 @@ public final class DashboardHTTPServer: @unchecked Sendable {
     SOCK_STREAM
     #endif
   }
+}
+
+private struct ParsedHTTPRequest {
+  let method: String
+  let target: String
+  let headers: [String: String]
+  let body: Data
 }
 
 public enum HTTPServerError: Error, Sendable {

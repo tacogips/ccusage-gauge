@@ -1,0 +1,9 @@
+{
+  "id": "codex-final-review",
+  "description": "Adversarially review the implementation and verification evidence.",
+  "executionBackend": "codex-agent",
+  "model": "gpt-5.6-sol",
+  "promptTemplateFile": "prompts/codex-final-review.md",
+  "variables": {},
+  "output": { "description": "Return concrete findings and needs_fix routing." }
+}

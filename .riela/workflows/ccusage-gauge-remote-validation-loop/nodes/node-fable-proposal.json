@@ -1,0 +1,10 @@
+{
+  "id": "fable-proposal",
+  "description": "Create or revise the remediation proposal.",
+  "executionBackend": "claude-code-agent",
+  "model": "claude-fable-5",
+  "promptTemplateFile": "prompts/fable-proposal.md",
+  "variables": {},
+  "sessionPolicy": { "mode": "reuse" },
+  "output": { "description": "Return a scoped implementation and verification proposal." }
+}

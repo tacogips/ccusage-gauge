@@ -1,0 +1,9 @@
+{
+  "id": "codex-implement",
+  "description": "Implement the consolidated real-data Docker validation design.",
+  "executionBackend": "codex-agent",
+  "model": "gpt-5.6-terra",
+  "promptTemplateFile": "prompts/codex-implement.md",
+  "variables": {},
+  "output": { "description": "Return changed files, implementation summary, checks, and unresolved items." }
+}

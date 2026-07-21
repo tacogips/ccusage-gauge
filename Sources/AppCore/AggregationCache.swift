@@ -38,16 +38,19 @@ public struct AggregationCachePayload: Equatable, Sendable {
 public actor UsageAggregationCache {
   public let fileURL: URL
   public let retentionDays: Int
+  public let machineID: String
   private let fileManager: FileManager
   private var memoryPayload: AggregationCachePayload?
 
   public init(
     fileURL: URL,
     retentionDays: Int = AppConfiguration.defaultCacheRetentionDays,
+    machineID: String = "local",
     fileManager: FileManager = .default
   ) {
     self.fileURL = fileURL
     self.retentionDays = retentionDays
+    self.machineID = machineID
     self.fileManager = fileManager
   }
 
@@ -92,8 +95,9 @@ public actor UsageAggregationCache {
       sessions: sessions
     )
     try fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fileURL.deletingLastPathComponent().path)
     try writeDatabase(payload)
-    try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+    try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
     memoryPayload = payload
   }
 
@@ -223,7 +227,8 @@ public actor UsageAggregationCache {
         inputTokens: Int(sqlite3_column_int64(statement, 4)),
         outputTokens: Int(sqlite3_column_int64(statement, 5)),
         cacheCreationTokens: Int(sqlite3_column_int64(statement, 6)),
-        cacheReadTokens: Int(sqlite3_column_int64(statement, 7))
+        cacheReadTokens: Int(sqlite3_column_int64(statement, 7)),
+        machine: machineID
       ))
     }
     return rows
@@ -253,7 +258,8 @@ public actor UsageAggregationCache {
         outputTokens: Int(sqlite3_column_int64(statement, 5)),
         cacheCreationTokens: Int(sqlite3_column_int64(statement, 6)),
         cacheReadTokens: Int(sqlite3_column_int64(statement, 7)),
-        dataQuality: dataQuality
+        dataQuality: dataQuality,
+        machine: machineID
       ))
     }
     return rows
