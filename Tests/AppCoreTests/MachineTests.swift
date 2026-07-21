@@ -133,6 +133,19 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
     #expect(throws: MachineRegistryStoreError.registryPermissionsInvalid) { try MachineRegistryStore(fileURL: file).load() }
   }
 
+  @Test func repairsLegacyConfigurationDirectoryPermissions() throws {
+    let root = try machineTemporaryDirectory()
+    let directory = root.appendingPathComponent("config/ccusage-gauge", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+
+    let registry = try MachineRegistryStore(fileURL: directory.appendingPathComponent("machines.json")).load()
+
+    #expect(registry.machines == [.local])
+    let permissions = try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? NSNumber
+    #expect(permissions?.intValue == 0o700)
+  }
+
   @Test(arguments: ["", "A", "-machine", "machine-", "a_b", "a.b", "all", "local"])
   func rejectsInvalidOrReservedIDs(id: String) {
     #expect(throws: MachineValidationError.self) { try MachineValidation.validate(descriptor: descriptor(id: id)) }

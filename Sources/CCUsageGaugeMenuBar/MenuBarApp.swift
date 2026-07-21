@@ -41,7 +41,9 @@ struct CCUsageGaugeMenuBarApp {
     application.setActivationPolicy(isE2E ? .regular : .accessory)
     let delegate = MenuBarDelegate()
     application.delegate = delegate
-    application.run()
+    withExtendedLifetime(delegate) {
+      application.run()
+    }
   }
 }
 

@@ -356,8 +356,20 @@ public struct MachineRegistryStore: @unchecked Sendable {
     var metadata = stat()
     guard lstat(directory.path, &metadata) == 0,
           (metadata.st_mode & S_IFMT) == S_IFDIR,
-          metadata.st_uid == getuid(), metadata.st_mode & 0o777 == 0o700 else {
+          metadata.st_uid == getuid() else {
       throw MachineRegistryStoreError.registryPermissionsInvalid
+    }
+    if metadata.st_mode & 0o777 != 0o700 {
+      do {
+        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+      } catch {
+        throw MachineRegistryStoreError.registryPermissionsInvalid
+      }
+      guard lstat(directory.path, &metadata) == 0,
+            (metadata.st_mode & S_IFMT) == S_IFDIR,
+            metadata.st_uid == getuid(), metadata.st_mode & 0o777 == 0o700 else {
+        throw MachineRegistryStoreError.registryPermissionsInvalid
+      }
     }
   }
 
