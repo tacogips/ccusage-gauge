@@ -98,9 +98,8 @@ public struct MachineDashboardRouter: Sendable {
     do { requested = try machineSelection(components) }
     catch { return selectionError(error) }
     let coverage = requestedCoverageStart(path: path, components: components)
-    if let coverage { await collector.expand(machine: requested, earliestDate: coverage) }
     let selection: MachineSnapshotSelection
-    do { selection = try await store.selection(machine: requested, requiredCoverageStart: coverage) }
+    do { selection = try await cachedSelection(machine: requested, requiredCoverageStart: coverage) }
     catch { return await querySelectionError(error) }
     guard let snapshot = selection.snapshot else { return error(status: 503, code: "snapshot_unavailable", message: "Usage data is temporarily unavailable") }
     do {
@@ -146,6 +145,34 @@ public struct MachineDashboardRouter: Sendable {
     } catch {
       return self.error(status: 500, code: "internal_error", message: "Request failed")
     }
+  }
+
+  private func cachedSelection(
+    machine requested: String,
+    requiredCoverageStart: Date?
+  ) async throws -> MachineSnapshotSelection {
+    guard let requiredCoverageStart else {
+      return try await store.selection(machine: requested)
+    }
+    do {
+      let cached = try await store.selection(
+        machine: requested,
+        requiredCoverageStart: requiredCoverageStart
+      )
+      if cached.scope.unavailableMachineIds.isEmpty { return cached }
+    } catch let error as MachineSelectionError {
+      switch error {
+      case .unavailable, .aggregateUnavailable, .rangeUnavailable, .aggregateRangeUnavailable:
+        break
+      case .invalid, .notFound, .disabled:
+        throw error
+      }
+    }
+    await collector.expand(machine: requested, earliestDate: requiredCoverageStart)
+    return try await store.selection(
+      machine: requested,
+      requiredCoverageStart: requiredCoverageStart
+    )
   }
 
   private func metricsResponse(
