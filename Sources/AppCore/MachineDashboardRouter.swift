@@ -8,6 +8,7 @@ public struct MachineDashboardRouter: Sendable {
   private let paths: AppPaths
   private let queryService: DashboardQueryService
   private let dashboardStateStore: DashboardStateStore
+  private let chartColors: ChartColorConfiguration
 
   public init(
     store: MachineSnapshotStore,
@@ -16,7 +17,8 @@ public struct MachineDashboardRouter: Sendable {
     paths: AppPaths,
     queryService: DashboardQueryService = DashboardQueryService(),
     cacheCoordinator: MachineCacheClearCoordinator = MachineCacheClearCoordinator(),
-    dashboardStateStore: DashboardStateStore? = nil
+    dashboardStateStore: DashboardStateStore? = nil,
+    chartColors: ChartColorConfiguration = ChartColorConfiguration()
   ) {
     self.store = store
     self.collector = collector
@@ -25,6 +27,7 @@ public struct MachineDashboardRouter: Sendable {
     self.queryService = queryService
     self.cacheCoordinator = cacheCoordinator
     self.dashboardStateStore = dashboardStateStore ?? DashboardStateStore(fileURL: paths.dashboardStateFile)
+    self.chartColors = chartColors
   }
 
   public func route(
@@ -40,6 +43,10 @@ public struct MachineDashboardRouter: Sendable {
     let path = components.path
     if path == "/api/health", method == "GET" {
       return HTTPResponse(status: 200, contentType: "application/json", body: Data("{\"status\":\"ok\"}".utf8))
+    }
+    if path == "/api/chart-colors" {
+      guard method == "GET" else { return methodNotAllowed("GET") }
+      return json(chartColors)
     }
     if method == "OPTIONS", path == "/api/refresh" || path == "/api/cache" || path == "/api/machines" || path.hasPrefix("/api/machines/") {
       return originRejected()

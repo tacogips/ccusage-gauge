@@ -530,7 +530,7 @@ private struct RouterRuntime {
   let paths: AppPaths
 }
 
-private func routerRuntime() async throws -> RouterRuntime {
+private func routerRuntime(chartColors: ChartColorConfiguration = ChartColorConfiguration()) async throws -> RouterRuntime {
   let root = try machineTemporaryDirectory()
   let paths = AppPaths(
     configFile: root.appendingPathComponent("config/ccusage-gauge/ccusage-config.json"),
@@ -550,11 +550,29 @@ private func routerRuntime() async throws -> RouterRuntime {
   }
   let owner = MachineRegistryMutationOwner(store: registryStore, registry: registry)
   return RouterRuntime(
-    router: MachineDashboardRouter(store: store, collector: collector, mutationOwner: owner, paths: paths),
+    router: MachineDashboardRouter(store: store, collector: collector, mutationOwner: owner, paths: paths, chartColors: chartColors),
     collector: collector,
     owner: owner,
     paths: paths
   )
+}
+
+@Suite("ChartColorRouteTests") struct ChartColorRouteTests {
+  @Test func exposesConfiguredMachineAndModelOverrides() async throws {
+    let colors = ChartColorConfiguration(
+      light: ChartColorSchemeConfiguration(machines: ["local": "#123ABC"]),
+      dark: ChartColorSchemeConfiguration(models: ["gpt-next": "#abcdef"])
+    )
+    let runtime = try await routerRuntime(chartColors: colors)
+    defer { Task { await runtime.collector.stop() } }
+
+    let response = await runtime.router.route(
+      target: "/api/chart-colors", method: "GET", headers: [:], body: Data(), listenerPort: 18_081
+    )
+
+    #expect(response.status == 200)
+    #expect(try JSONDecoder().decode(ChartColorConfiguration.self, from: response.body) == colors)
+  }
 }
 
 private func machineTemporaryDirectory() throws -> URL {

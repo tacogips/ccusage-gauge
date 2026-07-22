@@ -88,7 +88,8 @@ enum CommandRuntime {
       collector: collector,
       mutationOwner: mutationOwner,
       paths: paths,
-      dashboardStateStore: DashboardStateStore(fileURL: paths.dashboardStateFile)
+      dashboardStateStore: DashboardStateStore(fileURL: paths.dashboardStateFile),
+      chartColors: config.chartColors
     )
     let router = DashboardRouter(machineRouter: machineRouter, assetResolver: resolver)
     let server = DashboardHTTPServer(router: router)

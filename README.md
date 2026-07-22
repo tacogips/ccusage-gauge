@@ -213,7 +213,11 @@ The generated defaults are:
   "dashboardPort": 18081,
   "dashboardAutostart": true,
   "pollIntervalSeconds": 20,
-  "cacheRetentionDays": 365
+  "cacheRetentionDays": 365,
+  "chartColors": {
+    "light": { "machines": {}, "models": {} },
+    "dark": { "machines": {}, "models": {} }
+  }
 }
 ```
 
@@ -225,12 +229,32 @@ The generated defaults are:
 | `dashboardAutostart` | boolean; default `true` | Starts the local dashboard server when the menu-bar application starts. |
 | `pollIntervalSeconds` | integer; default `20` | Usage refresh interval in seconds. It must be positive. |
 | `cacheRetentionDays` | integer; default `365` | Retains the aggregate cache for this many days from its creation time. It must be positive. Expired cache data is purged during regular snapshot refreshes and rebuilt once. |
+| `chartColors` | object; default empty `light` and `dark` schemes | Optional fixed graph colors for each appearance, keyed by exact machine ID or model name. Values must use `#RRGGBB`. Identities without an override, including newly introduced models, receive a deterministic scheme-specific fallback color that stays stable across metric, range, and filter changes. |
 
 Configuration is loaded when the application starts. After changing any field,
 quit and relaunch `ccusage-gauge`; the menu's **Refresh** action refreshes usage
 data but does not reload configuration. For example, to use port `19090`, set
 `"dashboardPort": 19090`, relaunch the application, and choose **Open
 dashboard** to open `http://127.0.0.1:19090/`.
+
+For example, fixed custom graph colors can be configured as follows:
+
+```json
+"chartColors": {
+  "light": {
+    "machines": { "local": "#596D7A", "build-host": "#468A86" },
+    "models": { "claude-opus-4-8": "#7B5EB5", "gpt-5.6-sol": "#3F75B5" }
+  },
+  "dark": {
+    "machines": { "local": "#8FA6B5", "build-host": "#70C7C1" },
+    "models": { "claude-opus-4-8": "#A98AE8", "gpt-5.6-sol": "#70A7E8" }
+  }
+}
+```
+
+Use the sun/moon icon below the dashboard refresh button to switch schemes. The
+browser remembers the selection. Legacy flat `machines` and `models` maps are
+accepted and applied to both schemes.
 
 Historical daily and timestamped event aggregates are cached at
 `~/.cache/ccusage-gauge/aggregates-<machine-id>.sqlite3`. The first multi-machine

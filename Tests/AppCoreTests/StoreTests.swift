@@ -18,6 +18,7 @@ import Testing
     #expect(value == AppConfiguration())
     #expect(value.pollIntervalSeconds == 20)
     #expect(value.cacheRetentionDays == 365)
+    #expect(value.chartColors == ChartColorConfiguration())
     let original = try Data(contentsOf: file)
     _ = try store.loadOrCreate()
     #expect(try Data(contentsOf: file) == original)
@@ -36,12 +37,55 @@ import Testing
     let json = #"{"ccusagePath":null,"defaultResetTerm":"daily","dashboardPort":18081,"dashboardAutostart":true,"pollIntervalSeconds":20}"#
     let value = try JSONDecoder().decode(AppConfiguration.self, from: Data(json.utf8))
     #expect(value.cacheRetentionDays == 365)
+    #expect(value.chartColors == ChartColorConfiguration())
   }
 
   @Test func rejectsInvalidCacheRetention() {
     #expect(throws: ConfigurationError.invalidCacheRetention(0)) {
       try AppConfiguration(cacheRetentionDays: 0).validate()
     }
+  }
+
+  @Test func decodesAndValidatesChartColorOverrides() throws {
+    let json = ##"""
+      {"ccusagePath":null,"defaultResetTerm":"daily","dashboardPort":18081,"dashboardAutostart":true,
+      "pollIntervalSeconds":20,"chartColors":{"light":{"machines":{"local":"#123ABC"}},
+      "dark":{"models":{"gpt-next":"#abcdef"}}}}
+      """##
+    let value = try JSONDecoder().decode(AppConfiguration.self, from: Data(json.utf8))
+
+    try value.validate()
+    #expect(value.chartColors.light.machines["local"] == "#123ABC")
+    #expect(value.chartColors.dark.models["gpt-next"] == "#abcdef")
+  }
+
+  @Test func rejectsInvalidChartColorOverrides() {
+    #expect(throws: ConfigurationError.invalidChartColor(section: "dark.models", key: "gpt", value: "red")) {
+      try AppConfiguration(chartColors: ChartColorConfiguration(
+        dark: ChartColorSchemeConfiguration(models: ["gpt": "red"])
+      )).validate()
+    }
+  }
+
+  @Test func allowsConfiguringOnlyOneChartColorNamespace() throws {
+    let colors = try JSONDecoder().decode(
+      ChartColorSchemeConfiguration.self,
+      from: Data(##"{"models":{"future-model":"#123ABC"}}"##.utf8)
+    )
+
+    #expect(colors.machines.isEmpty)
+    #expect(colors.models == ["future-model": "#123ABC"])
+  }
+
+  @Test func migratesLegacyFlatChartColorsToBothSchemes() throws {
+    let colors = try JSONDecoder().decode(
+      ChartColorConfiguration.self,
+      from: Data(##"{"machines":{"local":"#123ABC"},"models":{"gpt":"#abcdef"}}"##.utf8)
+    )
+
+    #expect(colors.light == colors.dark)
+    #expect(colors.light.machines == ["local": "#123ABC"])
+    #expect(colors.light.models == ["gpt": "#abcdef"])
   }
 }
 

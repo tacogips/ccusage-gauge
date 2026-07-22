@@ -1,5 +1,85 @@
 import Foundation
 
+public struct ChartColorSchemeConfiguration: Codable, Equatable, Sendable {
+  public var machines: [String: String]
+  public var models: [String: String]
+
+  private enum CodingKeys: String, CodingKey { case machines, models }
+
+  public init(machines: [String: String] = [:], models: [String: String] = [:]) {
+    self.machines = machines
+    self.models = models
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    machines = try container.decodeIfPresent([String: String].self, forKey: .machines) ?? [:]
+    models = try container.decodeIfPresent([String: String].self, forKey: .models) ?? [:]
+  }
+
+  public func validate(scheme: String) throws {
+    for (section, colors) in [("machines", machines), ("models", models)] {
+      for (key, color) in colors {
+        guard !key.isEmpty, key.utf8.count <= 256,
+              !key.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) else {
+          throw ConfigurationError.invalidChartColorKey(section: "\(scheme).\(section)", key: key)
+        }
+        guard Self.isHexColor(color) else {
+          throw ConfigurationError.invalidChartColor(section: "\(scheme).\(section)", key: key, value: color)
+        }
+      }
+    }
+  }
+
+  private static func isHexColor(_ value: String) -> Bool {
+    guard value.utf8.count == 7, value.first == "#" else { return false }
+    return value.dropFirst().allSatisfy { $0.isHexDigit }
+  }
+}
+
+public struct ChartColorConfiguration: Codable, Equatable, Sendable {
+  public var light: ChartColorSchemeConfiguration
+  public var dark: ChartColorSchemeConfiguration
+
+  private enum CodingKeys: String, CodingKey { case light, dark, machines, models }
+
+  public init(
+    light: ChartColorSchemeConfiguration = ChartColorSchemeConfiguration(),
+    dark: ChartColorSchemeConfiguration = ChartColorSchemeConfiguration()
+  ) {
+    self.light = light
+    self.dark = dark
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    if container.contains(.light) || container.contains(.dark) {
+      light = try container.decodeIfPresent(ChartColorSchemeConfiguration.self, forKey: .light)
+        ?? ChartColorSchemeConfiguration()
+      dark = try container.decodeIfPresent(ChartColorSchemeConfiguration.self, forKey: .dark)
+        ?? ChartColorSchemeConfiguration()
+    } else {
+      let legacy = ChartColorSchemeConfiguration(
+        machines: try container.decodeIfPresent([String: String].self, forKey: .machines) ?? [:],
+        models: try container.decodeIfPresent([String: String].self, forKey: .models) ?? [:]
+      )
+      light = legacy
+      dark = legacy
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(light, forKey: .light)
+    try container.encode(dark, forKey: .dark)
+  }
+
+  public func validate() throws {
+    try light.validate(scheme: "light")
+    try dark.validate(scheme: "dark")
+  }
+}
+
 public enum ResetCycle: Codable, Equatable, Sendable {
   case hourly
   case daily
@@ -70,6 +150,7 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
   public var dashboardAutostart: Bool
   public var pollIntervalSeconds: Int
   public var cacheRetentionDays: Int
+  public var chartColors: ChartColorConfiguration
 
   public init(
     ccusagePath: String? = nil,
@@ -77,7 +158,8 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     dashboardPort: Int = 18_081,
     dashboardAutostart: Bool = true,
     pollIntervalSeconds: Int = AppConfiguration.defaultPollIntervalSeconds,
-    cacheRetentionDays: Int = AppConfiguration.defaultCacheRetentionDays
+    cacheRetentionDays: Int = AppConfiguration.defaultCacheRetentionDays,
+    chartColors: ChartColorConfiguration = ChartColorConfiguration()
   ) {
     self.ccusagePath = ccusagePath
     self.defaultResetTerm = defaultResetTerm
@@ -85,11 +167,12 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     self.dashboardAutostart = dashboardAutostart
     self.pollIntervalSeconds = pollIntervalSeconds
     self.cacheRetentionDays = cacheRetentionDays
+    self.chartColors = chartColors
   }
 
   private enum CodingKeys: String, CodingKey {
     case ccusagePath, defaultResetTerm, dashboardPort, dashboardAutostart
-    case pollIntervalSeconds, cacheRetentionDays
+    case pollIntervalSeconds, cacheRetentionDays, chartColors
   }
 
   public init(from decoder: Decoder) throws {
@@ -101,6 +184,8 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     pollIntervalSeconds = try container.decode(Int.self, forKey: .pollIntervalSeconds)
     cacheRetentionDays = try container.decodeIfPresent(Int.self, forKey: .cacheRetentionDays)
       ?? AppConfiguration.defaultCacheRetentionDays
+    chartColors = try container.decodeIfPresent(ChartColorConfiguration.self, forKey: .chartColors)
+      ?? ChartColorConfiguration()
   }
 
   public func validate() throws {
@@ -109,6 +194,7 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     guard pollIntervalSeconds > 0 else { throw ConfigurationError.invalidPollInterval(pollIntervalSeconds) }
     guard cacheRetentionDays > 0 else { throw ConfigurationError.invalidCacheRetention(cacheRetentionDays) }
     if let ccusagePath, !ccusagePath.hasPrefix("/") { throw ConfigurationError.pathMustBeAbsolute }
+    try chartColors.validate()
   }
 }
 
@@ -117,6 +203,8 @@ public enum ConfigurationError: Error, Equatable, CustomStringConvertible, Senda
   case invalidPort(Int)
   case invalidPollInterval(Int)
   case invalidCacheRetention(Int)
+  case invalidChartColorKey(section: String, key: String)
+  case invalidChartColor(section: String, key: String, value: String)
   case pathMustBeAbsolute
 
   public var description: String {
@@ -125,6 +213,8 @@ public enum ConfigurationError: Error, Equatable, CustomStringConvertible, Senda
     case .invalidPort(let value): "Dashboard port must be between 1 and 65535 (received \(value))"
     case .invalidPollInterval(let value): "Poll interval must be positive (received \(value))"
     case .invalidCacheRetention(let value): "Cache retention days must be positive (received \(value))"
+    case .invalidChartColorKey(let section, let key): "Chart color key in \(section) is invalid: \(key.debugDescription)"
+    case .invalidChartColor(let section, let key, let value): "Chart color for \(section).\(key) must use #RRGGBB (received \(value))"
     case .pathMustBeAbsolute: "Configured ccusagePath must be an absolute path"
     }
   }

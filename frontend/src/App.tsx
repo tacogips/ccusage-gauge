@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
-import { type BudgetResponse, type CostRow, type CostSeriesResponse, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type Machine, type MachinesResponse, type MachineStatusResponse, type MetricRow, type MetricsResponse, getJSON, mutationJSON, requestJSON } from "./api";
+import { type BudgetResponse, type ChartColorsResponse, type CostRow, type CostSeriesResponse, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type Machine, type MachinesResponse, type MachineStatusResponse, type MetricRow, type MetricsResponse, getJSON, mutationJSON, requestJSON } from "./api";
 import { initialMachineLimit, matchesMachineSelection, toggledMachineSelection, visibleMachineItems } from "./machineScope";
+import { type ColorScheme, seriesColor } from "./seriesColors";
 
 type QuickRange = "recent12h" | "today" | "yesterday" | "week" | "month";
 type Range = QuickRange | "custom";
@@ -31,7 +32,6 @@ const chartMargin = { top: 16, right: 78, bottom: 54, left: 78 };
 const yTickCount = 4;
 const lazyRenderWindowMilliseconds = 12 * 60 * 60 * 1_000;
 const chartSlotWidths: Record<Granularity, number> = { "15min": 32, hourly: 96, "6hour": 112, daily: 72 };
-const modelColors = ["#238855", "#3f75b5", "#b86f32", "#7b5eb5", "#b84f6f", "#468a86", "#8a7a35", "#596d7a"];
 function bucketMilliseconds(granularity: Granularity) {
   switch (granularity) {
   case "15min": return 15 * 60 * 1_000;
@@ -87,11 +87,12 @@ function Bars(props: {
   granularity: Granularity;
   label: string;
   metric: MetricKey;
-  seriesDomain: string[];
   timelineStart?: string;
   timelineEndExclusive?: string;
   onLazyLoadingChange: (isLoading: boolean) => void;
   stackBy: "model" | "machine";
+  colorScheme: ColorScheme;
+  colorOverrides?: Readonly<Record<string, string>>;
 }) {
   const [hoveredSegment, setHoveredSegment] = createSignal<{ bucketIndex: number; model: string } | null>(null);
   const [loadedAfter, setLoadedAfter] = createSignal(Number.NEGATIVE_INFINITY);
@@ -110,7 +111,7 @@ function Bars(props: {
   };
   const seriesName = (row: CostRow) => props.stackBy === "machine" ? row.machine : row.model;
   const models = createMemo(() => [...new Set(props.rows.map(seriesName))].sort());
-  const colorForModel = (model: string) => modelColors[Math.max(props.seriesDomain.indexOf(model), 0) % modelColors.length];
+  const colorForSeries = (series: string) => seriesColor(props.colorScheme, props.stackBy, series, props.colorOverrides);
   const occupiedPoints = createMemo(() => {
     const grouped = new Map<string, Map<string, number>>();
     for (const row of props.rows) {
@@ -228,7 +229,7 @@ function Bars(props: {
     <div class="chart-wrap" role="img" aria-label={`${props.label} ${props.metric} by ${props.granularity} and model`}>
       <Show when={points().length > 0} fallback={<div class="chart"><p class="empty">No usage matches this period and model filter.</p></div>}>
         <div class="chart-legend" aria-hidden="true">
-          <For each={models()}>{(model) => <span title={model}><i style={{ background: colorForModel(model) }} />{model}</span>}</For>
+          <For each={models()}>{(model) => <span title={model}><i style={{ background: colorForSeries(model) }} />{model}</span>}</For>
         </div>
         <Show when={props.granularity !== "daily"}>
           <p class="chart-scroll-hint">Newest data is shown first. Scroll left to render earlier 12-hour windows.</p>
@@ -249,7 +250,7 @@ function Bars(props: {
                 const precedingValue = () => point.segments.slice(0, segmentIndex()).reduce((sum, item) => sum + item.value, 0);
                 const height = () => (segment.value / axisMaximum()) * plotHeight;
                 const y = () => chartMargin.top + plotHeight - ((precedingValue() + segment.value) / axisMaximum()) * plotHeight;
-                return <rect class="cost-bar" fill={colorForModel(segment.model)} x={x()} y={y()} width={barWidth()} height={height()} rx="2"
+                return <rect class="cost-bar" fill={colorForSeries(segment.model)} x={x()} y={y()} width={barWidth()} height={height()} rx="2"
                   onMouseEnter={() => setHoveredSegment({ bucketIndex: index(), model: segment.model })} onMouseLeave={() => setHoveredSegment(null)}>
                   <title>{`${new Date(point.timestamp).toLocaleString()} · ${segment.model}: ${formatValue(segment.value)}`}</title>
                 </rect>;
@@ -376,9 +377,15 @@ export default function App() {
   const [machineUser, setMachineUser] = createSignal("");
   const [machineIdentity, setMachineIdentity] = createSignal("");
   const [machineError, setMachineError] = createSignal<string>();
+  const storedColorScheme = window.localStorage.getItem("ccusage-gauge-color-scheme");
+  const initialColorScheme: ColorScheme = storedColorScheme === "light" || storedColorScheme === "dark"
+    ? storedColorScheme
+    : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  const [colorScheme, setColorScheme] = createSignal<ColorScheme>(initialColorScheme);
   const machineSuffix = "machine=all";
   const withMachine = (path: string) => `${path}${path.includes("?") ? "&" : "?"}${machineSuffix}`;
   const [machines, { refetch: refreshMachines }] = createResource(() => getJSON<MachinesResponse>("/api/machines"));
+  const [chartColors] = createResource(() => getJSON<ChartColorsResponse>("/api/chart-colors"));
   const [machineStatuses, { refetch: refreshMachineStatuses }] = createResource(() => getJSON<MachineStatusResponse>("/api/machine-status?machine=all"));
 
   const periodPath = createMemo(() => range() === "custom"
@@ -404,13 +411,11 @@ export default function App() {
   const models = createMemo(() => [...new Set(machineFilteredRows().map((row) => row.model))].sort());
   const agents = createMemo(() => [...new Set(machineFilteredRows().map((row) => row.agent))].sort());
   const chartModels = createMemo(() => new Set(machineFilteredCostRows().map((row) => row.model)));
-  // Color follows the entity, not its rank: a machine/model keeps one hue across
-  // the stacked chart and its breakdown, from a stable sorted domain.
-  const machineDomain = createMemo(() => [...new Set(machineFilteredRows().map((row) => row.machine))].sort());
-  const chartSeriesDomain = createMemo(() => stackBy() === "machine" ? machineDomain() : models());
-  const colorFor = (domain: string[], key: string) => modelColors[Math.max(domain.indexOf(key), 0) % modelColors.length];
-  const colorForMachine = (machine: string) => colorFor(machineDomain(), machine);
-  const colorForModel = (model: string) => colorFor(models(), model);
+  // Color is derived only from entity type and identity, so changing the metric,
+  // range, filters, or the other visible series cannot reassign it.
+  const activeChartColors = () => chartColors()?.[colorScheme()];
+  const colorForMachine = (machine: string) => seriesColor(colorScheme(), "machine", machine, activeChartColors()?.machines);
+  const colorForModel = (model: string) => seriesColor(colorScheme(), "model", model, activeChartColors()?.models);
   const estimatedModels = createMemo(() => new Set(machineFilteredCostRows()
     .filter((row) => row.dataQuality === "sessionEstimated")
     .map((row) => row.model)));
@@ -421,6 +426,11 @@ export default function App() {
   };
   const modelSourceNote = (model: string) => unavailableModelReason(model)
     ?? (estimatedModels().has(model) ? `${model} uses session-level timing for part or all of this period, so sub-daily placement is estimated.` : undefined);
+  createEffect(() => {
+    const scheme = colorScheme();
+    document.documentElement.dataset.colorScheme = scheme;
+    window.localStorage.setItem("ccusage-gauge-color-scheme", scheme);
+  });
   createEffect(() => {
     if (!isDashboardStateLoaded() || period()?.range !== range() || costSeries()?.range !== range() || costSeries()?.granularity !== granularity()) return;
     const available = chartModels();
@@ -725,7 +735,12 @@ export default function App() {
         <header>
           <div class="dashboard-title"><h1>ccusage-gauge</h1>
             <details class="config-menu" ref={configMenu}>
-              <summary aria-label="Open dashboard configuration" title="Dashboard configuration">Config</summary>
+              <summary aria-label="Open dashboard configuration" title="Dashboard configuration">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 15.25a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Z" />
+                  <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.86 1.86-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V20h-2.63v-.09a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-1.86-1.86.06-.06A1.7 1.7 0 0 0 7.87 15a1.7 1.7 0 0 0-1.55-1H6.2v-2.63h.09a1.7 1.7 0 0 0 1.55-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 1.86-1.86.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1-1.55V5.2h2.63v.09a1.7 1.7 0 0 0 1.1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06 1.86 1.86-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1H20v2.63h-.09A1.7 1.7 0 0 0 19.4 15Z" />
+                </svg>
+              </summary>
               <div class="config-menu-panel">
                 <strong>Dashboard configuration</strong>
                 <p>Remove persisted usage aggregates and reload recent data.</p>
@@ -784,21 +799,36 @@ export default function App() {
         <Show when={!errorMessage()} fallback={<section class="error"><span>{errorMessage()}</span><button onClick={refresh}>Retry</button></section>}>
           <Show when={!isBlockingLoading()} fallback={<LoadingState status={loadStatus()} />}>
             <section class="stats metric-stats">
-            <article><span>Selected cost</span><strong>{currency.format(total("costUSD"))}</strong><small>{rangeLabel()} · {filterLabel()}</small></article>
+            <article><span>Cost for current view</span><strong>{currency.format(total("costUSD"))}</strong><small>{rangeLabel()} · {filterLabel()}</small></article>
             <article><span>Total tokens</span><strong>{integer.format(total("totalTokens"))}</strong><small>All token categories</small></article>
             <article><span>Input / output</span><strong>{integer.format(total("inputTokens"))} / {integer.format(total("outputTokens"))}</strong><small>Prompt and generated</small></article>
             <article><span>Cache read / creation</span><strong>{integer.format(total("cacheReadTokens"))} / {integer.format(total("cacheCreationTokens"))}</strong><small>Reported by ccusage</small></article>
-            <button
-              classList={{ "refresh-icon": true, refreshing: isRefreshing() }}
-              onClick={refresh}
-              aria-label="Refresh usage data"
-              aria-busy={isRefreshing()}
-              title="Refresh usage data"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M20 11a8 8 0 0 0-14.9-4M4 4v6h6M4 13a8 8 0 0 0 14.9 4M20 20v-6h-6" />
-              </svg>
-            </button>
+            <div class="stats-actions">
+              <button
+                classList={{ "refresh-icon": true, refreshing: isRefreshing() }}
+                onClick={refresh}
+                aria-label="Refresh usage data"
+                aria-busy={isRefreshing()}
+                title="Refresh usage data"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 11a8 8 0 0 0-14.9-4M4 4v6h6M4 13a8 8 0 0 0 14.9 4M20 20v-6h-6" />
+                </svg>
+              </button>
+              <button
+                class="refresh-icon theme-icon"
+                onClick={() => setColorScheme((current) => current === "light" ? "dark" : "light")}
+                aria-label={`Switch to ${colorScheme() === "light" ? "dark" : "light"} mode`}
+                title={`Switch to ${colorScheme() === "light" ? "dark" : "light"} mode`}
+              >
+                <Show
+                  when={colorScheme() === "light"}
+                  fallback={<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a7.5 7.5 0 1 0 9 9 9 9 0 0 1-9-9Z" /></svg>}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42" /></svg>
+                </Show>
+              </button>
+            </div>
             </section>
 
             <section class="panel usage-panel">
@@ -826,11 +856,12 @@ export default function App() {
               granularity={granularity()}
               label={rangeLabel()}
               metric={chartMetric()}
-              seriesDomain={chartSeriesDomain()}
               timelineStart={costSeries()?.timelineStart}
               timelineEndExclusive={costSeries()?.timelineEndExclusive}
               onLazyLoadingChange={setIsGraphLazyLoading}
               stackBy={stackBy()}
+              colorScheme={colorScheme()}
+              colorOverrides={stackBy() === "machine" ? activeChartColors()?.machines : activeChartColors()?.models}
             />
             </section>
 

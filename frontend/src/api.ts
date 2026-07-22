@@ -82,6 +82,8 @@ export interface MachineStatus {
   lastError?: { code: string; message: string }; refreshIntervalSeconds: number;
 }
 export interface MachinesResponse { machines: Machine[] }
+export interface ChartColorScheme { machines: Record<string, string>; models: Record<string, string> }
+export interface ChartColorsResponse { light: ChartColorScheme; dark: ChartColorScheme }
 export interface MachineStatusResponse { requested: string; generatedAt: string; machines: MachineStatus[] }
 export async function getJSON<T>(path: string): Promise<T> {
   return requestJSON<T>(path);
