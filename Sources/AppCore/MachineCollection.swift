@@ -100,6 +100,32 @@ public actor MachineSnapshotStore {
   private var registryRevision: UInt64
   private let calendar: Calendar
 
+  /// Identity of one included snapshot in a merge: republishing, clearing, or replacing the
+  /// registry mutates `generatedAt` or the entry set, so the composite key naturally changes.
+  private struct MergeEntryKey: Equatable {
+    let id: String
+    let generatedAt: Date
+  }
+
+  /// The `now`-independent portion of a merged aggregate. Interval-dependent scalar fields
+  /// (active boundary, cost, budget spend) are recomputed per request from these cached arrays.
+  private struct MergedAggregate {
+    let points: [CCUsageCostRecord]
+    let metrics: [CCUsageMetricRecord]
+    let sessions: [CCUsageSessionMetricRecord]
+    let generatedAt: Date
+    let resetCycle: ResetCycle
+    let activeBoundaryFallback: Date
+    let budgetUSD: Decimal?
+    let refreshIntervalSeconds: Int
+  }
+
+  private var mergeCache: (key: [MergeEntryKey], value: MergedAggregate)?
+
+  /// Number of times the aggregate arrays were rebuilt from scratch. Test-only observability for
+  /// the merge memoization; unchanged inputs across requests must not increment it.
+  private(set) var mergeComputations = 0
+
   public init(registry: MachineRegistry, refreshIntervalSeconds: Int, calendar: Calendar = .current) {
     registryRevision = registry.revision
     self.calendar = calendar
@@ -144,6 +170,7 @@ public actor MachineSnapshotStore {
     }
     registryRevision = registry.revision
     entries = next
+    mergeCache = nil
   }
 
   public func beginCollection(
@@ -184,6 +211,7 @@ public actor MachineSnapshotStore {
     entry.collectionStatus.collectionInProgress = false
     entry.loadStatus = DashboardLoadStatus(phase: .ready, message: "Usage data is ready", completed: 1, total: 1, isLoading: false)
     entries[machineID] = entry
+    mergeCache = nil
   }
 
   public func publishFailure(
@@ -217,6 +245,7 @@ public actor MachineSnapshotStore {
     entry.collectionStatus.lastErrorAt = nil
     entry.collectionStatus.lastError = nil
     entries[machineID] = entry
+    mergeCache = nil
   }
 
   public func selection(
@@ -287,31 +316,52 @@ public actor MachineSnapshotStore {
       throw MachineSelectionError.aggregateUnavailable(refresh)
     }
     return MachineSnapshotSelection(
-      snapshot: merge(usable.compactMap(\.snapshot), now: now),
+      snapshot: merge(usable: usable, now: now),
       scope: scope,
       collectionState: nil,
       refreshIntervalSeconds: refresh
     )
   }
 
-  private func merge(_ snapshots: [CostSnapshot], now: Date) -> CostSnapshot {
-    let points = snapshots.flatMap(\.points)
-    let metrics = snapshots.flatMap(\.dashboardMetrics)
-    let sessions = snapshots.flatMap(\.dashboardSessions)
-    let exemplar = snapshots[0]
-    let interval = (try? ResetWindowCalculator(calendar: calendar).aggregationInterval(for: exemplar.resetCycle, now: now))
-      ?? DateInterval(start: exemplar.activeBoundaryAt, end: now)
-    let cost = selectedPeriodCost(cycle: exemplar.resetCycle, interval: interval, metrics: metrics, sessions: sessions, calendar: calendar)
+  private func merge(usable: [MachineSnapshotEntry], now: Date) -> CostSnapshot {
+    let key = usable.map { MergeEntryKey(id: $0.descriptor.id, generatedAt: $0.snapshot?.generatedAt ?? .distantPast) }
+    let merged: MergedAggregate
+    if let cache = mergeCache, cache.key == key {
+      merged = cache.value
+    } else {
+      merged = buildMergedAggregate(usable.compactMap(\.snapshot), now: now)
+      mergeCache = (key, merged)
+    }
+    // `merge` depends on `now` only through the reset interval, so the arrays are cached while the
+    // interval-dependent scalars are recomputed each request from the cached metrics/sessions.
+    let interval = (try? ResetWindowCalculator(calendar: calendar).aggregationInterval(for: merged.resetCycle, now: now))
+      ?? DateInterval(start: merged.activeBoundaryFallback, end: now)
+    let cost = selectedPeriodCost(cycle: merged.resetCycle, interval: interval, metrics: merged.metrics, sessions: merged.sessions, calendar: calendar)
     return CostSnapshot(
-      generatedAt: snapshots.map(\.generatedAt).min() ?? now,
+      generatedAt: merged.generatedAt,
       activeBoundaryAt: interval.start,
       costSinceResetUSD: cost,
-      budget: BudgetSummary(spentUSD: cost, budgetUSD: exemplar.budget.budgetUSD),
+      budget: BudgetSummary(spentUSD: cost, budgetUSD: merged.budgetUSD),
+      resetCycle: merged.resetCycle,
+      refreshIntervalSeconds: merged.refreshIntervalSeconds,
+      points: merged.points,
+      dashboardMetrics: merged.metrics,
+      dashboardSessions: merged.sessions
+    )
+  }
+
+  private func buildMergedAggregate(_ snapshots: [CostSnapshot], now: Date) -> MergedAggregate {
+    mergeComputations += 1
+    let exemplar = snapshots[0]
+    return MergedAggregate(
+      points: snapshots.flatMap(\.points),
+      metrics: snapshots.flatMap(\.dashboardMetrics),
+      sessions: snapshots.flatMap(\.dashboardSessions),
+      generatedAt: snapshots.map(\.generatedAt).min() ?? now,
       resetCycle: exemplar.resetCycle,
-      refreshIntervalSeconds: snapshots.map(\.refreshIntervalSeconds).filter { $0 > 0 }.min() ?? exemplar.refreshIntervalSeconds,
-      points: points,
-      dashboardMetrics: metrics,
-      dashboardSessions: sessions
+      activeBoundaryFallback: exemplar.activeBoundaryAt,
+      budgetUSD: exemplar.budget.budgetUSD,
+      refreshIntervalSeconds: snapshots.map(\.refreshIntervalSeconds).filter { $0 > 0 }.min() ?? exemplar.refreshIntervalSeconds
     )
   }
 
@@ -533,7 +583,18 @@ public actor MachineCollector {
       : registry.machines.filter { $0.id == requested && $0.enabled }
     await withTaskGroup(of: Void.self) { group in
       for descriptor in targets {
-        group.addTask { [weak self] in _ = try? await self?.collect(descriptor: descriptor, earliestDate: earliestDate, phase: .loadingHistory) }
+        group.addTask { [weak self] in
+          guard let self else { return }
+          // Serve from the published snapshot when its coverage already satisfies the request:
+          // a steady-state filter switch then never spawns ccusage. Only machines whose coverage
+          // is missing or narrower than requested await a fresh collection.
+          if let entry = await self.store.entry(machineID: descriptor.id),
+             entry.snapshot != nil,
+             let coverage = entry.coverageStart, coverage <= earliestDate {
+            return
+          }
+          _ = try? await self.collect(descriptor: descriptor, earliestDate: earliestDate, phase: .loadingHistory)
+        }
       }
     }
   }
@@ -552,7 +613,7 @@ public actor MachineCollector {
       let warmStart = self.calendar.date(byAdding: .month, value: -1, to: monthStart) ?? monthStart
       _ = try? await self.collect(descriptor: descriptor, earliestDate: warmStart, phase: .loadingHistory)
       while !Task.isCancelled, await self.isCurrent(machineID: descriptor.id, generation: generation, revision: revision) {
-        do { try await Task.sleep(for: .seconds(max(1, descriptor.id == "local" ? AppConfiguration.defaultPollIntervalSeconds : AppConfiguration.defaultPollIntervalSeconds))) }
+        do { try await Task.sleep(for: .seconds(max(1, AppConfiguration.defaultPollIntervalSeconds))) }
         catch { break }
         _ = try? await self.collect(descriptor: descriptor, earliestDate: nil, phase: .refreshing)
       }

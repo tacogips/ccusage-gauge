@@ -598,7 +598,13 @@ export default function App() {
       })
       .catch(() => undefined)
       .finally(() => setIsDashboardStateLoaded(true));
-    const timer = window.setInterval(refreshLoadStatus, 250);
+  });
+  // Poll /api/load-status fast (250 ms) only while work is in flight; back off to 2 s when idle so a
+  // steady dashboard issues ~1 request every 2 s. beginRangeLoad/refresh/clearCache flip the signals
+  // below, so fast polling resumes immediately when loading starts.
+  const isPollingFast = createMemo(() => Boolean(loadStatus()?.isLoading) || isRefreshing() || isRangeLoading());
+  createEffect(() => {
+    const timer = window.setInterval(refreshLoadStatus, isPollingFast() ? 250 : 2_000);
     onCleanup(() => window.clearInterval(timer));
   });
   let dashboardStateSave = Promise.resolve<unknown>(undefined);
