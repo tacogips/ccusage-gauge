@@ -545,19 +545,12 @@ public struct MachineDashboardRouter: Sendable {
     return try JSONDecoder().decode(T.self, from: body)
   }
 
-  private func jsonWithScope<T: Encodable>(_ value: T, scope: DashboardScope) -> HTTPResponse {
-    let encoder = encoder()
-    guard let data = try? encoder.encode(value),
-          var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let scopeData = try? encoder.encode(scope),
-          let scopeObject = try? JSONSerialization.jsonObject(with: scopeData) else {
-      return error(status: 500, code: "encoding_failed", message: "Response encoding failed")
-    }
-    object["scope"] = scopeObject
-    guard let body = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
-      return error(status: 500, code: "encoding_failed", message: "Response encoding failed")
-    }
-    return HTTPResponse(status: 200, contentType: "application/json", body: body)
+  private func jsonWithScope<T: Encodable & ScopedDashboardResponse>(_ value: T, scope: DashboardScope) -> HTTPResponse {
+    // Single-pass encoding: attach `scope` to the DTO and let `JSONEncoder` emit it as a sibling
+    // key, avoiding the earlier encode -> JSONSerialization -> re-serialize round-trip.
+    var value = value
+    value.scope = scope
+    return json(value)
   }
 
   private func json<T: Encodable>(
