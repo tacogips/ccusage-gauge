@@ -63,6 +63,43 @@ func boundedConcurrentMap<Input: Sendable, Output: Sendable>(
   }
 }
 
+/// Merges two already-sorted arrays into one sorted array in O(n). The merge is stable and
+/// left-biased on ties: when neither element is strictly smaller, the `left` element is emitted
+/// first, so a sorted cache prefix keeps precedence over freshly loaded rows sharing a key.
+func mergeSorted<Element>(
+  _ left: [Element],
+  _ right: [Element],
+  by areInIncreasingOrder: (Element, Element) -> Bool
+) -> [Element] {
+  guard !left.isEmpty else { return right }
+  guard !right.isEmpty else { return left }
+  var merged: [Element] = []
+  merged.reserveCapacity(left.count + right.count)
+  var i = left.startIndex
+  var j = right.startIndex
+  while i < left.endIndex, j < right.endIndex {
+    if areInIncreasingOrder(right[j], left[i]) {
+      merged.append(right[j]); j = right.index(after: j)
+    } else {
+      merged.append(left[i]); i = left.index(after: i)
+    }
+  }
+  if i < left.endIndex { merged.append(contentsOf: left[i...]) }
+  if j < right.endIndex { merged.append(contentsOf: right[j...]) }
+  return merged
+}
+
+/// Total order used for `dashboardMetrics`, matching the cache's `ORDER BY date, agent, model`.
+func metricsInIncreasingOrder(_ lhs: CCUsageMetricRecord, _ rhs: CCUsageMetricRecord) -> Bool {
+  (lhs.date, lhs.agent, lhs.model) < (rhs.date, rhs.agent, rhs.model)
+}
+
+/// Ordering for `dashboardSessions`. Only the timestamp is significant (matching the historical
+/// output), while the cache's stored `timestamp, agent, model` order is a compatible refinement.
+func sessionsInIncreasingOrder(_ lhs: CCUsageSessionMetricRecord, _ rhs: CCUsageSessionMetricRecord) -> Bool {
+  lhs.timestamp < rhs.timestamp
+}
+
 private struct UsageBucketTotals {
   var costUSD = Decimal.zero
   var inputTokens = 0
@@ -357,12 +394,30 @@ public struct SnapshotService: Sendable {
     let (points, loadedRanges) = try await (blockRecords, usageRecords)
     let freshMetrics = loadedRanges.flatMap(\.metrics)
     let freshSessions = loadedRanges.flatMap(\.sessions)
-    let historicalMetrics = (cached?.metrics ?? []) + freshMetrics.filter { $0.date < today }
-    let historicalSessions = (cached?.sessions ?? []) + freshSessions.filter { $0.timestamp < todayStart }
-    let dashboardMetrics = (cached == nil ? freshMetrics : historicalMetrics + freshMetrics.filter { $0.date >= today })
-      .sorted { ($0.date, $0.agent, $0.model) < ($1.date, $1.agent, $1.model) }
-    let dashboardSessions = (cached == nil ? freshSessions : historicalSessions + freshSessions.filter { $0.timestamp >= todayStart })
-      .sorted { $0.timestamp < $1.timestamp }
+    // The cached prefix is always sorted (SQLite `ORDER BY` on read, and the in-memory payload is
+    // re-saved sorted below), so only the fresh partition is sorted and merged instead of re-sorting
+    // the whole history each cycle. Output is identical to `(cached + fresh).sorted(by:)`.
+    let sortedFreshMetrics = freshMetrics.sorted(by: metricsInIncreasingOrder)
+    let sortedFreshSessions = freshSessions.sorted(by: sessionsInIncreasingOrder)
+    let historicalMetrics = mergeSorted(
+      cached?.metrics ?? [],
+      freshMetrics.filter { $0.date < today }.sorted(by: metricsInIncreasingOrder),
+      by: metricsInIncreasingOrder
+    )
+    let historicalSessions = mergeSorted(
+      cached?.sessions ?? [],
+      freshSessions.filter { $0.timestamp < todayStart }.sorted(by: sessionsInIncreasingOrder),
+      by: sessionsInIncreasingOrder
+    )
+    let dashboardMetrics: [CCUsageMetricRecord]
+    let dashboardSessions: [CCUsageSessionMetricRecord]
+    if let cached {
+      dashboardMetrics = mergeSorted(cached.metrics, sortedFreshMetrics, by: metricsInIncreasingOrder)
+      dashboardSessions = mergeSorted(cached.sessions, sortedFreshSessions, by: sessionsInIncreasingOrder)
+    } else {
+      dashboardMetrics = sortedFreshMetrics
+      dashboardSessions = sortedFreshSessions
+    }
     try Task.checkCancellation()
     if let aggregationCache,
        let yesterday = calculator.calendar.date(byAdding: .day, value: -1, to: todayStart) {
@@ -507,7 +562,7 @@ public struct SnapshotService: Sendable {
   private func loadMetrics(ranges: [(since: String, until: String)]) async throws -> [CCUsageMetricRecord] {
     guard !ranges.isEmpty else { return [] }
     let usagePerRange = try await usageForRanges(ranges)
-    return partitionUsage(usagePerRange, timestampedEvents: [], ranges: ranges).flatMap(\.metrics)
+    return partitionUsage(usagePerRange, timestampedEvents: [], ranges: ranges, formatDay: memoizedDayFormatter()).flatMap(\.metrics)
   }
 
   private func loadUsage(
@@ -521,12 +576,16 @@ public struct SnapshotService: Sendable {
     async let timestampedUsageEventsTask = loadRecentTimestampedEvents(ranges: ranges)
     let usagePerRange = try await usageForRanges(ranges, progress: progress)
     let timestampedEvents = try await timestampedUsageEventsTask
-    let partitions = partitionUsage(usagePerRange, timestampedEvents: timestampedEvents, ranges: ranges)
+    // One formatter and memo shared across the partition and result loops: session/event
+    // rows repeat days heavily, so day-string formatting collapses to O(unique days).
+    let formatDay = memoizedDayFormatter()
+    let partitions = partitionUsage(usagePerRange, timestampedEvents: timestampedEvents, ranges: ranges, formatDay: formatDay)
     return partitions.map { partition in
       usageResult(
         metrics: partition.metrics,
         sessions: partition.sessions,
-        timestampedEvents: partition.events
+        timestampedEvents: partition.events,
+        formatDay: formatDay
       )
     }
   }
@@ -572,7 +631,8 @@ public struct SnapshotService: Sendable {
   private func partitionUsage(
     _ usagePerRange: [CCUsageDetailedUsage],
     timestampedEvents: [TimestampedUsageEvent],
-    ranges: [(since: String, until: String)]
+    ranges: [(since: String, until: String)],
+    formatDay: (Date) -> String
   ) -> [UsagePartition] {
     zip(usagePerRange, ranges).map { usage, range in
       var partition = UsagePartition()
@@ -614,7 +674,8 @@ public struct SnapshotService: Sendable {
   private func usageResult(
     metrics: [CCUsageMetricRecord],
     sessions: [CCUsageSessionMetricRecord],
-    timestampedEvents: [TimestampedUsageEvent]
+    timestampedEvents: [TimestampedUsageEvent],
+    formatDay: (Date) -> String
   ) -> UsageLoadResult {
     let timestampedKeys = Set(timestampedEvents.map {
       AgentModelDay(day: formatDay($0.timestamp), agent: $0.agent, model: $0.model)
@@ -636,8 +697,24 @@ public struct SnapshotService: Sendable {
     )
   }
 
-  private func parseDay(_ text: String) -> Date? { dayFormatter.date(from: text) }
-  private func formatDay(_ date: Date) -> String { dayFormatter.string(from: date) }
+  private func parseDay(_ text: String) -> Date? { makeDayFormatter().date(from: text) }
+  private func formatDay(_ date: Date) -> String { makeDayFormatter().string(from: date) }
+
+  /// Returns a `Date -> day-string` formatter backed by one `DateFormatter` and a per-day
+  /// memo. Session/event rows within the same calendar day format identically, so the memo
+  /// collapses the hot partition/result loops to O(unique days) `DateFormatter` calls.
+  private func memoizedDayFormatter() -> (Date) -> String {
+    let formatter = makeDayFormatter()
+    let calendar = calculator.calendar
+    var memo: [Date: String] = [:]
+    return { date in
+      let key = calendar.startOfDay(for: date)
+      if let cached = memo[key] { return cached }
+      let value = formatter.string(from: date)
+      memo[key] = value
+      return value
+    }
+  }
 
   /// IANA timezone identifier that scoped ccusage calls must group/filter in, so the remote
   /// CLI's `--since/--until`, daily `period` strings, and session date bucketing all align with
@@ -667,7 +744,7 @@ public struct SnapshotService: Sendable {
     return candidate
   }
 
-  private var dayFormatter: DateFormatter {
+  private func makeDayFormatter() -> DateFormatter {
     let formatter = DateFormatter()
     formatter.calendar = calculator.calendar
     formatter.locale = Locale(identifier: "en_US_POSIX")

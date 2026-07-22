@@ -939,3 +939,58 @@ private actor RangeConcurrencyTracker {
     #expect(snapshot.dashboardSessions.first?.costUSD == 99)
   }
 }
+
+@Suite("IncrementalSortedMergeTests") struct IncrementalSortedMergeTests {
+  private func metric(_ date: String, _ agent: String, _ model: String, _ cost: Decimal, machine: String) -> CCUsageMetricRecord {
+    CCUsageMetricRecord(
+      date: date, agent: agent, model: model, costUSD: cost,
+      inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, machine: machine
+    )
+  }
+
+  private func session(_ ts: TimeInterval, _ agent: String, _ model: String, _ cost: Decimal, machine: String) -> CCUsageSessionMetricRecord {
+    CCUsageSessionMetricRecord(timestamp: Date(timeIntervalSince1970: ts), agent: agent, model: model, costUSD: cost, machine: machine)
+  }
+
+  @Test func mergedMetricsMatchStableSortOfConcatenationOnMixedFixtures() {
+    // Cached prefix arrives sorted by (date, agent, model); fresh rows are unordered and share keys
+    // with the cache to exercise tie handling (cache must keep precedence).
+    let cached = [
+      metric("2026-07-10", "codex", "gpt", 1, machine: "local"),
+      metric("2026-07-10", "codex", "gpt", 2, machine: "remote"),
+      metric("2026-07-12", "claude", "sonnet", 3, machine: "local")
+    ]
+    let fresh = [
+      metric("2026-07-11", "codex", "gpt", 9, machine: "local"),
+      metric("2026-07-10", "codex", "gpt", 8, machine: "fresh"),
+      metric("2026-07-13", "aa", "m", 7, machine: "local")
+    ]
+    let sortedFresh = fresh.sorted(by: metricsInIncreasingOrder)
+    let merged = mergeSorted(cached, sortedFresh, by: metricsInIncreasingOrder)
+    let expected = (cached + fresh).sorted { ($0.date, $0.agent, $0.model) < ($1.date, $1.agent, $1.model) }
+    #expect(merged == expected)
+  }
+
+  @Test func mergedSessionsMatchStableTimestampSortOnMixedFixtures() {
+    let cached = [
+      session(100, "codex", "gpt", 1, machine: "local"),
+      session(100, "codex", "gpt", 2, machine: "remote"),
+      session(200, "claude", "sonnet", 3, machine: "local")
+    ]
+    let fresh = [
+      session(150, "codex", "gpt", 9, machine: "local"),
+      session(100, "zz", "gpt", 8, machine: "fresh"),
+      session(250, "aa", "m", 7, machine: "local")
+    ]
+    let sortedFresh = fresh.sorted(by: sessionsInIncreasingOrder)
+    let merged = mergeSorted(cached, sortedFresh, by: sessionsInIncreasingOrder)
+    let expected = (cached + fresh).sorted { $0.timestamp < $1.timestamp }
+    #expect(merged == expected)
+  }
+
+  @Test func mergeSortedHandlesEmptyOperands() {
+    let rows = [metric("2026-07-10", "codex", "gpt", 1, machine: "local")]
+    #expect(mergeSorted(rows, [], by: metricsInIncreasingOrder) == rows)
+    #expect(mergeSorted([], rows, by: metricsInIncreasingOrder) == rows)
+  }
+}

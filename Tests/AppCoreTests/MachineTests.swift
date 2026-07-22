@@ -252,6 +252,182 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
   }
 }
 
+private actor CollectCountingRunner: CCUsageCommandRunner {
+  private(set) var blocksCalls = 0
+
+  func run(arguments: [String], timeoutSeconds: TimeInterval) async throws -> ProcessResult {
+    let payload: String
+    switch arguments.first {
+    case "blocks": blocksCalls += 1; payload = #"{"blocks":[]}"#
+    case "daily": payload = #"{"daily":[]}"#
+    case "session": payload = #"{"session":[]}"#
+    default: throw CCUsageCommandFailure(runnerKind: .local, phase: .commandExited, exitStatus: 2)
+    }
+    return ProcessResult(stdout: Data(payload.utf8), stderr: Data(), exitStatus: 0)
+  }
+
+  func collectCount() -> Int { blocksCalls }
+}
+
+private func aggregateSnapshot(machine: String, generatedAt: Date, cost: Decimal) -> CostSnapshot {
+  CostSnapshot(
+    generatedAt: generatedAt,
+    activeBoundaryAt: Date(timeIntervalSince1970: 0),
+    costSinceResetUSD: cost,
+    budget: BudgetSummary(spentUSD: cost, budgetUSD: 10),
+    resetCycle: .daily,
+    points: [],
+    dashboardMetrics: [CCUsageMetricRecord(
+      date: "1970-01-01", agent: "codex", model: "model", costUSD: cost,
+      inputTokens: 1, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0, machine: machine
+    )]
+  )
+}
+
+@Suite("CoverageAwareExpansionTests") struct CoverageAwareExpansionTests {
+  @Test func skipsCollectionWhenPublishedCoverageAlreadySatisfiesRequest() async throws {
+    let registry = try MachineRegistry(sshMachines: [])
+    let store = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: 20)
+    let runner = CollectCountingRunner()
+    let collector = try MachineCollector(registry: registry, store: store) { descriptor in
+      SnapshotService(
+        stateStore: StateStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+        client: CCUsageClient(commandRunner: runner, machine: descriptor.id),
+        aggregationCache: nil
+      )
+    }
+    defer { Task { await collector.stop() } }
+    let wideCoverage = Date(timeIntervalSince1970: 0)
+    await store.publish(
+      machineID: "local", snapshot: aggregateSnapshot(machine: "local", generatedAt: Date(), cost: 1),
+      coverageStart: wideCoverage, revision: 0, generation: 0, now: Date()
+    )
+    await collector.expand(machine: "all", earliestDate: Date(timeIntervalSince1970: 1_000_000))
+    #expect(await runner.collectCount() == 0)
+  }
+
+  @Test func collectsExactlyOnceWhenWiderCoverageIsNeeded() async throws {
+    let registry = try MachineRegistry(sshMachines: [])
+    let store = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: 20)
+    let runner = CollectCountingRunner()
+    let collector = try MachineCollector(registry: registry, store: store) { descriptor in
+      SnapshotService(
+        stateStore: StateStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+        client: CCUsageClient(commandRunner: runner, machine: descriptor.id),
+        aggregationCache: nil
+      )
+    }
+    defer { Task { await collector.stop() } }
+    let calendar = Calendar.current
+    let narrowCoverage = calendar.startOfDay(for: Date())
+    let earliest = try #require(calendar.date(byAdding: .day, value: -3, to: narrowCoverage))
+    await store.publish(
+      machineID: "local", snapshot: aggregateSnapshot(machine: "local", generatedAt: Date(), cost: 1),
+      coverageStart: narrowCoverage, revision: 0, generation: 0, now: Date()
+    )
+    await collector.expand(machine: "all", earliestDate: earliest)
+    #expect(await runner.collectCount() == 1)
+    let widened = try #require(await store.entry(machineID: "local")?.coverageStart)
+    #expect(widened <= earliest)
+  }
+}
+
+@Suite("MergeMemoizationTests") struct MergeMemoizationTests {
+  private func seededStore() async throws -> MachineSnapshotStore {
+    let remote = MachineDescriptor(
+      id: "remote", displayName: "Remote", kind: .ssh, enabled: true,
+      ssh: SSHConnection(host: "localhost", port: 22, user: "user")
+    )
+    let registry = try MachineRegistry(sshMachines: [remote])
+    let store = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: 20)
+    await store.publish(
+      machineID: "local", snapshot: aggregateSnapshot(machine: "local", generatedAt: Date(timeIntervalSince1970: 100), cost: 1),
+      coverageStart: Date(timeIntervalSince1970: 0), revision: 0, generation: 0, now: Date(timeIntervalSince1970: 100)
+    )
+    await store.publish(
+      machineID: "remote", snapshot: aggregateSnapshot(machine: "remote", generatedAt: Date(timeIntervalSince1970: 90), cost: 2),
+      coverageStart: Date(timeIntervalSince1970: 0), revision: 0, generation: 0, now: Date(timeIntervalSince1970: 90)
+    )
+    return store
+  }
+
+  @Test func consecutiveSelectionsReuseTheMergedArrays() async throws {
+    let store = try await seededStore()
+    let first = try await store.selection(machine: "all", now: Date(timeIntervalSince1970: 200))
+    let second = try await store.selection(machine: "all", now: Date(timeIntervalSince1970: 300))
+    #expect(await store.mergeComputations == 1)
+    // Interval-dependent scalars are recomputed while the cached arrays are reused unchanged.
+    #expect(first.snapshot?.dashboardMetrics == second.snapshot?.dashboardMetrics)
+  }
+
+  @Test func publishClearAndReplaceRegistryInvalidateTheMemo() async throws {
+    let store = try await seededStore()
+    _ = try await store.selection(machine: "all", now: Date(timeIntervalSince1970: 200))
+    #expect(await store.mergeComputations == 1)
+    await store.publish(
+      machineID: "remote", snapshot: aggregateSnapshot(machine: "remote", generatedAt: Date(timeIntervalSince1970: 400), cost: 5),
+      coverageStart: Date(timeIntervalSince1970: 0), revision: 0, generation: 0, now: Date(timeIntervalSince1970: 400)
+    )
+    _ = try await store.selection(machine: "all", now: Date(timeIntervalSince1970: 500))
+    #expect(await store.mergeComputations == 2)
+    await store.clear(machineID: "remote")
+    _ = try await store.selection(machine: "all", now: Date(timeIntervalSince1970: 600))
+    #expect(await store.mergeComputations == 3)
+    let registry = try MachineRegistry(sshMachines: [])
+    await store.replaceRegistry(registry, generations: [:])
+    _ = try await store.selection(machine: "all", now: Date(timeIntervalSince1970: 700))
+    #expect(await store.mergeComputations == 4)
+  }
+}
+
+@Suite("RouterScopeEncodingTests") struct RouterScopeEncodingTests {
+  private func iso8601Decoder() -> JSONDecoder {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return decoder
+  }
+
+  @Test func scopedEndpointsEmitScopeSiblingInSinglePass() async throws {
+    let runtime = try await routerRuntime()
+    defer { Task { await runtime.collector.stop() } }
+    await runtime.collector.store.publish(
+      machineID: "local",
+      snapshot: aggregateSnapshot(machine: "local", generatedAt: Date(), cost: 3),
+      coverageStart: .distantPast,
+      revision: 0,
+      generation: 0,
+      now: Date()
+    )
+    let targets = [
+      "/api/recent?machine=all",
+      "/api/day?date=1970-01-01&machine=all",
+      "/api/period?range=today&machine=all",
+      "/api/metrics?range=today&machine=all",
+      "/api/cost-series?range=today&granularity=hourly&machine=all",
+      "/api/budget?machine=all"
+    ]
+    for target in targets {
+      let response = await runtime.router.route(
+        target: target, method: "GET", headers: [:], body: Data(), listenerPort: 18_081
+      )
+      #expect(response.status == 200)
+      let object = try JSONSerialization.jsonObject(with: response.body) as? [String: Any]
+      let scope = try #require(object?["scope"] as? [String: Any])
+      #expect(scope["requested"] as? String == "all")
+      #expect(scope["includedMachineIds"] as? [String] == ["local"])
+      #expect(scope["staleMachineIds"] as? [String] == [])
+      #expect(scope["unavailableMachineIds"] as? [String] == [])
+    }
+    let budget = await runtime.router.route(
+      target: "/api/budget?machine=all", method: "GET", headers: [:], body: Data(), listenerPort: 18_081
+    )
+    let decoded = try iso8601Decoder().decode(ScopedResponse<BudgetResponse>.self, from: budget.body)
+    #expect(decoded.scope.requested == "all")
+    #expect(decoded.scope.includedMachineIds == ["local"])
+    #expect(decoded.body.budgetUSD == 10)
+  }
+}
+
 @Suite("MutationPolicyTests") struct MutationPolicyTests {
   @Test func machineDashboardRouterPersistsStateUsingItsApplicationPaths() async throws {
     let runtime = try await routerRuntime()

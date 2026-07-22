@@ -7,10 +7,48 @@ public struct RecentPoint: Codable, Equatable, Sendable {
   public let machine: String
 }
 
-public struct RecentResponse: Codable, Equatable, Sendable { public let series: [RecentPoint]; public let totalUSD: Decimal }
-public struct DayResponse: Codable, Equatable, Sendable { public let date: String; public let series: [RecentPoint]; public let totalUSD: Decimal }
-public struct PeriodResponse: Codable, Equatable, Sendable { public let range: String; public let series: [RecentPoint]; public let totalUSD: Decimal }
-public struct BudgetResponse: Codable, Equatable, Sendable {
+/// Dashboard read responses that can carry a router-injected machine `scope` sibling. The field is
+/// encoded only when set (synthesized `encodeIfPresent`), so the non-scoped `DashboardRouter` path
+/// stays byte-identical while `MachineDashboardRouter` attaches `scope` in a single encoding pass.
+public protocol ScopedDashboardResponse {
+  var scope: DashboardScope? { get set }
+}
+
+public struct RecentResponse: Codable, Equatable, Sendable, ScopedDashboardResponse {
+  public let series: [RecentPoint]
+  public let totalUSD: Decimal
+  public var scope: DashboardScope?
+  public init(series: [RecentPoint], totalUSD: Decimal, scope: DashboardScope? = nil) {
+    self.series = series
+    self.totalUSD = totalUSD
+    self.scope = scope
+  }
+}
+public struct DayResponse: Codable, Equatable, Sendable, ScopedDashboardResponse {
+  public let date: String
+  public let series: [RecentPoint]
+  public let totalUSD: Decimal
+  public var scope: DashboardScope?
+  public init(date: String, series: [RecentPoint], totalUSD: Decimal, scope: DashboardScope? = nil) {
+    self.date = date
+    self.series = series
+    self.totalUSD = totalUSD
+    self.scope = scope
+  }
+}
+public struct PeriodResponse: Codable, Equatable, Sendable, ScopedDashboardResponse {
+  public let range: String
+  public let series: [RecentPoint]
+  public let totalUSD: Decimal
+  public var scope: DashboardScope?
+  public init(range: String, series: [RecentPoint], totalUSD: Decimal, scope: DashboardScope? = nil) {
+    self.range = range
+    self.series = series
+    self.totalUSD = totalUSD
+    self.scope = scope
+  }
+}
+public struct BudgetResponse: Codable, Equatable, Sendable, ScopedDashboardResponse {
   public let budgetUSD: Decimal?
   public let spentUSD: Decimal
   public let remainingUSD: Decimal?
@@ -20,6 +58,30 @@ public struct BudgetResponse: Codable, Equatable, Sendable {
   public let resetCycle: String
   public let activeBoundaryAt: Date
   public let refreshIntervalSeconds: Int
+  public var scope: DashboardScope?
+  public init(
+    budgetUSD: Decimal?,
+    spentUSD: Decimal,
+    remainingUSD: Decimal?,
+    overageUSD: Decimal,
+    usagePercentage: Decimal?,
+    visualFraction: Decimal?,
+    resetCycle: String,
+    activeBoundaryAt: Date,
+    refreshIntervalSeconds: Int,
+    scope: DashboardScope? = nil
+  ) {
+    self.budgetUSD = budgetUSD
+    self.spentUSD = spentUSD
+    self.remainingUSD = remainingUSD
+    self.overageUSD = overageUSD
+    self.usagePercentage = usagePercentage
+    self.visualFraction = visualFraction
+    self.resetCycle = resetCycle
+    self.activeBoundaryAt = activeBoundaryAt
+    self.refreshIntervalSeconds = refreshIntervalSeconds
+    self.scope = scope
+  }
 }
 
 public struct DashboardMetricTotals: Codable, Equatable, Sendable {
@@ -31,10 +93,17 @@ public struct DashboardMetricTotals: Codable, Equatable, Sendable {
   public let totalTokens: Int
 }
 
-public struct DashboardMetricsResponse: Codable, Equatable, Sendable {
+public struct DashboardMetricsResponse: Codable, Equatable, Sendable, ScopedDashboardResponse {
   public let range: String
   public let rows: [CCUsageMetricRecord]
   public let totals: DashboardMetricTotals
+  public var scope: DashboardScope?
+  public init(range: String, rows: [CCUsageMetricRecord], totals: DashboardMetricTotals, scope: DashboardScope? = nil) {
+    self.range = range
+    self.rows = rows
+    self.totals = totals
+    self.scope = scope
+  }
 }
 
 public struct DashboardCostRow: Codable, Equatable, Sendable {
@@ -51,13 +120,31 @@ public struct DashboardCostRow: Codable, Equatable, Sendable {
   public let machine: String
 }
 
-public struct DashboardCostResponse: Codable, Equatable, Sendable {
+public struct DashboardCostResponse: Codable, Equatable, Sendable, ScopedDashboardResponse {
   public let range: String
   public let granularity: String
   public let timelineStart: Date?
   public let timelineEndExclusive: Date?
   public let rows: [DashboardCostRow]
   public let totalUSD: Decimal
+  public var scope: DashboardScope?
+  public init(
+    range: String,
+    granularity: String,
+    timelineStart: Date?,
+    timelineEndExclusive: Date?,
+    rows: [DashboardCostRow],
+    totalUSD: Decimal,
+    scope: DashboardScope? = nil
+  ) {
+    self.range = range
+    self.granularity = granularity
+    self.timelineStart = timelineStart
+    self.timelineEndExclusive = timelineEndExclusive
+    self.rows = rows
+    self.totalUSD = totalUSD
+    self.scope = scope
+  }
 }
 
 public struct DashboardQueryService: Sendable {
@@ -136,8 +223,11 @@ public struct DashboardQueryService: Sendable {
       let rows = aggregateSessions(snapshot.dashboardSessions, interval: interval)
       return DashboardMetricsResponse(range: range, rows: rows, totals: metricTotals(rows))
     }
+    // One formatter and one memo per call: row dates repeat heavily (~30-90 unique days),
+    // so parsing collapses to O(unique days) instead of O(rows) DateFormatter builds.
+    let parse = memoizedDayParser()
     let rows = snapshot.dashboardMetrics.filter { row in
-      guard let interval, let date = parseDay(row.date) else { return interval == nil }
+      guard let interval, let date = parse(row.date) else { return interval == nil }
       return isWithin(date, interval: interval)
     }
     return DashboardMetricsResponse(range: range, rows: rows, totals: metricTotals(rows))
@@ -172,8 +262,9 @@ public struct DashboardQueryService: Sendable {
         )
       }
     case "daily":
+      let parse = memoizedDayParser()
       rows = snapshot.dashboardMetrics.compactMap { record in
-        guard let timestamp = parseDay(record.date), isWithin(timestamp, interval: interval) else { return nil }
+        guard let timestamp = parse(record.date), isWithin(timestamp, interval: interval) else { return nil }
         return DashboardCostRow(
           timestamp: timestamp,
           agent: record.agent,
@@ -200,14 +291,44 @@ public struct DashboardQueryService: Sendable {
     )
   }
 
-  public func parseDay(_ text: String) -> Date? { dayFormatter.date(from: text) }
+  public func parseDay(_ text: String) -> Date? { makeDayFormatter().date(from: text) }
 
   private func isWithin(_ date: Date, interval: DateInterval?) -> Bool {
     guard let interval else { return true }
     return date >= interval.start && date < interval.end
   }
 
-  private func formatDay(_ date: Date) -> String { dayFormatter.string(from: date) }
+  private func formatDay(_ date: Date) -> String { makeDayFormatter().string(from: date) }
+
+  /// Returns a `String -> Date?` parser backed by one formatter and one memo, so a hot
+  /// loop over metric rows builds at most one `DateFormatter` and parses each distinct
+  /// day string once.
+  private func memoizedDayParser() -> (String) -> Date? {
+    let formatter = makeDayFormatter()
+    var memo: [String: Date?] = [:]
+    return { text in
+      if let index = memo.index(forKey: text) { return memo[index].value }
+      let value = formatter.date(from: text)
+      memo[text] = value
+      return value
+    }
+  }
+
+  /// Returns a `Date -> day-string` formatter backed by one formatter and a per-day memo.
+  /// Timestamps within the same calendar day format identically, so the memo collapses a
+  /// per-row session loop to O(unique days) `DateFormatter` calls.
+  private func memoizedDayFormatter() -> (Date) -> String {
+    let formatter = makeDayFormatter()
+    let calendar = self.calendar
+    var memo: [Date: String] = [:]
+    return { date in
+      let key = calendar.startOfDay(for: date)
+      if let cached = memo[key] { return cached }
+      let value = formatter.string(from: date)
+      memo[key] = value
+      return value
+    }
+  }
 
   private func metricTotals(_ rows: [CCUsageMetricRecord]) -> DashboardMetricTotals {
     DashboardMetricTotals(
@@ -233,8 +354,9 @@ public struct DashboardQueryService: Sendable {
       var cacheReadTokens = 0
     }
     var groups: [Key: Values] = [:]
+    let day = memoizedDayFormatter()
     for session in sessions where isWithin(session.timestamp, interval: interval) {
-      let key = Key(date: formatDay(session.timestamp), agent: session.agent, model: session.model, machine: session.machine)
+      let key = Key(date: day(session.timestamp), agent: session.agent, model: session.model, machine: session.machine)
       var values = groups[key, default: Values()]
       values.costUSD += session.costUSD
       values.inputTokens += session.inputTokens
@@ -291,7 +413,7 @@ public struct DashboardQueryService: Sendable {
     }
   }
 
-  private var dayFormatter: DateFormatter {
+  private func makeDayFormatter() -> DateFormatter {
     let formatter = DateFormatter()
     formatter.calendar = calendar
     formatter.locale = Locale(identifier: "en_US_POSIX")
