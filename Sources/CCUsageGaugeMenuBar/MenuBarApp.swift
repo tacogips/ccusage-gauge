@@ -186,7 +186,9 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       errorMessage = nil
       isUsageUnavailable = false
       if loaded.dashboardAutostart { startDashboard() }
-      await loadInitialMenuBarSnapshot(using: service)
+      if effectiveBudgetMachineIDs(state: currentState, descriptors: registry.machines) == ["local"] {
+        await loadInitialMenuBarSnapshot(using: service)
+      }
       await collector.start()
       let initialCollection = Task { await collector.refresh(machine: "local") }
       _ = await initialCollection.value
@@ -247,8 +249,10 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       return
     }
     do {
-      guard let snapshot = try await machineSnapshotStore.selection(machine: "local").snapshot else { return }
       let state = try await stateStore?.load(defaultCycle: defaultResetCycle)
+      let descriptors = await machineSnapshotStore.descriptors()
+      let machineIDs = effectiveBudgetMachineIDs(state: state, descriptors: descriptors)
+      guard let snapshot = try await machineSnapshotStore.selection(machineIDs: machineIDs).snapshot else { return }
       guard refreshGeneration == stateMutationGeneration else { return }
       latestSnapshot = snapshot
       currentState = state
@@ -378,9 +382,40 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   }
 
   @objc private func setBudget() {
-    guard let text = prompt(title: "Set budget", message: "Monthly budget in USD", defaultValue: latestSnapshot?.budget.budgetUSD.map(String.init(describing:)) ?? "") else { return }
-    guard let value = Decimal(string: text), value >= 0 else { showError("Budget must be a nonnegative number."); return }
-    Task { await mutateState { $0.budgetUSD = value } }
+    Task { await presentBudgetEditor() }
+  }
+
+  private func presentBudgetEditor() async {
+    guard let machineSnapshotStore else { return }
+    let machines = await machineSnapshotStore.descriptors().filter(\.enabled)
+    let selected = Set(effectiveBudgetMachineIDs(state: currentState, descriptors: machines))
+    let editor = BudgetEditorView(
+      budget: currentState?.budgetUSD.map(String.init(describing:)) ?? "",
+      machines: machines,
+      selectedMachineIDs: selected
+    )
+    NSApplication.shared.activate(ignoringOtherApps: true)
+    let alert = NSAlert()
+    alert.messageText = "Set budget"
+    alert.informativeText = "Set the budget in USD and choose which machines contribute to it."
+    alert.addButton(withTitle: "Save")
+    alert.addButton(withTitle: "Cancel")
+    alert.accessoryView = editor
+    alert.window.initialFirstResponder = editor.budgetField
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+    guard let value = Decimal(string: editor.budgetField.stringValue), value >= 0 else {
+      showError("Budget must be a nonnegative number.")
+      return
+    }
+    let machineIDs = editor.selectedMachineIDs
+    guard !machineIDs.isEmpty else {
+      showError("Select at least one machine to include in the budget.")
+      return
+    }
+    await mutateState {
+      $0.budgetUSD = value
+      $0.budgetMachineIDs = machineIDs
+    }
   }
 
   @objc private func setRefreshInterval() {
@@ -431,12 +466,16 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       return false
     }
     do {
-      var state = try await stateStore.load(defaultCycle: defaultResetCycle)
+      let previousState = try await stateStore.load(defaultCycle: defaultResetCycle)
+      var state = previousState
       try mutation(&state)
       try await stateStore.save(state)
       stateMutationGeneration += 1
       currentState = state
-      if let projectedSnapshot = latestSnapshot?.applying(state: state) {
+      if state.budgetMachineIDs != previousState.budgetMachineIDs {
+        latestSnapshot = nil
+        updateStatusTitle("$—")
+      } else if let projectedSnapshot = latestSnapshot?.applying(state: state) {
         latestSnapshot = projectedSnapshot
         updateStatusTitle(Self.statusTitle(projectedSnapshot))
       }
@@ -506,6 +545,21 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     alert.messageText = "ccusage-gauge"
     alert.informativeText = message
     alert.runModal()
+  }
+
+  private func effectiveBudgetMachineIDs(
+    state: AppState?,
+    descriptors: [MachineDescriptor]
+  ) -> [String] {
+    let enabled = descriptors.filter(\.enabled)
+    let enabledIDs = Set(enabled.map(\.id))
+    let configuredIDs = state?.budgetMachineIDs ?? []
+    if configuredIDs.isEmpty { return enabled.map(\.id) }
+    let selected = configuredIDs.filter(enabledIDs.contains)
+    if !selected.isEmpty { return selected }
+    if enabledIDs.contains("local") { return ["local"] }
+    if let fallback = descriptors.first(where: \.enabled)?.id { return [fallback] }
+    return []
   }
 
   private static func statusTitle(_ snapshot: CostSnapshot) -> String {

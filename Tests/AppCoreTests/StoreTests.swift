@@ -137,6 +137,7 @@ import Testing
     let now = Date(timeIntervalSince1970: 1_700_000_000)
     let state = AppState(
       budgetUSD: Decimal(string: "42.50"),
+      budgetMachineIDs: ["local", "build-host"],
       resetCycle: .customHours(12),
       baseline: ResetBaseline(
         scheduledBoundaryAt: now.addingTimeInterval(-3600),
@@ -169,6 +170,20 @@ import Testing
     try Data(#"{"resetCycle":{"type":"daily"}}"#.utf8).write(to: file)
     let state = try await StateStore(fileURL: file).load()
     #expect(state.refreshIntervalSeconds == nil)
+    #expect(state.budgetMachineIDs.isEmpty)
+  }
+
+  @Test func emptyBudgetMachineSelectionRepresentsAllEnabledMachines() async throws {
+    let store = StateStore(fileURL: try temporaryDirectory().appendingPathComponent("state.json"))
+    try await store.save(AppState(budgetMachineIDs: []))
+    #expect(try await store.load().budgetMachineIDs.isEmpty)
+  }
+
+  @Test func rejectsDuplicateBudgetMachineSelection() async throws {
+    let store = StateStore(fileURL: try temporaryDirectory().appendingPathComponent("state.json"))
+    await #expect(throws: StateError.invalidBudgetMachines) {
+      try await store.save(AppState(budgetMachineIDs: ["local", "local"]))
+    }
   }
 
   @Test func ignoresRemovedManualResetFields() async throws {

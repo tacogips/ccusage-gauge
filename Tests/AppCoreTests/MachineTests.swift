@@ -234,6 +234,35 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
     #expect(Set(selection.snapshot!.dashboardMetrics.map(\.machine)) == ["local", "remote"])
   }
 
+  @Test func selectedMachineSubsetOnlyMergesRequestedSnapshots() async throws {
+    let remote = MachineDescriptor(
+      id: "remote", displayName: "Remote", kind: .ssh, enabled: true,
+      ssh: SSHConnection(host: "localhost", port: 22, user: "user")
+    )
+    let store = MachineSnapshotStore(
+      registry: try MachineRegistry(sshMachines: [remote]),
+      refreshIntervalSeconds: 20
+    )
+    let local = snapshot(machine: "local", generatedAt: Date(timeIntervalSince1970: 100), cost: 1)
+    let other = snapshot(machine: "remote", generatedAt: Date(timeIntervalSince1970: 100), cost: 2)
+    await store.publish(
+      machineID: "local", snapshot: local, coverageStart: local.activeBoundaryAt,
+      revision: 0, generation: 0, now: local.generatedAt
+    )
+    await store.publish(
+      machineID: "remote", snapshot: other, coverageStart: other.activeBoundaryAt,
+      revision: 0, generation: 0, now: other.generatedAt
+    )
+
+    let selection = try await store.selection(
+      machineIDs: ["remote"],
+      now: Date(timeIntervalSince1970: 105)
+    )
+
+    #expect(selection.scope.includedMachineIds == ["remote"])
+    #expect(Set(selection.snapshot!.dashboardMetrics.map(\.machine)) == ["remote"])
+  }
+
   @Test func currentSelectionExcludesStaleHistoryButHistoricalSelectionRetainsIt() async throws {
     let remote = MachineDescriptor(
       id: "remote", displayName: "Remote", kind: .ssh, enabled: true,

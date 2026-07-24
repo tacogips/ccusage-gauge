@@ -27,20 +27,36 @@ public struct ResetBaseline: Codable, Equatable, Sendable {
 
 public struct AppState: Codable, Equatable, Sendable {
   public var budgetUSD: Decimal?
+  public var budgetMachineIDs: [String]
   public var resetCycle: ResetCycle
   public var baseline: ResetBaseline?
   public var refreshIntervalSeconds: Int?
 
   public init(
     budgetUSD: Decimal? = nil,
+    budgetMachineIDs: [String] = [],
     resetCycle: ResetCycle = .daily,
     baseline: ResetBaseline? = nil,
     refreshIntervalSeconds: Int? = nil
   ) {
     self.budgetUSD = budgetUSD
+    self.budgetMachineIDs = budgetMachineIDs
     self.resetCycle = resetCycle
     self.baseline = baseline
     self.refreshIntervalSeconds = refreshIntervalSeconds
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case budgetUSD, budgetMachineIDs, resetCycle, baseline, refreshIntervalSeconds
+  }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    budgetUSD = try values.decodeIfPresent(Decimal.self, forKey: .budgetUSD)
+    budgetMachineIDs = try values.decodeIfPresent([String].self, forKey: .budgetMachineIDs) ?? []
+    resetCycle = try values.decode(ResetCycle.self, forKey: .resetCycle)
+    baseline = try values.decodeIfPresent(ResetBaseline.self, forKey: .baseline)
+    refreshIntervalSeconds = try values.decodeIfPresent(Int.self, forKey: .refreshIntervalSeconds)
   }
 }
 
@@ -60,6 +76,10 @@ public actor StateStore {
 
   public func save(_ state: AppState) throws {
     if let budget = state.budgetUSD, budget < 0 { throw StateError.negativeBudget }
+    if Set(state.budgetMachineIDs).count != state.budgetMachineIDs.count ||
+       !state.budgetMachineIDs.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 100 }) {
+      throw StateError.invalidBudgetMachines
+    }
     if let interval = state.refreshIntervalSeconds, interval <= 0 { throw StateError.invalidRefreshInterval(interval) }
     try fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
     var data = try Self.encoder.encode(state)
@@ -84,5 +104,6 @@ public actor StateStore {
 
 public enum StateError: Error, Equatable, Sendable {
   case negativeBudget
+  case invalidBudgetMachines
   case invalidRefreshInterval(Int)
 }
