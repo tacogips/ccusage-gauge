@@ -446,8 +446,16 @@ private func aggregateSnapshot(machine: String, generatedAt: Date, cost: Decimal
       coverageStart: narrowCoverage, revision: 0, generation: 0, now: Date()
     )
     await collector.expand(machine: "all", earliestDate: earliest)
+    for _ in 0..<1_000 {
+      if await runner.collectCount() == 1 { break }
+      try await Task.sleep(for: .milliseconds(1))
+    }
     #expect(await runner.collectCount() == 1)
-    let widened = try #require(await store.entry(machineID: "local")?.coverageStart)
+    var widened = try #require(await store.entry(machineID: "local")?.coverageStart)
+    for _ in 0..<1_000 where widened > earliest {
+      try await Task.sleep(for: .milliseconds(1))
+      widened = try #require(await store.entry(machineID: "local")?.coverageStart)
+    }
     #expect(widened <= earliest)
   }
 }

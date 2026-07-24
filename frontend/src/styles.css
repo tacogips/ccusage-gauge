@@ -188,6 +188,8 @@ input[type="date"] { border: 1px solid #bfd0c4; background: white; color: #17312
 .loading-state { min-height: 280px; margin-top: 28px; padding: 32px; border: 1px solid rgba(40,90,62,.12); border-radius: 22px; background: rgba(255,255,255,.76); box-shadow: 0 16px 42px rgba(29,64,44,.08); display: flex; align-items: center; justify-content: center; gap: 18px; color: #315f49; }
 .loading-state strong { display: block; margin-bottom: 5px; font-size: 1.05rem; }
 .loading-state p { color: #71887e; font-size: .8rem; }
+.partial-range-status { margin-top: 18px; padding: 12px 16px; border: 1px solid rgba(194,132,26,.28); border-radius: 14px; background: rgba(255,244,214,.72); color: #715313; display: grid; grid-template-columns: auto 1fr minmax(120px,220px); align-items: center; gap: 12px; font-size: .78rem; }
+.partial-range-status progress { width: 100%; accent-color: #b98520; }
 .load-progress { width: min(320px, 62vw); height: 7px; margin-top: 11px; border: 0; border-radius: 999px; overflow: hidden; background: #d8e7dc; color: #238855; }
 .load-progress::-webkit-progress-bar { background: #d8e7dc; }
 .load-progress::-webkit-progress-value { background: #238855; transition: width .2s ease; }
@@ -206,6 +208,7 @@ input[type="date"] { border: 1px solid #bfd0c4; background: white; color: #17312
 :root[data-color-scheme="dark"] { color-scheme: dark; color: #e3eee7; background: #102019; }
 :root[data-color-scheme="dark"] body { background: radial-gradient(circle at top left, #203a2d, #0f1c16 60%); }
 :root[data-color-scheme="dark"] .model-sidebar, :root[data-color-scheme="dark"] .stats article, :root[data-color-scheme="dark"] .panel, :root[data-color-scheme="dark"] .custom-calendar, :root[data-color-scheme="dark"] .loading-state { background: rgba(25,44,35,.9); border-color: #355644; }
+:root[data-color-scheme="dark"] .partial-range-status { background: rgba(91,65,17,.42); border-color: #826625; color: #efd58b; }
 :root[data-color-scheme="dark"] .model-choice:hover { background: #294638; }
 :root[data-color-scheme="dark"] .model-choice.active, :root[data-color-scheme="dark"] .model-tags span, :root[data-color-scheme="dark"] .agent-tag { background: #294f3b; color: #c9efd6; }
 :root[data-color-scheme="dark"] .range-buttons button, :root[data-color-scheme="dark"] .agent-buttons button { background: #294a39; color: #c5e7d2; }

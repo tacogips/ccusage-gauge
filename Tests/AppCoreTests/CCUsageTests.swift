@@ -430,7 +430,7 @@ private actor RangeConcurrencyTracker {
     // before the current week (3rd snapshot's "today" range is coalesced with the 2nd snapshot's
     // identical --since/--until via the loader's short-lived cache, so it does not add an entry).
     #expect(arguments.components(separatedBy: "daily --json --sections daily,session --since").count - 1 == 11)
-    #expect(arguments.contains("daily --json --sections daily,session --since \(weekStartText) --until 2026-07-16 --timezone GMT"))
+    #expect(arguments.contains("daily --json --sections daily,session --since \(weekStartText) --until 2026-07-15 --timezone GMT"))
     #expect(arguments.contains("daily --json --sections daily,session --since 2026-07-16 --until 2026-07-16 --timezone GMT"))
     #expect(arguments.contains("daily --json --sections daily,session --since 2026-05-10 --until 2026-05-16 --timezone GMT"))
     #expect(arguments.contains("daily --json --sections daily,session --since 2026-07-05 --until \(dayBeforeWeekStartText) --timezone GMT"))
@@ -724,7 +724,8 @@ private actor RangeConcurrencyTracker {
 
     // Confirm the ranges were fetched with distinct scoped calls (setup precondition).
     #expect(arguments.contains("daily --json --sections daily,session --since 2026-07-05 --until 2026-07-11 --timezone GMT"))
-    #expect(arguments.contains("daily --json --sections daily,session --since 2026-07-12 --until 2026-07-16 --timezone GMT"))
+    #expect(arguments.contains("daily --json --sections daily,session --since 2026-07-12 --until 2026-07-15 --timezone GMT"))
+    #expect(arguments.contains("daily --json --sections daily,session --since 2026-07-16 --until 2026-07-16 --timezone GMT"))
     // Each range's data must land under its own dates regardless of completion order.
     let olderRow = snapshot.dashboardMetrics.first { $0.date == "2026-07-08" }
     let currentRow = snapshot.dashboardMetrics.first { $0.date == "2026-07-14" }

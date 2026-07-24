@@ -378,7 +378,12 @@ export default function App() {
   const [costSeries, { refetch: refreshCostSeries }] = createResource(costPath, getCostSeriesState);
   const budgetPath = createMemo(() => machineSuffix() == null ? undefined : withMachine("/api/budget"));
   const [budget, { refetch: refreshBudget }] = createResource(budgetPath, (path) => getJSON<BudgetResponse>(path));
-  const loadStatusPath = createMemo(() => machineSuffix() == null ? undefined : withMachine("/api/load-status"));
+  const loadStatusPath = createMemo(() => {
+    if (machineSuffix() == null) return undefined;
+    return range() === "custom"
+      ? withMachine(`/api/load-status?range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`)
+      : withMachine(`/api/load-status?range=${range()}`);
+  });
   const [loadStatus, { refetch: refreshLoadStatus }] = createResource(
     loadStatusPath,
     (path) => getJSON<LoadStatusResponse>(path)
@@ -496,6 +501,7 @@ export default function App() {
   const isBlockingLoading = createMemo(() => isInitialLoading() || isRangeLoading());
   const isBackgroundLoading = createMemo(() => !isBlockingLoading() &&
     (loadStatus()?.isLoading || isRefreshing() || period.loading || costSeries.loading || budget.loading));
+  const visibleRangeLoad = createMemo(() => period()?.rangeLoad ?? costSeries()?.rangeLoad);
   const toggleModel = (model: string) => setSelectedModels((current) => current.includes(model)
     ? current.filter((item) => item !== model)
     : [...current, model]);
@@ -720,6 +726,15 @@ export default function App() {
       setRangeLoadStarted(false);
     }
   });
+  let lastVisibleRangeProgress = "";
+  createEffect(() => {
+    const status = loadStatus();
+    if (!status || !status.machines.some((machine) => machine.requestedCoverageStart != null)) return;
+    const key = `${loadStatusPath()}:${status.completed}/${status.total}:${status.isLoading}`;
+    if (key === lastVisibleRangeProgress) return;
+    lastVisibleRangeProgress = key;
+    void Promise.all([refreshPeriod(), refreshCostSeries()]);
+  });
   onMount(() => {
     void getJSON<DashboardUIStateResponse>("/api/dashboard-state")
       .then(({ state }) => {
@@ -899,6 +914,20 @@ export default function App() {
 
         <Show when={!errorMessage()} fallback={<section class="error"><span>{errorMessage()}</span><button onClick={refresh}>Retry</button></section>}>
           <Show when={!isBlockingLoading()} fallback={<LoadingState status={loadStatus()} />}>
+            <Show when={visibleRangeLoad()?.isPartial}>
+              <section class="partial-range-status" role="status" aria-live="polite">
+                <strong>Partial usage data</strong>
+                <span>
+                  Loaded {visibleRangeLoad()?.completed ?? 0}/{Math.max(visibleRangeLoad()?.total ?? 1, 1)}
+                  {" "}range chunks. Charts and totals update as background loading completes.
+                </span>
+                <progress
+                  value={visibleRangeLoad()?.completed ?? 0}
+                  max={Math.max(visibleRangeLoad()?.total ?? 1, 1)}
+                  aria-label="Selected range loading progress"
+                />
+              </section>
+            </Show>
             <Show when={visibleStatuses().length > 0 || visibleExcludedMachineIDs().length > 0}>
               <MachineHealthPanel
                 statuses={visibleStatuses()}

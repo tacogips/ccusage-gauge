@@ -105,6 +105,29 @@ public struct MachineLoadStatusItem: Codable, Sendable {
   public let isLoading: Bool
   public let coverageStart: String?
   public let requestedCoverageStart: String?
+  public let requestedCoverageEnd: String?
+
+  public init(
+    id: String,
+    phase: DashboardLoadPhase,
+    message: String,
+    completed: Int,
+    total: Int,
+    isLoading: Bool,
+    coverageStart: String?,
+    requestedCoverageStart: String?,
+    requestedCoverageEnd: String? = nil
+  ) {
+    self.id = id
+    self.phase = phase
+    self.message = message
+    self.completed = completed
+    self.total = total
+    self.isLoading = isLoading
+    self.coverageStart = coverageStart
+    self.requestedCoverageStart = requestedCoverageStart
+    self.requestedCoverageEnd = requestedCoverageEnd
+  }
 }
 
 public struct MachineLoadStatusResponse: Codable, Sendable {

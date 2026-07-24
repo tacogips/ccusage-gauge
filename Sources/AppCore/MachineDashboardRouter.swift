@@ -101,27 +101,82 @@ public struct MachineDashboardRouter: Sendable {
     let requested: String
     do { requested = try machineSelection(components) }
     catch { return selectionError(error) }
-    let coverage = requestedCoverageStart(path: path, components: components)
-    if let coverage { await collector.expand(machine: requested, earliestDate: coverage) }
+    let coverage = requestedCoverage(path: path, components: components, queryService: queryService)
+    if let coverage {
+      await collector.expand(
+        machine: requested,
+        earliestDate: coverage.start,
+        latestDate: coverage.end
+      )
+    }
+    let rangeLoads = await collector.rangeLoadStates(
+      machine: requested,
+      earliestDate: coverage?.start,
+      latestDate: coverage?.end
+    )
+    let rangeProgress = dashboardRangeProgress(states: rangeLoads, coverage: coverage)
     let evaluatedAt = Date()
-    let disposition = dataDisposition(path: path, components: components, now: evaluatedAt)
+    let disposition = dashboardDataDisposition(
+      path: path,
+      components: components,
+      now: evaluatedAt,
+      queryService: queryService
+    )
     let selection: MachineSnapshotSelection
     do {
       selection = try await store.selection(
         machine: requested,
         now: evaluatedAt,
-        requiredCoverageStart: coverage,
+        requiredCoverageStart: coverage?.start,
         dataDisposition: disposition
       )
     } catch {
-      return await querySelectionError(
-        error,
-        path: path,
-        requested: requested,
-        evaluatedAt: evaluatedAt,
-        requiredCoverageStart: coverage,
-        dataDisposition: disposition
-      )
+      if case MachineSelectionError.rangeUnavailable = error {
+        do {
+          selection = try await store.selection(
+            machine: requested,
+            now: evaluatedAt,
+            requiredCoverageStart: nil,
+            dataDisposition: disposition
+          )
+        } catch {
+          return await querySelectionError(
+            error,
+            path: path,
+            requested: requested,
+            evaluatedAt: evaluatedAt,
+            requiredCoverageStart: coverage?.start,
+            dataDisposition: disposition
+          )
+        }
+      } else if case MachineSelectionError.aggregateRangeUnavailable = error {
+        do {
+          selection = try await store.selection(
+            machine: requested,
+            now: evaluatedAt,
+            requiredCoverageStart: nil,
+            dataDisposition: disposition
+          )
+        } catch {
+          return await querySelectionError(
+            error,
+            path: path,
+            requested: requested,
+            evaluatedAt: evaluatedAt,
+            requiredCoverageStart: coverage?.start,
+            dataDisposition: disposition
+          )
+        }
+      } else {
+        return await querySelectionError(
+          error,
+          path: path,
+          requested: requested,
+          evaluatedAt: evaluatedAt,
+          requiredCoverageStart: coverage?.start,
+          dataDisposition: disposition
+        )
+      }
     }
     guard let snapshot = selection.snapshot else { return error(status: 503, code: "snapshot_unavailable", message: "Usage data is temporarily unavailable") }
     do {
@@ -148,7 +203,13 @@ public struct MachineDashboardRouter: Sendable {
         return jsonWithScope(try queryService.period(snapshot: snapshot, range: range), scope: selection.scope)
       case "/api/metrics":
         let range = queryValue("range", components) ?? "today"
-        return try metricsResponse(snapshot: snapshot, range: range, components: components, scope: selection.scope)
+        return try metricsResponse(
+          snapshot: snapshot,
+          range: range,
+          components: components,
+          scope: selection.scope,
+          rangeProgress: rangeProgress
+        )
       case "/api/cost-series":
         let range = queryValue("range", components) ?? "today"
         let granularity = queryValue("granularity", components) ?? "hourly"
@@ -158,7 +219,8 @@ public struct MachineDashboardRouter: Sendable {
           granularity: granularity,
           components: components,
           scope: selection.scope,
-          machineLatestEvents: selection.machineLatestEvents
+          machineLatestEvents: selection.machineLatestEvents,
+          rangeProgress: rangeProgress
         )
       case "/api/budget":
         return jsonWithScope(queryService.budget(snapshot: snapshot), scope: selection.scope)
@@ -180,16 +242,21 @@ public struct MachineDashboardRouter: Sendable {
     snapshot: CostSnapshot,
     range: String,
     components: URLComponents,
-    scope: DashboardScope
+    scope: DashboardScope,
+    rangeProgress: DashboardRangeLoadProgress?
   ) throws -> HTTPResponse {
     if range == "custom" {
       guard let start = queryValue("start", components).flatMap(queryService.parseDay),
             let end = queryValue("end", components).flatMap(queryService.parseDay) else {
         return error(status: 400, code: "invalid_custom_range", message: "Invalid custom range")
       }
-      return jsonWithScope(try queryService.metrics(snapshot: snapshot, range: range, startDate: start, endDate: end), scope: scope)
+      var response = try queryService.metrics(snapshot: snapshot, range: range, startDate: start, endDate: end)
+      response.rangeLoad = rangeProgress
+      return jsonWithScope(response, scope: scope)
     }
-    return jsonWithScope(try queryService.metrics(snapshot: snapshot, range: range), scope: scope)
+    var response = try queryService.metrics(snapshot: snapshot, range: range)
+    response.rangeLoad = rangeProgress
+    return jsonWithScope(response, scope: scope)
   }
 
   private func costResponse(
@@ -198,7 +265,8 @@ public struct MachineDashboardRouter: Sendable {
     granularity: String,
     components: URLComponents,
     scope: DashboardScope,
-    machineLatestEvents: [MachineLatestEvent]
+    machineLatestEvents: [MachineLatestEvent],
+    rangeProgress: DashboardRangeLoadProgress?
   ) throws -> HTTPResponse {
     var response: DashboardCostResponse
     if range == "custom" {
@@ -218,6 +286,7 @@ public struct MachineDashboardRouter: Sendable {
     }
     response.scope = scope
     response.machineLatestEvents = machineLatestEvents
+    response.rangeLoad = rangeProgress
     return json(response, dateMilliseconds: true)
   }
 
@@ -235,16 +304,29 @@ public struct MachineDashboardRouter: Sendable {
     do {
       let requested = try machineSelection(components)
       let statuses = try await store.loadStatuses(machine: requested)
+      let coverage = requestedCoverage(
+        path: "/api/metrics",
+        components: components,
+        queryService: queryService
+      )
+      let rangeStates = await collector.rangeLoadStates(
+        machine: requested,
+        earliestDate: coverage?.start,
+        latestDate: coverage?.end
+      )
+      let rangeByMachine = Dictionary(uniqueKeysWithValues: rangeStates.map { ($0.machineID, $0) })
       let items = statuses.map { id, status, coverage in
-        MachineLoadStatusItem(
+        let range = rangeByMachine[id]
+        return MachineLoadStatusItem(
           id: id,
-          phase: status.phase,
-          message: status.message,
-          completed: status.completed,
-          total: status.total,
-          isLoading: status.isLoading,
+          phase: range?.phase ?? status.phase,
+          message: range.map(rangeLoadMessage) ?? status.message,
+          completed: range?.progress.completed ?? status.completed,
+          total: range?.progress.total ?? status.total,
+          isLoading: range?.isLoading ?? status.isLoading,
           coverageStart: coverage.map(formatDay),
-          requestedCoverageStart: nil
+          requestedCoverageStart: range?.requestedStart.map(formatDay),
+          requestedCoverageEnd: range?.requestedEnd.map(formatDay)
         )
       }
       let phase = aggregatePhase(items.map(\.phase))
@@ -752,55 +834,7 @@ public struct MachineDashboardRouter: Sendable {
   }
 
   private func mutationAllowed(headers: [String: String], listenerPort: Int) -> Bool {
-    let normalized = Dictionary(uniqueKeysWithValues: headers.map { ($0.key.lowercased(), $0.value) })
-    guard normalized["x-ccusage-gauge-mutation"] == "1" else { return false }
-    let acceptedHosts = ["127.0.0.1:\(listenerPort)", "localhost:\(listenerPort)"]
-    guard let host = normalized["host"], acceptedHosts.contains(host.lowercased()) else { return false }
-    let fetchSite = normalized["sec-fetch-site"]?.lowercased()
-    if fetchSite == "cross-site" || fetchSite == "same-site" || fetchSite == "none" { return false }
-    if let origin = normalized["origin"] {
-      guard origin != "null", acceptedHosts.map({ "http://\($0)" }).contains(origin.lowercased()),
-            fetchSite == nil || fetchSite == "same-origin" else { return false }
-    } else if fetchSite != nil, fetchSite != "same-origin" {
-      return false
-    }
-    return true
-  }
-
-  private func requestedCoverageStart(path: String, components: URLComponents) -> Date? {
-    if path == "/api/day" { return queryValue("date", components).flatMap(queryService.parseDay) }
-    guard ["/api/period", "/api/metrics", "/api/cost-series"].contains(path) else { return nil }
-    let range = queryValue("range", components) ?? "today"
-    if range == "custom" { return queryValue("start", components).flatMap(queryService.parseDay) }
-    let now = Date()
-    switch range {
-    case "recent12h": return now.addingTimeInterval(-43_200)
-    case "today": return queryService.calendar.startOfDay(for: now)
-    case "yesterday": return queryService.calendar.date(byAdding: .day, value: -1, to: queryService.calendar.startOfDay(for: now))
-    case "week": return queryService.calendar.dateInterval(of: .weekOfYear, for: now)?.start
-    case "month": return queryService.calendar.dateInterval(of: .month, for: now)?.start
-    default: return nil
-    }
-  }
-
-  private func dataDisposition(
-    path: String,
-    components: URLComponents,
-    now: Date
-  ) -> DashboardDataDisposition {
-    if path == "/api/recent" || path == "/api/budget" { return .current }
-    let today = queryService.calendar.startOfDay(for: now)
-    if path == "/api/day" {
-      guard let day = queryValue("date", components).flatMap(queryService.parseDay) else { return .current }
-      return day >= today ? .current : .historical
-    }
-    let range = queryValue("range", components) ?? "today"
-    if range == "yesterday" { return .historical }
-    if range == "custom" {
-      guard let end = queryValue("end", components).flatMap(queryService.parseDay) else { return .current }
-      return end >= today ? .current : .historical
-    }
-    return .current
+    dashboardMutationAllowed(headers: headers, listenerPort: listenerPort)
   }
 
   private func queryValue(_ name: String, _ components: URLComponents) -> String? {

@@ -36,7 +36,19 @@ export interface MachineLatestEvent {
   inLastHour: boolean;
   dataQuality?: "timestamped" | "sessionEstimated";
 }
-export interface MetricsResponse { range: string; rows: MetricRow[]; totals: MetricTotals; scope: MachineScope }
+export interface RangeLoadProgress {
+  requestedStart?: string;
+  requestedEnd?: string;
+  completed: number;
+  total: number;
+  isLoading: boolean;
+  isPartial: boolean;
+  failedMachineIds: string[];
+}
+export interface MetricsResponse {
+  range: string; rows: MetricRow[]; totals: MetricTotals; scope: MachineScope;
+  rangeLoad?: RangeLoadProgress;
+}
 export interface CostRow {
   timestamp: string; agent: string; model: string; costUSD: number;
   inputTokens: number; outputTokens: number; cacheCreationTokens: number;
@@ -53,6 +65,7 @@ export interface CostSeriesResponse {
   totalUSD: number;
   scope: MachineScope;
   machineLatestEvents: MachineLatestEvent[];
+  rangeLoad?: RangeLoadProgress;
 }
 export interface BudgetResponse {
   budgetUSD?: number; spentUSD: number; remainingUSD?: number; overageUSD: number;
@@ -61,7 +74,7 @@ export interface BudgetResponse {
   scope: MachineScope;
 }
 export interface LoadStatusResponse {
-  phase: "idle" | "loadingWeek" | "loadingHistory" | "refreshing" | "ready" | "failed";
+  phase: "idle" | "loadingWeek" | "loadingHistory" | "loadingRange" | "refreshing" | "ready" | "failed";
   message: string;
   completed: number;
   total: number;
@@ -70,7 +83,7 @@ export interface LoadStatusResponse {
   machines: Array<{
     id: string; phase: LoadStatusResponse["phase"]; message: string;
     completed: number; total: number; isLoading: boolean;
-    coverageStart?: string; requestedCoverageStart?: string;
+    coverageStart?: string; requestedCoverageStart?: string; requestedCoverageEnd?: string;
   }>;
 }
 export interface DashboardUIState {

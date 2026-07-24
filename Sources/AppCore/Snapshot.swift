@@ -402,6 +402,7 @@ public struct SnapshotService: Sendable {
     now: Date = Date(),
     defaultCycle: ResetCycle = .daily,
     earliestDate: Date? = nil,
+    latestDate: Date? = nil,
     progress: SnapshotLoadProgressHandler? = nil
   ) async throws -> CostSnapshot {
     let loaded = try await stateStore.load(defaultCycle: defaultCycle)
@@ -413,11 +414,25 @@ public struct SnapshotService: Sendable {
     let cached = await validAggregationCache(now: now)
     let initialFrom = initialCoverageStart(for: todayStart)
     let requestedFrom = earliestDate.map { calculator.calendar.startOfDay(for: $0) }
-    let desiredFrom = min(requestedFrom ?? initialFrom, initialFrom)
-    let ranges = missingUsageRanges(desiredFrom: desiredFrom, todayStart: todayStart, cached: cached)
+    let desiredFrom = requestedFrom ?? initialFrom
+    let desiredThrough = min(
+      latestDate.map { calculator.calendar.startOfDay(for: $0) } ?? todayStart,
+      todayStart
+    )
+    let ranges = missingUsageRanges(
+      desiredFrom: desiredFrom,
+      desiredThrough: desiredThrough,
+      todayStart: todayStart,
+      cached: cached
+    )
+    let cacheJob = AggregationCacheJob(
+      since: formatDay(desiredFrom),
+      through: formatDay(desiredThrough)
+    )
+    if !ranges.isEmpty { try? await aggregationCache?.beginJob(cacheJob) }
     let timezone = snapshotTimezoneIdentifier
     async let blockRecords = client.blocks(since: formatDay(initialFrom), until: today, timezone: timezone)
-    async let usageRecords = loadUsage(ranges: ranges, progress: progress)
+    async let usageRecords = loadUsage(ranges: ranges, cacheBefore: today, progress: progress)
     let (points, loadedRanges) = try await (blockRecords, usageRecords)
     let freshMetrics = loadedRanges.flatMap(\.metrics)
     let freshSessions = loadedRanges.flatMap(\.sessions)
@@ -426,16 +441,6 @@ public struct SnapshotService: Sendable {
     // the whole history each cycle. Output is identical to `(cached + fresh).sorted(by:)`.
     let sortedFreshMetrics = freshMetrics.sorted(by: metricsInIncreasingOrder)
     let sortedFreshSessions = freshSessions.sorted(by: sessionsInIncreasingOrder)
-    let historicalMetrics = mergeSorted(
-      cached?.metrics ?? [],
-      freshMetrics.filter { $0.date < today }.sorted(by: metricsInIncreasingOrder),
-      by: metricsInIncreasingOrder
-    )
-    let historicalSessions = mergeSorted(
-      cached?.sessions ?? [],
-      freshSessions.filter { $0.timestamp < todayStart }.sorted(by: sessionsInIncreasingOrder),
-      by: sessionsInIncreasingOrder
-    )
     let dashboardMetrics: [CCUsageMetricRecord]
     let dashboardSessions: [CCUsageSessionMetricRecord]
     if let cached {
@@ -446,22 +451,6 @@ public struct SnapshotService: Sendable {
       dashboardSessions = sortedFreshSessions
     }
     try Task.checkCancellation()
-    if let aggregationCache,
-       let yesterday = calculator.calendar.date(byAdding: .day, value: -1, to: todayStart) {
-      let cachedThrough = formatDay(yesterday)
-      let existingFrom = cached.flatMap { parseDay($0.cachedFrom) } ?? desiredFrom
-      let cachedFrom = formatDay(min(existingFrom, desiredFrom))
-      if cached == nil || cached?.cachedFrom != cachedFrom || cached?.cachedThrough != cachedThrough {
-        try? await aggregationCache.save(
-          metrics: historicalMetrics,
-          sessions: historicalSessions,
-          cachedFrom: cachedFrom,
-          cachedThrough: cachedThrough,
-          createdAt: cached?.createdAt,
-          now: now
-        )
-      }
-    }
     let interval = try calculator.aggregationInterval(for: state.resetCycle, now: now)
     let cost = selectedPeriodCost(
       cycle: state.resetCycle,
@@ -470,6 +459,7 @@ public struct SnapshotService: Sendable {
       sessions: dashboardSessions,
       calendar: calculator.calendar
     )
+    try? await aggregationCache?.finishJob(cacheJob)
     return CostSnapshot(
       generatedAt: now,
       activeBoundaryAt: baseline.activeBoundaryAt,
@@ -492,7 +482,12 @@ public struct SnapshotService: Sendable {
     let todayStart = calculator.calendar.startOfDay(for: now)
     let desiredFrom = calculator.calendar.startOfDay(for: interval.start)
     let cached = await validAggregationCache(now: now)
-    let ranges = missingUsageRanges(desiredFrom: desiredFrom, todayStart: todayStart, cached: cached)
+    let ranges = missingUsageRanges(
+      desiredFrom: desiredFrom,
+      desiredThrough: todayStart,
+      todayStart: todayStart,
+      cached: cached
+    )
     let metrics: [CCUsageMetricRecord]
     let sessions: [CCUsageSessionMetricRecord]
     switch state.resetCycle {
@@ -500,7 +495,7 @@ public struct SnapshotService: Sendable {
       metrics = (cached?.metrics ?? []) + (try await loadMetrics(ranges: ranges))
       sessions = []
     case .hourly, .customHours:
-      let loadedRanges = try await loadUsage(ranges: ranges)
+      let loadedRanges = try await loadUsage(ranges: ranges, cacheBefore: formatDay(todayStart))
       metrics = (cached?.metrics ?? []) + loadedRanges.flatMap(\.metrics)
       sessions = (cached?.sessions ?? []) + loadedRanges.flatMap(\.sessions)
     }
@@ -530,7 +525,20 @@ public struct SnapshotService: Sendable {
 
   public func persistedCoverageStart(now: Date = Date()) async -> Date? {
     guard let cached = await validAggregationCache(now: now) else { return nil }
-    return parseDay(cached.cachedFrom)
+    let today = calculator.calendar.startOfDay(for: now)
+    guard let yesterday = calculator.calendar.date(byAdding: .day, value: -1, to: today) else { return nil }
+    let yesterdayText = formatDay(yesterday)
+    return cached.coveredRanges
+      .first { $0.since <= yesterdayText && yesterdayText <= $0.through }
+      .flatMap { parseDay($0.since) }
+  }
+
+  public func pendingRangeLoads() async -> [(start: Date, end: Date)] {
+    guard let jobs = try? await aggregationCache?.pendingJobs() else { return [] }
+    return jobs.compactMap { job in
+      guard let start = parseDay(job.since), let end = parseDay(job.through) else { return nil }
+      return (start, end)
+    }
   }
 
   private func nextUncachedDay(after text: String, today: Date) -> String? {
@@ -556,22 +564,50 @@ public struct SnapshotService: Sendable {
 
   private func missingUsageRanges(
     desiredFrom: Date,
+    desiredThrough: Date,
     todayStart: Date,
     cached: AggregationCachePayload?
   ) -> [(since: String, until: String)] {
+    guard desiredFrom <= desiredThrough else { return [] }
     let today = formatDay(todayStart)
-    guard let cached, let cachedFrom = parseDay(cached.cachedFrom) else {
-      return weekPartitionedRanges(from: desiredFrom, through: todayStart)
+    let requestedStart = formatDay(desiredFrom)
+    let requestedEnd = formatDay(desiredThrough)
+    let historicalCoverage = cached?.coveredRanges ?? []
+    var missingDays: [Date] = []
+    var cursor = desiredFrom
+    while cursor <= desiredThrough {
+      let day = formatDay(cursor)
+      let isPersisted = day < today && historicalCoverage.contains {
+        $0.since <= day && day <= $0.through
+      }
+      if !isPersisted { missingDays.append(cursor) }
+      guard let next = calculator.calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
+      cursor = next
     }
-    var ranges: [(since: String, until: String)] = []
-    if desiredFrom < cachedFrom,
-       let olderUntil = calculator.calendar.date(byAdding: .day, value: -1, to: cachedFrom) {
-      ranges.append(contentsOf: weekPartitionedRanges(from: desiredFrom, through: olderUntil))
+    guard !missingDays.isEmpty else { return [] }
+    var runs: [(Date, Date)] = []
+    var runStart = missingDays[0]
+    var previous = missingDays[0]
+    for day in missingDays.dropFirst() {
+      let expected = calculator.calendar.date(byAdding: .day, value: 1, to: previous)
+      if expected != day {
+        runs.append((runStart, previous))
+        runStart = day
+      }
+      previous = day
     }
-    if let since = nextUncachedDay(after: cached.cachedThrough, today: todayStart) {
-      ranges.append((since, today))
-    }
-    return ranges
+    runs.append((runStart, previous))
+    let partitioned = runs.flatMap { weekPartitionedRanges(from: $0.0, through: $0.1) }
+    return partitioned.flatMap { range -> [(since: String, until: String)] in
+      guard range.until == today, range.since < today,
+            let yesterday = calculator.calendar.date(byAdding: .day, value: -1, to: todayStart) else {
+        return [range]
+      }
+      return [
+        (range.since, formatDay(yesterday)),
+        (today, today)
+      ]
+    }.filter { $0.since >= requestedStart && $0.until <= requestedEnd }
   }
 
   private func weekPartitionedRanges(from start: Date, through end: Date) -> [(since: String, until: String)] {
@@ -599,26 +635,80 @@ public struct SnapshotService: Sendable {
 
   private func loadUsage(
     ranges: [(since: String, until: String)],
+    cacheBefore: String,
     progress: SnapshotLoadProgressHandler? = nil
   ) async throws -> [UsageLoadResult] {
     guard !ranges.isEmpty else {
       await progress?(SnapshotLoadProgress(completed: 0, total: 0))
       return []
     }
-    async let timestampedUsageEventsTask = loadRecentTimestampedEvents(ranges: ranges)
-    let usagePerRange = try await usageForRanges(ranges, progress: progress)
-    let timestampedEvents = try await timestampedUsageEventsTask
-    // One formatter and memo shared across the partition and result loops: session/event
-    // rows repeat days heavily, so day-string formatting collapses to O(unique days).
-    let formatDay = memoizedDayFormatter()
-    let partitions = partitionUsage(usagePerRange, timestampedEvents: timestampedEvents, ranges: ranges, formatDay: formatDay)
-    return partitions.map { partition in
-      usageResult(
-        metrics: partition.metrics,
-        sessions: partition.sessions,
-        timestampedEvents: partition.events,
-        formatDay: formatDay
-      )
+    let timestampedEvents = try await loadRecentTimestampedEvents(ranges: ranges)
+    return try await usageResultsForRanges(
+      ranges,
+      timestampedEvents: timestampedEvents,
+      cacheBefore: cacheBefore,
+      progress: progress
+    )
+  }
+
+  private func usageResultsForRanges(
+    _ ranges: [(since: String, until: String)],
+    timestampedEvents: [TimestampedUsageEvent],
+    cacheBefore: String,
+    progress: SnapshotLoadProgressHandler?
+  ) async throws -> [UsageLoadResult] {
+    let client = self.client
+    let timezone = snapshotTimezoneIdentifier
+    let progressBridge: (@Sendable (Int, Int) async -> Void)?
+    if let progress {
+      progressBridge = { completed, total in
+        await progress(SnapshotLoadProgress(completed: completed, total: total))
+      }
+    } else {
+      progressBridge = nil
+    }
+    let tagged = try await boundedConcurrentMap(
+      Array(ranges.indices),
+      limit: maximumConcurrentRangeLoads,
+      progress: progressBridge,
+      operation: { index -> (Int, UsageLoadResult) in
+        let range = ranges[index]
+        let usage = try await client.detailedUsage(
+          since: range.since,
+          until: range.until,
+          timezone: timezone
+        )
+        let formatDay: (Date) -> String = {
+          calendarDayString($0, calendar: calculator.calendar)
+        }
+        guard let partition = partitionUsage(
+          [usage],
+          timestampedEvents: timestampedEvents,
+          ranges: [range],
+          formatDay: formatDay
+        ).first else { throw SnapshotError.rangeReassemblyFailed }
+        let result = usageResult(
+          metrics: partition.metrics,
+          sessions: partition.sessions,
+          timestampedEvents: partition.events,
+          formatDay: formatDay
+        )
+        if range.until < cacheBefore {
+          try? await aggregationCache?.merge(
+            metrics: result.metrics,
+            sessions: result.sessions,
+            coveredRange: AggregationCacheRange(since: range.since, through: range.until),
+            calendar: calculator.calendar
+          )
+        }
+        return (index, result)
+      }
+    )
+    var ordered = [UsageLoadResult?](repeating: nil, count: ranges.count)
+    for (index, result) in tagged { ordered[index] = result }
+    return try ordered.map {
+      guard let result = $0 else { throw SnapshotError.rangeReassemblyFailed }
+      return result
     }
   }
 

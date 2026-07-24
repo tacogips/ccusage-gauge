@@ -85,9 +85,9 @@ struct MachineUnavailableResponseTests {
     )
     let object = try #require(try JSONSerialization.jsonObject(with: response.body) as? [String: Any])
 
-    #expect(response.status == 503)
-    #expect(object["error"] as? String == "range_unavailable")
-    #expect(object["requestedCoverageStart"] as? String == "2020-01-01")
+    #expect(response.status == 200)
+    let rangeLoad = try #require(object["rangeLoad"] as? [String: Any])
+    #expect(rangeLoad["isPartial"] as? Bool == true)
     #expect((object["machineLatestEvents"] as? [[String: Any]])?.count == 1)
     #expect(object["scope"] is [String: Any])
   }

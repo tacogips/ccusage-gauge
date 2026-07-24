@@ -126,7 +126,7 @@ public actor MachineSnapshotStore {
     now: Date
   ) {
     guard var entry = fencedEntry(machineID: machineID, revision: revision, generation: generation) else { return }
-    entry.snapshot = snapshot
+    entry.snapshot = mergingSnapshots(existing: entry.snapshot, fresh: snapshot, calendar: calendar)
     entry.coverageStart = min(entry.coverageStart ?? coverageStart, coverageStart)
     entry.collectionStatus.lastSuccessAt = now
     entry.collectionStatus.lastErrorAt = nil
@@ -713,16 +713,16 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
   public typealias ConnectionTester = @Sendable (MachineDescriptor) async throws -> Void
 
   public let store: MachineSnapshotStore
-  private var registry: MachineRegistry
+  var registry: MachineRegistry
   private let serviceFactory: ServiceFactory
-  private var services: [String: SnapshotService] = [:]
-  private var generations: [String: UInt64] = [:]
+  var services: [String: SnapshotService] = [:]
+  var generations: [String: UInt64] = [:]
   private var pollers: [String: Task<Void, Never>] = [:]
-  private var inFlight: [String: Task<CostSnapshot, Error>] = [:]
-  private var pendingCoverage: [String: Date] = [:]
+  var inFlight: [MachineRangeLoadKey: Task<CostSnapshot, Error>] = [:]
+  var rangeLoads: [MachineRangeLoadKey: MachineRangeLoadState] = [:]
   private var activeMachineIDs: Set<String>?
-  private let calendar: Calendar
-  private let now: @Sendable () -> Date
+  let calendar: Calendar
+  let now: @Sendable () -> Date
   private let connectionTester: ConnectionTester
 
   public init(
@@ -784,9 +784,14 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
     for id in changedIDs {
       generations[id, default: 0] &+= 1
       pollers[id]?.cancel()
-      inFlight[id]?.cancel()
+      let machineLoads = inFlight.filter { $0.key.machineID == id }
+      machineLoads.values.forEach { $0.cancel() }
       if let poller = pollers.removeValue(forKey: id) { await poller.value }
-      _ = try? await inFlight.removeValue(forKey: id)?.value
+      for key in machineLoads.keys {
+        _ = try? await inFlight.removeValue(forKey: key)?.value
+        rangeLoads.removeValue(forKey: key)
+      }
+      rangeLoads = rangeLoads.filter { $0.key.machineID != id }
       services[id] = replacements[id]
     }
     await store.replaceRegistry(updated, generations: generations)
@@ -805,9 +810,14 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
 
   public func pause(machineID: String) async {
     pollers[machineID]?.cancel()
-    inFlight[machineID]?.cancel()
+    let machineLoads = inFlight.filter { $0.key.machineID == machineID }
+    machineLoads.values.forEach { $0.cancel() }
     if let poller = pollers.removeValue(forKey: machineID) { await poller.value }
-    if let load = inFlight.removeValue(forKey: machineID) { _ = try? await load.value }
+    for key in machineLoads.keys {
+      if let load = inFlight.removeValue(forKey: key) { _ = try? await load.value }
+      rangeLoads.removeValue(forKey: key)
+    }
+    rangeLoads = rangeLoads.filter { $0.key.machineID != machineID }
   }
 
   public func resume(machineID: String) {
@@ -843,7 +853,15 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
       for descriptor in targets {
         group.addTask { [weak self] in
           guard let self else { return (descriptor.id, false) }
-          do { _ = try await self.collect(descriptor: descriptor, earliestDate: nil, phase: .refreshing); return (descriptor.id, true) }
+          do {
+            _ = try await self.collect(
+              descriptor: descriptor,
+              earliestDate: nil,
+              latestDate: nil,
+              phase: .refreshing
+            )
+            return (descriptor.id, true)
+          }
           catch { return (descriptor.id, false) }
         }
       }
@@ -854,27 +872,52 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
     }
   }
 
-  public func expand(machine requested: String, earliestDate: Date) async {
+  public func expand(machine requested: String, earliestDate: Date, latestDate: Date? = nil) async {
     let requestedIDs = Set(requested.split(separator: ",").map(String.init))
     let targets = requested == "all"
       ? activeDescriptors()
       : registry.machines.filter { requestedIDs.contains($0.id) && $0.enabled }
-    await withTaskGroup(of: Void.self) { group in
-      for descriptor in targets {
-        group.addTask { [weak self] in
-          guard let self else { return }
-          // Serve from the published snapshot when its coverage already satisfies the request:
-          // a steady-state filter switch then never spawns ccusage. Only machines whose coverage
-          // is missing or narrower than requested await a fresh collection.
-          if let entry = await self.store.entry(machineID: descriptor.id),
-             entry.snapshot != nil,
-             let coverage = entry.coverageStart, coverage <= earliestDate {
-            return
-          }
-          _ = try? await self.collect(descriptor: descriptor, earliestDate: earliestDate, phase: .loadingHistory)
-        }
+    for descriptor in targets {
+      let key = MachineRangeLoadKey(machineID: descriptor.id, start: earliestDate, end: latestDate)
+      if let entry = await store.entry(machineID: descriptor.id),
+         entry.snapshot != nil,
+         let coverage = entry.coverageStart,
+         coverage <= earliestDate {
+        continue
+      }
+      guard inFlight[key] == nil,
+            rangeLoads[key]?.isLoading != false || rangeLoads[key]?.failed == true else { continue }
+      rangeLoads[key] = MachineRangeLoadState(
+        machineID: descriptor.id,
+        requestedStart: earliestDate,
+        requestedEnd: latestDate,
+        phase: .loadingRange,
+        progress: SnapshotLoadProgress(completed: 0, total: 1),
+        isLoading: true
+      )
+      Task { [weak self] in
+        _ = try? await self?.collect(
+          descriptor: descriptor,
+          earliestDate: earliestDate,
+          latestDate: latestDate,
+          phase: .loadingRange
+        )
       }
     }
+  }
+
+  public func rangeLoadStates(
+    machine requested: String,
+    earliestDate: Date?,
+    latestDate: Date?
+  ) -> [MachineRangeLoadState] {
+    let requestedIDs = Set(requested.split(separator: ",").map(String.init))
+    let targets = requested == "all" ? Set(activeDescriptors().map(\.id)) : requestedIDs
+    return rangeLoads.values.filter {
+      targets.contains($0.machineID) &&
+        (earliestDate == nil || $0.requestedStart == earliestDate) &&
+        (latestDate == nil || $0.requestedEnd == latestDate)
+    }.sorted { $0.machineID < $1.machineID }
   }
 
   private func startPoller(_ descriptor: MachineDescriptor) {
@@ -885,10 +928,27 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
       guard let self else { return }
       let current = self.now()
       let weekStart = self.calendar.dateInterval(of: .weekOfYear, for: current)?.start ?? self.calendar.startOfDay(for: current)
-      guard (try? await self.collect(descriptor: descriptor, earliestDate: weekStart, phase: .loadingWeek)) != nil else {
+      guard (try? await self.collect(
+        descriptor: descriptor,
+        earliestDate: weekStart,
+        latestDate: current,
+        phase: .loadingWeek
+      )) != nil else {
         return
       }
       guard !Task.isCancelled else { return }
+      if let service = await self.service(machineID: descriptor.id) {
+        for pending in await service.pendingRangeLoads() {
+          Task { [weak self] in
+            _ = try? await self?.collect(
+              descriptor: descriptor,
+              earliestDate: pending.start,
+              latestDate: pending.end,
+              phase: .loadingHistory
+            )
+          }
+        }
+      }
       let monthStart = self.calendar.dateInterval(of: .month, for: current)?.start ?? weekStart
       let warmStart = self.calendar.date(byAdding: .month, value: -1, to: monthStart) ?? monthStart
       if let persistedStart = await self.persistedCoverageStart(machineID: descriptor.id, now: current),
@@ -900,12 +960,22 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
           generation: generation
         )
       } else {
-        _ = try? await self.collect(descriptor: descriptor, earliestDate: warmStart, phase: .loadingHistory)
+        _ = try? await self.collect(
+          descriptor: descriptor,
+          earliestDate: warmStart,
+          latestDate: current,
+          phase: .loadingHistory
+        )
       }
       while !Task.isCancelled, await self.isCurrent(machineID: descriptor.id, generation: generation, revision: revision) {
         do { try await Task.sleep(for: .seconds(max(1, AppConfiguration.defaultPollIntervalSeconds))) }
         catch { break }
-        _ = try? await self.collect(descriptor: descriptor, earliestDate: nil, phase: .refreshing)
+        _ = try? await self.collect(
+          descriptor: descriptor,
+          earliestDate: nil,
+          latestDate: nil,
+          phase: .refreshing
+        )
       }
     }
   }
@@ -918,82 +988,12 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
     await services[machineID]?.persistedCoverageStart(now: now)
   }
 
+  private func service(machineID: String) -> SnapshotService? { services[machineID] }
+
   private func activeDescriptors() -> [MachineDescriptor] {
     registry.machines.filter { $0.enabled && isActive($0.id) }
   }
 
-  private func isActive(_ machineID: String) -> Bool {
-    activeMachineIDs?.contains(machineID) ?? true
-  }
+  private func isActive(_ machineID: String) -> Bool { activeMachineIDs?.contains(machineID) ?? true }
 
-  private func collect(
-    descriptor: MachineDescriptor,
-    earliestDate: Date?,
-    phase: DashboardLoadPhase
-  ) async throws -> CostSnapshot {
-    let machineID = descriptor.id
-    if let earliestDate {
-      pendingCoverage[machineID] = min(pendingCoverage[machineID] ?? earliestDate, earliestDate)
-    }
-    if let existing = inFlight[machineID] {
-      let result = try await existing.value
-      if let pending = pendingCoverage[machineID], let entry = await store.entry(machineID: machineID),
-         entry.coverageStart == nil || entry.coverageStart! > pending {
-        pendingCoverage[machineID] = nil
-        return try await collect(descriptor: descriptor, earliestDate: pending, phase: .loadingHistory)
-      }
-      return result
-    }
-    guard let service = services[machineID] else { throw CancellationError() }
-    let revision = registry.revision
-    let generation = generations[machineID, default: 0]
-    let requested = earliestDate ?? pendingCoverage[machineID]
-    pendingCoverage[machineID] = nil
-    let started = now()
-    await store.beginCollection(
-      machineID: machineID,
-      revision: revision,
-      generation: generation,
-      phase: phase,
-      requestedCoverageStart: requested,
-      now: started
-    )
-    let task = Task {
-      try await service.snapshot(
-        now: started,
-        earliestDate: requested,
-        progress: { [store] progress in
-          await store.updateCollectionProgress(
-            machineID: machineID,
-            revision: revision,
-            generation: generation,
-            progress: progress
-          )
-        }
-      )
-    }
-    inFlight[machineID] = task
-    do {
-      let snapshot = try await task.value
-      inFlight[machineID] = nil
-      let coverage = requested ?? calendar.dateInterval(of: .weekOfYear, for: started)?.start ?? calendar.startOfDay(for: started)
-      await store.publish(
-        machineID: machineID,
-        snapshot: snapshot,
-        coverageStart: coverage,
-        revision: revision,
-        generation: generation,
-        now: now()
-      )
-      return snapshot
-    } catch {
-      inFlight[machineID] = nil
-      if error is CancellationError {
-        await store.finishCancellation(machineID: machineID, revision: revision, generation: generation)
-      } else {
-        await store.publishFailure(machineID: machineID, error: error, revision: revision, generation: generation, now: now())
-      }
-      throw error
-    }
-  }
 }

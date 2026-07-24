@@ -98,11 +98,13 @@ public struct DashboardMetricsResponse: Codable, Equatable, Sendable, ScopedDash
   public let rows: [CCUsageMetricRecord]
   public let totals: DashboardMetricTotals
   public var scope: DashboardScope?
+  public var rangeLoad: DashboardRangeLoadProgress?
   public init(range: String, rows: [CCUsageMetricRecord], totals: DashboardMetricTotals, scope: DashboardScope? = nil) {
     self.range = range
     self.rows = rows
     self.totals = totals
     self.scope = scope
+    rangeLoad = nil
   }
 }
 
@@ -129,6 +131,7 @@ public struct DashboardCostResponse: Codable, Equatable, Sendable, ScopedDashboa
   public let totalUSD: Decimal
   public var machineLatestEvents: [MachineLatestEvent]?
   public var scope: DashboardScope?
+  public var rangeLoad: DashboardRangeLoadProgress?
   public init(
     range: String,
     granularity: String,
@@ -147,6 +150,35 @@ public struct DashboardCostResponse: Codable, Equatable, Sendable, ScopedDashboa
     self.totalUSD = totalUSD
     self.machineLatestEvents = machineLatestEvents
     self.scope = scope
+    rangeLoad = nil
+  }
+}
+
+public struct DashboardRangeLoadProgress: Codable, Equatable, Sendable {
+  public let requestedStart: Date?
+  public let requestedEnd: Date?
+  public let completed: Int
+  public let total: Int
+  public let isLoading: Bool
+  public let isPartial: Bool
+  public let failedMachineIds: [String]
+
+  public init(
+    requestedStart: Date?,
+    requestedEnd: Date?,
+    completed: Int,
+    total: Int,
+    isLoading: Bool,
+    isPartial: Bool,
+    failedMachineIds: [String]
+  ) {
+    self.requestedStart = requestedStart
+    self.requestedEnd = requestedEnd
+    self.completed = completed
+    self.total = total
+    self.isLoading = isLoading
+    self.isPartial = isPartial
+    self.failedMachineIds = failedMachineIds
   }
 }
 
