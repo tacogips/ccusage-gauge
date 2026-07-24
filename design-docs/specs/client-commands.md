@@ -34,6 +34,10 @@ ccusage-gauge client machines show <id> [client options]
 ccusage-gauge client machines add <id> --host <host> --user <user>
   [--display-name <name>] [--ssh-port <port>] [--identity-file <path>]
   [--ssh-option <option>]... [--remote-ccusage-path <path>] [--disabled]
+  [--proxy-jump-host <host> --proxy-jump-user <user>
+    [--proxy-jump-port <port>] [--proxy-jump-identity-file <path>]
+    [--proxy-jump-known-hosts-file <path>]]
+  [--proxy-command-executable <path>]
   [client options]
 
 ccusage-gauge client dashboard budget [--machine <id|all>] [client options]
@@ -73,6 +77,17 @@ options. Dates use strict `YYYY-MM-DD`. `--limit` is `1...500`. SSH port is
 `1...65535`. `--display-name` defaults to the id, SSH port to `22`, and remote
 ccusage path to `ccusage`.
 
+The two proxy option groups are mutually exclusive. Omitting both sends no
+`proxy` member and selects direct behavior, including an operator-opened local
+forward. The jump group requires host and user, defaults its port to `22`, and
+produces the exact structured `jump` adapter. The command group requires an
+absolute executable and sends no arguments, environment, configuration, or
+credential fields. The service supplies the validated target host and port
+through the fixed stdio-adapter invocation. The CLI never accepts a raw `-J`,
+`ProxyJump`, `ProxyCommand`, adapter argument, SSH configuration, or
+shell-fragment value; server validation remains authoritative for executable
+paths and host-key policy.
+
 ## HTTP Mapping
 
 | Command | Request |
@@ -90,7 +105,8 @@ ccusage path to `ccusage`.
 | `dashboard load-status` | `GET /api/load-status?machine=...` |
 
 Machine creation sends the exact closed request shape already accepted by the
-server, plus `Content-Type: application/json` and
+server, including the optional structured proxy adapter, plus
+`Content-Type: application/json` and
 `X-CCUsage-Gauge-Mutation: 1`. Reads do not send the mutation header.
 
 No new server endpoint is required. Machine replace, patch, delete, manual
@@ -126,8 +142,8 @@ fields remain available to scripts.
 
 Text output provides compact summaries:
 
-- machine list/show: id, display name, kind, enabled state, and SSH connection
-  fields;
+- machine list/show: id, display name, kind, enabled state, SSH connection
+  fields, and structured proxy kind/metadata when configured;
 - add: the created descriptor;
 - budget: spent, configured budget, remaining/overage, reset cycle, and active
   boundary;
@@ -176,8 +192,8 @@ custom entry point maps parse/validation failures to the established exit code
 
 - parsing and validation tests for every existing and new command;
 - transport tests for URL/query construction, exact machine-create JSON,
-  mutation headers, raw-body preservation, date decoding, and API errors;
+  direct/jump/command adapter bodies, mutation headers, raw-body preservation,
+  date decoding, and API errors;
 - server/client round trip for add, list, and representative dashboard reads;
 - renderer tests for machine and dashboard text output;
 - `swiftlint`, `swift test`, `swift build`, and executable help/smoke commands.
-

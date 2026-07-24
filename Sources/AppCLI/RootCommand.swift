@@ -37,8 +37,15 @@ extension RootCommand {
 enum CCUsageGaugeMain {
   static func main() async {
     let arguments = Array(CommandLine.arguments.dropFirst())
+    var bootstrapLogger: BootstrapLogger?
     do {
       let command = try RootCommand.parseAsRoot(arguments)
+      if let runtime = bootstrapRuntime(arguments: arguments) {
+        let paths = AppPaths.production()
+        let logger = BootstrapLogger(paths: paths, runtime: runtime)
+        logger.activate()
+        bootstrapLogger = logger
+      }
       if var asyncCommand = command as? AsyncParsableCommand {
         try await asyncCommand.run()
       } else {
@@ -46,6 +53,13 @@ enum CCUsageGaugeMain {
         try syncCommand.run()
       }
     } catch let exit as ExitCode {
+      if exit != .success {
+        bootstrapLogger?.append(
+          phase: "clientRequest",
+          code: "client_request_failed",
+          message: "Dashboard client request failed"
+        )
+      }
       Foundation.exit(exit.rawValue)
     } catch {
       let status = RootCommand.terminationStatus(for: error)
@@ -53,8 +67,23 @@ enum CCUsageGaugeMain {
         print(RootCommand.fullMessage(for: error))
         Foundation.exit(0)
       }
+      bootstrapLogger?.append(
+        phase: "runtime",
+        code: "runtime_failed",
+        message: "Command runtime failed"
+      )
       FileHandle.standardError.write(Data((RootCommand.fullMessage(for: error) + "\n").utf8))
       Foundation.exit(status)
+    }
+  }
+
+  private static func bootstrapRuntime(arguments: [String]) -> BootstrapRuntime? {
+    switch arguments.first {
+    case "config-check": .configCheck
+    case "usage-snapshot": .usageSnapshot
+    case "serve": .serve
+    case "client": .client
+    default: nil
     }
   }
 }

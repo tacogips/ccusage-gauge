@@ -105,6 +105,7 @@ public struct MachineCreateSSHPayload: Encodable, Sendable {
   public let identityFile: String?
   public let extraOptions: [String]
   public let remoteCcusagePath: String
+  public let proxy: SSHProxy?
 
   public init(
     host: String,
@@ -112,7 +113,8 @@ public struct MachineCreateSSHPayload: Encodable, Sendable {
     user: String,
     identityFile: String?,
     extraOptions: [String],
-    remoteCcusagePath: String
+    remoteCcusagePath: String,
+    proxy: SSHProxy? = nil
   ) {
     self.host = host
     self.port = port
@@ -120,10 +122,11 @@ public struct MachineCreateSSHPayload: Encodable, Sendable {
     self.identityFile = identityFile
     self.extraOptions = extraOptions
     self.remoteCcusagePath = remoteCcusagePath
+    self.proxy = proxy
   }
 
   private enum CodingKeys: String, CodingKey {
-    case host, port, user, identityFile, extraOptions, remoteCcusagePath
+    case host, port, user, identityFile, extraOptions, proxy, remoteCcusagePath
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -133,6 +136,7 @@ public struct MachineCreateSSHPayload: Encodable, Sendable {
     try container.encode(user, forKey: .user)
     try container.encodeIfPresent(identityFile, forKey: .identityFile)
     try container.encode(extraOptions, forKey: .extraOptions)
+    try container.encodeIfPresent(proxy, forKey: .proxy)
     try container.encode(remoteCcusagePath, forKey: .remoteCcusagePath)
   }
 }

@@ -37,13 +37,14 @@ fi
 period="$(date '+%Y-%m-%d')"
 case "${1:-}" in
   blocks) printf '{"blocks":[{"startTime":"%s","costUSD":1.25,"models":["claude-opus-4-8"]},{"startTime":"%s","costUSD":2.25,"models":["gpt-5.6-sol"]}]}' "$timestamp" "$timestamp" ;;
-  daily) printf '{"daily":[{"period":"%s","agent":"all","agents":[{"agent":"claude","modelBreakdowns":[{"modelName":"claude-opus-4-8","cost":1.25,"inputTokens":100,"outputTokens":20,"cacheCreationTokens":40,"cacheReadTokens":200}]},{"agent":"codex","modelBreakdowns":[{"modelName":"gpt-5.6-sol","cost":2.25,"inputTokens":300,"outputTokens":60,"cacheCreationTokens":0,"cacheReadTokens":500}]}]}]}' "$period" ;;
+  daily) printf '{"daily":[{"period":"%s","agent":"all","agents":[{"agent":"claude","modelBreakdowns":[{"modelName":"claude-opus-4-8","cost":1.25,"inputTokens":100,"outputTokens":20,"cacheCreationTokens":40,"cacheReadTokens":200}]},{"agent":"codex","modelBreakdowns":[{"modelName":"gpt-5.6-sol","cost":2.25,"inputTokens":300,"outputTokens":60,"cacheCreationTokens":0,"cacheReadTokens":500}]}]}],"session":[{"agent":"claude","metadata":{"lastActivity":"%s"},"modelBreakdowns":[{"modelName":"claude-opus-4-8","cost":1.25,"inputTokens":100,"outputTokens":20,"cacheCreationTokens":40,"cacheReadTokens":200}]},{"agent":"codex","metadata":{"lastActivity":"%s"},"modelBreakdowns":[{"modelName":"gpt-5.6-sol","cost":2.25,"inputTokens":300,"outputTokens":60,"cacheCreationTokens":0,"cacheReadTokens":500}]}]}' "$period" "$timestamp" "$timestamp" ;;
   session) printf '{"session":[{"agent":"claude","metadata":{"lastActivity":"%s"},"modelBreakdowns":[{"modelName":"claude-opus-4-8","cost":1.25,"inputTokens":100,"outputTokens":20,"cacheCreationTokens":40,"cacheReadTokens":200}]},{"agent":"codex","metadata":{"lastActivity":"%s"},"modelBreakdowns":[{"modelName":"gpt-5.6-sol","cost":2.25,"inputTokens":300,"outputTokens":60,"cacheCreationTokens":0,"cacheReadTokens":500}]}]}' "$timestamp" "$timestamp" ;;
   *) exit 2 ;;
 esac
 FAKE
 chmod +x "$fake"
 mkdir -p "$root/config/ccusage-gauge" "$root/state/ccusage-gauge" "$root/cache/ccusage-gauge" "$root/claude/projects" "$root/codex/sessions"
+chmod 0700 "$root/config/ccusage-gauge" "$root/state/ccusage-gauge" "$root/cache/ccusage-gauge"
 cat >"$root/config/ccusage-gauge/ccusage-config.json" <<JSON
 {"ccusagePath":"$fake","defaultResetTerm":"daily","dashboardPort":$port,"dashboardAutostart":false,"pollIntervalSeconds":60}
 JSON
@@ -63,12 +64,20 @@ wait_ready() {
   return 1
 }
 
+wait_for_local_snapshot() {
+  for _ in {1..80}; do curl -fsS "http://127.0.0.1:$port/api/recent" >/dev/null 2>&1 && return 0; sleep 0.1; done
+  echo "local snapshot readiness timed out" >&2
+  cat "$root/server.log" >&2
+  return 1
+}
+
 run_once() {
   local arguments=(serve --port "$port")
   if [[ -n "$assets" ]]; then arguments+=(--assets "$assets"); fi
   "$binary" "${arguments[@]}" >"$root/server.log" 2>&1 &
   pid=$!
   wait_ready
+  wait_for_local_snapshot
   curl -fsS "http://127.0.0.1:$port/" | grep -q 'ccusage-gauge'
   curl -fsS "http://127.0.0.1:$port/api/recent" | grep -q '3.5'
   curl -fsS "http://127.0.0.1:$port/api/day?date=$today" | grep -q '3.5'
@@ -76,10 +85,21 @@ run_once() {
   curl -fsS "http://127.0.0.1:$port/api/period?range=custom&start=$today&end=$today" | grep -q '3.5'
   curl -fsS "http://127.0.0.1:$port/api/metrics?range=today" | grep -q 'gpt-5.6-sol'
   curl -fsS "http://127.0.0.1:$port/api/metrics?range=today" | grep -q 'claude-opus-4-8'
-  curl -fsS "http://127.0.0.1:$port/api/cost-series?range=today&granularity=hourly" | grep -q 'gpt-5.6-sol'
+  hourly_cost_series="$(curl -fsS "http://127.0.0.1:$port/api/cost-series?range=today&granularity=hourly")"
+  if ! grep -q 'gpt-5.6-sol' <<<"$hourly_cost_series"; then
+    printf 'hourly cost series did not contain the expected model: %s\n' "$hourly_cost_series" >&2
+    return 1
+  fi
   curl -fsS "http://127.0.0.1:$port/api/cost-series?range=today&granularity=daily" | grep -q 'claude-opus-4-8'
   curl -fsS "http://127.0.0.1:$port/api/budget" | grep -q 'spentUSD'
-  curl -fsS -X DELETE "http://127.0.0.1:$port/api/cache" | grep -q '"status":"ok"'
+  cache_clear_response="$(curl -fsS \
+    -H 'X-CCUsage-Gauge-Mutation: 1' \
+    -H "Origin: http://127.0.0.1:$port" \
+    -H 'Sec-Fetch-Site: same-origin' \
+    -X DELETE "http://127.0.0.1:$port/api/cache")"
+  grep -q '"outcome":"complete"' <<<"$cache_clear_response"
+  grep -q '"local"' <<<"$cache_clear_response"
+  wait_for_local_snapshot
   curl -fsS "http://127.0.0.1:$port/api/metrics?range=today" | grep -q 'gpt-5.6-sol'
   kill -TERM "$pid"
   wait "$pid"

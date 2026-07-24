@@ -46,7 +46,7 @@ private func startLiveServer() throws -> LiveServer {
       aggregationCache: nil
     )
   }
-  let owner = MachineRegistryMutationOwner(store: registryStore, registry: registry)
+  let owner = MachineRegistryMutationOwner(store: registryStore, registry: registry, runtime: collector)
   let machineRouter = MachineDashboardRouter(store: store, collector: collector, mutationOwner: owner, paths: paths)
   let router = DashboardRouter(machineRouter: machineRouter, assetResolver: StaticAssetResolver(explicitRoot: root))
   // Random ports can collide with other listeners, so retry a few candidates.

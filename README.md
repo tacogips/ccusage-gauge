@@ -290,17 +290,35 @@ refresh.
 ## Remote machines
 
 `serve` always exposes the synthetic `local` machine and loads SSH descriptors
-from the closed, versioned `~/.config/ccusage-gauge/machines.json` registry.
+from the closed, version-2 `~/.config/ccusage-gauge/machines.json` registry.
 Registry creation and edits are available from the dashboard. SSH collection
 executes the remote `ccusage` binary through an operator-provided forwarded port;
 it does not deploy an agent, push data, or persist a cache remotely. Identity
 files remain operator-managed references and are never copied into the registry.
+Existing version-1 registries are validated and atomically migrated before
+collection starts. Registry CRUD persists and reconciles the affected collector
+generation as one serialized transaction; failed reconciliation restores the
+prior disk/runtime revision or fails closed until controlled restart recovery.
+
+Connections are provider-neutral: direct SSH is the default, a structured jump
+host can be configured with independently enforced known-hosts verification, and
+a command adapter invokes only a validated absolute executable using the fixed
+`connect --host <host> --port <port>` protocol. Raw `ProxyCommand`, `ProxyJump`,
+shell fragments, and host-key-disabling options are not accepted.
 
 The registry directory must be owned by the current user with mode `0700`; an
 existing registry must be a regular, single-link, current-user-owned mode-`0600`
 file. Unsafe metadata, malformed JSON, or invalid descriptors fail startup before
-the loopback listener binds. Recovery is offline: stop the service, repair or
-intentionally remove `machines.json`, then restart.
+the loopback listener binds. Machine connection tests and targeted refreshes
+validate and reload the registry before acting, so a valid edit can be used
+without restarting. Invalid edits leave the running registry and collectors
+unchanged.
+
+Startup and early runtime failures are written as sanitized JSONL records below
+`~/.local/ccusage-gauge/logs`. The active file rotates before exceeding 10 MiB,
+rotated files are retained for 72 hours, and log directories/files require
+current-user ownership with modes `0700`/`0600`. Logs never contain raw stderr,
+command lines, request bodies, credentials, or private-key material.
 
 Local emulation uses standalone Docker Compose under Colima only. It creates two
 SSH machines, an unprivileged collector, and one key-generation service. Client
@@ -353,13 +371,24 @@ ccusage-gauge client machines add remote-box \
   --display-name "Remote box" --ssh-port 22 \
   --identity-file ~/.ssh/id_ed25519 \
   --remote-ccusage-path /usr/local/bin/ccusage
+
+# Use a structured SSH jump host.
+ccusage-gauge client machines add remote-via-jump \
+  --host box.example.internal --user ccusage \
+  --proxy-jump-host bastion.example.internal --proxy-jump-user ccusage \
+  --proxy-jump-known-hosts-file ~/.ssh/known_hosts
+
+# Validate connectivity or collect one machine immediately.
+ccusage-gauge client machines test-connection remote-box
+ccusage-gauge client machines refresh remote-box
 ```
 
-Machine creation sends the exact closed request shape accepted by the server,
+Machine creation and actions send the exact closed request shapes accepted by the server,
 with `Content-Type: application/json` and the `X-CCUsage-Gauge-Mutation: 1`
-header. Read commands never send the mutation header. Replace, patch, delete,
-manual refresh, and cache clearing remain dashboard-server responsibilities and
-are intentionally not exposed by the client.
+header. Read commands never send the mutation header. A connection test runs
+only the fixed `--version` probe and does not modify collection state or cache.
+A targeted refresh reports HTTP-200 `status: failed` as a CLI failure while
+preserving its structured sanitized diagnostic.
 
 SSH options that begin with a dash must use the `--ssh-option=<value>` form so
 they are not mistaken for flags, for example `--ssh-option=-4` or, quoted so the
@@ -386,7 +415,11 @@ The `--machine` value is `all` (the default aggregate), `local`, or a canonical
 machine id. A `custom` range requires both `--start` and `--end`; every other
 range rejects them. Dates use strict `YYYY-MM-DD`. Partial aggregate reads are
 never silent: text output lists stale and unavailable machines from the response
-`scope`.
+`scope`. Current ranges exclude stale, error, never-collected, and disabled
+machines before computing rows, totals, budgets, and summaries; retained stale
+history remains available only to explicit historical queries. Cost-series
+responses include per-machine latest-event markers and last-hour data-gap
+metadata independently of row eligibility.
 
 Exit statuses are stable for scripting: `0` success, `2` usage/validation error,
 `3` dashboard unreachable, `4` API rejection (validation, conflict, not found),

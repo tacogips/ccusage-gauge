@@ -31,6 +31,7 @@ enum MachineRenderer {
       if item.collectionInProgress { fields.append("collecting") }
       if let coverage = item.coverageStart { fields.append("coverage=\(coverage)") }
       if let error = item.lastError { fields.append("error=\(error.code)") }
+      if let unavailable = item.unavailableSince { fields.append("unavailableSince=\(unavailable.ISO8601Format())") }
       lines.append(fields.joined(separator: "  "))
     }
     return lines.joined(separator: "\n")
@@ -50,6 +51,22 @@ enum MachineRenderer {
       if let coverage = item.coverageStart { fields.append("coverage=\(coverage)") }
       lines.append(fields.joined(separator: "  "))
     }
+    return lines.joined(separator: "\n")
+  }
+
+  static func connectionTest(_ response: MachineConnectionTestResponse) -> String {
+    var lines = ["\(response.machine): \(response.status)"]
+    appendDiagnostic(response.diagnostic, to: &lines)
+    return lines.joined(separator: "\n")
+  }
+
+  static func refresh(_ response: RefreshResponse) -> String {
+    var lines = [
+      "\(response.requested): \(response.status)",
+      "refreshed: \(response.refreshedMachineIds.joined(separator: ", "))",
+      "failed: \(response.failedMachineIds.joined(separator: ", "))"
+    ]
+    appendDiagnostic(response.diagnostic, to: &lines)
     return lines.joined(separator: "\n")
   }
 
@@ -82,7 +99,33 @@ enum MachineRenderer {
       lines.append("ssh.identityFile: \(ssh.identityFile ?? "-")")
       lines.append("ssh.remoteCcusagePath: \(ssh.remoteCcusagePath)")
       lines.append("ssh.extraOptions: \(ssh.extraOptions.isEmpty ? "-" : ssh.extraOptions.joined(separator: " "))")
+      switch ssh.proxy {
+      case nil:
+        lines.append("ssh.proxy.kind: direct")
+      case .direct:
+        lines.append("ssh.proxy.kind: direct")
+      case .jump(let jump):
+        lines.append("ssh.proxy.kind: jump")
+        lines.append("ssh.proxy.host: \(jump.host)")
+        lines.append("ssh.proxy.port: \(jump.port)")
+        lines.append("ssh.proxy.user: \(jump.user)")
+        lines.append("ssh.proxy.identityFile: \(jump.identityFile ?? "-")")
+        lines.append("ssh.proxy.knownHostsFile: \(jump.knownHostsFile ?? "-")")
+      case .command(let executable):
+        lines.append("ssh.proxy.kind: command")
+        lines.append("ssh.proxy.executable: \(executable)")
+      }
     }
     return lines.joined(separator: "\n")
+  }
+
+  private static func appendDiagnostic(
+    _ diagnostic: SanitizedCollectionError?,
+    to lines: inout [String]
+  ) {
+    guard let diagnostic else { return }
+    lines.append("diagnostic: \(diagnostic.code)")
+    if let detail = diagnostic.detail { lines.append("detail: \(detail)") }
+    if let remediation = diagnostic.remediation { lines.append("remediation: \(remediation)") }
   }
 }

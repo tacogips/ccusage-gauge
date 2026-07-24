@@ -6,10 +6,11 @@ public struct SSHConnectionRequest: Decodable, Sendable {
   public let user: String
   public let identityFile: String?
   public let extraOptions: [String]
+  public let proxy: SSHProxy?
   public let remoteCcusagePath: String
 
   private enum CodingKeys: String, CodingKey {
-    case host, port, user, identityFile, extraOptions, remoteCcusagePath
+    case host, port, user, identityFile, extraOptions, proxy, remoteCcusagePath
   }
 
   public init(from decoder: Decoder) throws {
@@ -19,6 +20,7 @@ public struct SSHConnectionRequest: Decodable, Sendable {
     user = try values.decode(String.self, forKey: .user)
     identityFile = try values.decodeIfPresent(String.self, forKey: .identityFile)
     extraOptions = try values.decodeIfPresent([String].self, forKey: .extraOptions) ?? []
+    proxy = try values.decodeIfPresent(SSHProxy.self, forKey: .proxy)
     remoteCcusagePath = try values.decodeIfPresent(String.self, forKey: .remoteCcusagePath) ?? "ccusage"
   }
 
@@ -29,6 +31,7 @@ public struct SSHConnectionRequest: Decodable, Sendable {
       user: user,
       identityFile: identityFile,
       extraOptions: extraOptions,
+      proxy: proxy,
       remoteCcusagePath: remoteCcusagePath
     )
   }
@@ -67,6 +70,30 @@ public struct RefreshResponse: Codable, Sendable {
   public let refreshedMachineIds: [String]
   public let failedMachineIds: [String]
   public let generatedAt: Date
+  public let diagnostic: SanitizedCollectionError?
+
+  public init(
+    status: String,
+    requested: String,
+    refreshedMachineIds: [String],
+    failedMachineIds: [String],
+    generatedAt: Date,
+    diagnostic: SanitizedCollectionError? = nil
+  ) {
+    self.status = status
+    self.requested = requested
+    self.refreshedMachineIds = refreshedMachineIds
+    self.failedMachineIds = failedMachineIds
+    self.generatedAt = generatedAt
+    self.diagnostic = diagnostic
+  }
+}
+
+public struct MachineConnectionTestResponse: Codable, Sendable {
+  public let machine: String
+  public let status: String
+  public let testedAt: Date
+  public let diagnostic: SanitizedCollectionError?
 }
 
 public struct MachineLoadStatusItem: Codable, Sendable {

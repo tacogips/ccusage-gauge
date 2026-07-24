@@ -159,6 +159,67 @@ chooses a recovery action in a later design.
 Both stores accept injected base URLs in tests. Production path resolution must
 not be captured in static globals so CLI and tests can safely isolate files.
 
+### Persistent startup and bootstrap log
+
+The menu-bar process and local CLI runtimes establish an `AppCore` bootstrap
+logger before loading or creating configuration, state, machine-registry,
+cache, or dashboard assets. Construction is side-effect free. After command
+selection, menu-bar bootstrap and only CLI commands that enter a runtime call
+`activate()` before configuration parsing; help and version return without
+activation and retain their no-storage behavior. Activation validates or
+creates the log directory, selects any fallback, acquires the maintenance lock,
+and applies retention, but does not create the active log file until the first
+append. Malformed configuration JSON, registry decoding or validation failure,
+executable resolution failure, cache recovery failure, listener startup
+failure, and other early bootstrap failures are therefore recorded before the
+existing UI or stderr error is presented.
+
+`AppPaths` exposes `logDirectory`. Its normal production value is
+`~/.local/ccusage-gauge/logs`, derived from the same state root as
+`~/.local/ccusage-gauge/state.json`; `CCUSAGE_GAUGE_STATE_HOME` therefore
+relocates both. If creating or appending under an explicitly overridden state
+root fails, the logger makes one attempt at the default
+`~/.local/ccusage-gauge/logs` location. It records only that the primary
+location was unavailable, never the rejected path or underlying exception. If
+both locations fail, bootstrap continues to its normal UI or stderr error path
+without recursive logging.
+
+The directory is a current-user-owned real directory with mode `0700`; active
+and rotated logs are current-user-owned regular single-link files with mode
+`0600`. Symlinks, hard links, non-regular files, unsafe ownership, and broader
+permissions fail closed for logging and are never repaired by following or
+overwriting the unsafe object.
+
+The active file is `ccusage-gauge.jsonl`. Each line is one bounded JSON object:
+
+```json
+{"timestamp":"2026-07-16T12:00:00.000Z","severity":"error","runtime":"menuBar","phase":"configurationLoad","code":"configuration_invalid","message":"Configuration could not be loaded"}
+```
+
+`runtime` is `menuBar`, `configCheck`, `usageSnapshot`, `serve`, or `client`.
+`phase` and `code` are closed application-owned identifiers. `message` is
+sanitized application-owned text. Records never contain raw configuration,
+stderr, environment contents, command arguments, SSH destinations or users,
+identity/key values, filesystem paths, raw usage data, exception descriptions,
+or request bodies. A single record is capped at 16 KiB and is encoded on one
+line.
+
+Before an append that would make the active file exceed 10 MiB, the logger
+atomically renames it to
+`ccusage-gauge-<UTC timestamp>-<monotonic sequence>.jsonl`, opens a new active
+file, and then writes the complete record. Each successful `activate()` and
+each rotation remove rotated files whose modification time is older than 72
+hours. Retention never deletes the active file or unrelated directory entries.
+Activation, rotation, and cleanup are serialized across tasks and processes
+with an advisory lock; a lock or filesystem failure disables persistent logging
+for that runtime and does not block application startup.
+
+Clock, filesystem operations, size limit, retention duration, and destination
+roots are injectable. Deterministic tests cover boundary-size rotation,
+same-timestamp name collisions, retention just before/at 72 hours, unsafe file
+types and permissions, fallback selection, concurrent append serialization,
+and redaction of malformed JSON and SSH/process errors.
+
 ## Usage Integration and Aggregation
 
 The process boundary accepts an executable URL, argument list, environment, and
@@ -348,28 +409,56 @@ The dedicated behavior and security design is
 `~/.config/ccusage-gauge/machines.json`, always adds the reserved synthetic
 `local` descriptor, and creates one independently cancellable poller per enabled
 machine. Local collection retains local event reconciliation. SSH collection
-executes the configured remote ccusage binary through an already-open forwarded
-port and reuses the existing JSON decoder, but does not read host event logs or
-install a remote daemon.
+executes the configured remote ccusage binary through a direct endpoint or the
+dedicated design's structured SSH proxy adapter and reuses the existing JSON
+decoder, but does not read host event logs or install a remote daemon. An
+already-open local forward is a direct endpoint.
+
+The collection boundary is provider-neutral. Direct SSH, `ProxyJump`,
+`ProxyCommand`, local forwarding, and equivalent operator-managed tunnels share
+one transport, status, diagnostic, action, and API contract. GCE and IAP may
+appear only as deployment examples and never select code paths, fields, routes,
+classifiers, remediation, or UI labels.
+
+Proxy behavior is isolated behind an optional closed adapter on the SSH
+descriptor. `jump` accepts validated structured hop metadata; `command` accepts
+only an absolute owner-safe stdio-adapter executable. The application supplies
+the validated target host and port through one fixed invocation. Raw `-J`,
+`ProxyJump`, `ProxyCommand`, adapter arguments, environment/configuration
+values, SSH configuration files, and shell fragments are never accepted.
+Direct endpoints, local forwards, jump hops, and command adapters all preserve
+target host-key verification; jump hops additionally enforce their own verified
+host identity. No adapter accepts inline credential contents or exposes raw
+adapter output.
 
 The registry stores connection configuration only and is atomically written
 with mode `0600` inside a mode-`0700`, current-user-owned directory. Registry
-load is fail-closed: only an absent file means an empty SSH registry; unsafe
+CRUD is serialized with affected collector reconciliation: the owner publishes
+the new immutable revision only after durable staging and runtime replacement
+agree. Runtime failure rolls disk and collector state back; failed compensation
+stops the affected generation and rejects later mutations until restart
+recovery reconciles one complete persisted revision. Registry load is
+fail-closed: only an absent file means an empty SSH registry; unsafe
 ownership/type/permissions, malformed JSON, invalid descriptors, or an unsafe
 persistence path fail service startup without quarantine or local-only fallback.
 Recovery requires an offline correction or intentional removal of the file.
-The persisted representation is the dedicated design's closed version-1
-`schemaVersion` plus `machines` envelope: it stores SSH descriptors only,
-rejects unknown/duplicate fields and every unsupported or missing version, and
-normalizes API defaults before deterministic persistence. There is no implicit
-unversioned or additive-field compatibility.
+The current persisted representation is the dedicated design's closed
+version-2 `schemaVersion` plus `machines` envelope. The exact existing
+version-1 representation is accepted only as a migration source and is
+atomically rewritten to version 2 with direct-by-omission proxy semantics before
+registry publication or poller startup. Migration failure preserves the
+version-1 bytes and fails startup. Both versions store SSH descriptors only and
+reject unknown or duplicate fields; there is no implicit unversioned or
+unknown-field compatibility.
 Machine ids are immutable, unique safe slugs; `local` cannot be disabled,
 replaced, or deleted. SSH host, user, port, identity path reference, extra
 options, and remote executable are validated before use. Process arguments are
 arrays rather than local-shell strings. Ambient SSH config is disabled, remote
 tokens are POSIX-quoted, options use the closed allowlist, and values capable of
-changing config, proxying, hooks, environment, forwarding, or the remote-command
-boundary are rejected as specified in the dedicated design.
+changing config, hooks, environment, forwarding, or the remote-command boundary
+are rejected as specified in the dedicated design. Raw proxy options are also
+rejected; only the separately validated structured proxy adapter may select jump
+or command behavior.
 
 An actor-owned snapshot store retains the latest successful snapshot and
 sanitized health status independently for each machine. A failed refresh does
@@ -382,21 +471,43 @@ running.
 Every existing query route accepts `machine=<id|all>`, defaulting to `all`.
 Concrete ids select exactly one snapshot. Unknown ids return `404`; invalid
 parameters return `400`; disabled ids return `409`; enabled ids without a
-snapshot return `503`. Retained stale snapshots remain readable. The
-all-machines view includes usable enabled snapshots, returns partial `200`
-results when necessary, stamps every block/timeline, daily, and session record
-with non-optional source provenance, and emits `machine` on every recent/day/
-period series point, metric row, and cost-series row. Aggregation keys preserve
-machine identity, and totals and the single host-budget summary are recomputed
-from merged rows instead of summing precomputed values. Query responses expose common
-scope metadata for included, stale, and unavailable machines. Host calendar and
-reset rules define aggregate boundaries, while the oldest included generation
-time describes aggregate freshness. `GET /api/machines` provides registry
-listing and SSH CRUD, while `GET /api/machine-status` reports healthy, stale,
-disabled, and never-collected states. Registry mutations, manual refresh, and
-cache deletion share the dedicated design's loopback authority, same-origin,
+snapshot return `503`. Retained stale snapshots remain readable only for
+explicitly historical intervals. Before any interval reaching the current host
+day is aggregated, selection excludes machines whose derived state is stale,
+error, never-collected, or disabled. Their retained rows therefore cannot enter
+current series, totals, budget values, or summary cards.
+
+The all-machines view merges only snapshots eligible for the requested interval
+and returns partial `200` results when at least one machine remains. It stamps
+every block/timeline, daily, and session record with non-optional source
+provenance and emits `machine` on every recent/day/period series point, metric
+row, and cost-series row. Aggregation keys preserve machine identity, and totals
+and the single host-budget summary are recomputed from eligible rows instead of
+summing precomputed values. Query scope identifies every excluded machine, its
+concrete unavailable-since time and reason, and the intersection of its data gap
+with the last hour. Host calendar and reset rules define aggregate boundaries,
+while the oldest included generation time describes aggregate freshness.
+
+`GET /api/machines` provides registry listing and SSH CRUD, while
+`GET /api/machine-status` reports healthy, stale, disabled, never-collected, and
+structured sanitized SSH proxy/tunnel failure details. `/api/cost-series`
+carries each
+selected machine's latest-event marker in both successful responses and
+recognized data-availability error envelopes. Marker derivation is independent
+of current-row eligibility, so an all-stale or concrete-stale selection still
+reports marker metadata without allowing retained stale rows into totals.
+Guarded per-machine test-connection and targeted refresh actions reload
+validated registry configuration and make edits usable without a process
+restart. Registry mutations, connection tests, manual refreshes, and cache
+deletion share the dedicated design's loopback authority, same-origin,
 fetch-metadata, and mutation-header policy; rejected requests change no state
 and receive no CORS authorization.
+
+Diagnostic classification is closed and ordered across host-key,
+authentication, proxy/tunnel reachability, timeout, remote-command,
+invalid-response, and cache failures. Only failures outside those typed
+boundaries use the sanitized `internal_error` fallback; raw stderr and exception
+text never cross into APIs, UI, CLI output, or persistent logs.
 
 Cache clear is atomic for each selected machine and partial across `all`.
 Complete, mixed, and zero-success results use stable `200`, `207`, and `500`
@@ -413,13 +524,22 @@ The SolidJS SPA is built by bun and produces static assets. A left sidebar
 selects All machines or one registered machine and filters exact `ccusage`
 daily breakdown rows by model and agent. The selected scope is visible, and
 rows expose machine attribution in all-machines scope. A Machines screen manages
-SSH descriptors, enablement, and collection health without displaying secret
-contents. The top-right
+SSH descriptors, their closed direct/jump/command adapter fields, enablement,
+and collection health without displaying secret contents or accepting raw
+proxy commands. It provides guarded Test connection and Refresh controls and retains
+each sanitized action result until the next edit or action. Stale or unavailable
+machines have a persistent high-contrast state that includes last success,
+failure reason, unavailable-since time, and the last-hour data gap. Summary
+cards identify excluded machines and consume only server-selected eligible
+rows. The top-right
 aggregation control provides Today, Yesterday, This week, This month, and a
 Custom choice that reveals From/To date calendar controls. The graph always
 shows cost and provides Hourly and Daily aggregation controls, defaulting to
-Hourly. The selected period and filters drive all totals, the green-bar cost
-series, and daily detail;
+Hourly. Its sub-daily view renders each selected machine's latest-event marker
+and unavailable spans from successful or recognized data-availability
+responses without treating stale retained history as current usage.
+The selected period and filters drive all totals, the green-bar cost series, and
+daily detail;
 mixed-model block costs are never used for dashboard model filtering. The SPA
 reads only the same-origin JSON API, treats API failures and empty series as
 first-class UI states, and does not invoke `ccusage` or access local files.
@@ -489,8 +609,10 @@ fallback.
 - Aggregate tests must prove block/timeline, metric, session, and serialized
   response-row provenance and totals without double counting across machine
   snapshots.
-- Registry tests must prove the exact version-1 envelope, normalized persisted
-  defaults, deterministic ordering, and fail-closed unknown/version behavior.
+- Registry tests must prove exact version-1 source and version-2 current
+  envelopes, atomic one-way migration, migration-failure preservation,
+  normalized persisted defaults, deterministic ordering, and fail-closed
+  unknown/version behavior.
 - Cache-clear tests must prove per-machine atomicity, cross-machine partial
   results, rollback/store/poller rules, and recovery before and after logical
   publication of an empty cache.

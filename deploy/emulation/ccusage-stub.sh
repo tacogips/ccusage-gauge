@@ -33,6 +33,9 @@ if [ -n "$until_" ]; then
 fi
 
 case "$command" in
+  --version)
+    printf 'ccusage 20.0.17\n'
+    ;;
   blocks)
     if [ "$in_range" -eq 1 ]; then
       printf '{"blocks":[{"startTime":"2026-07-17T00:00:00.000Z","costUSD":%s,"models":["emulated-model-%s"]}]}' "$seed" "$seed"

@@ -58,8 +58,10 @@ At startup, `serve` loads the machine registry, synthesizes `local`, starts one
 background snapshot poller per enabled machine, and exposes machine-aware query,
 registry, and health endpoints. Local collection uses the configured local
 ccusage path and local reconciliation; SSH collection invokes the remote binary
-through a previously opened forwarded port. `serve` does not create an IAP
-tunnel, deploy remote software, push data, or persist anything remotely.
+through a direct endpoint or the remote-machine design's validated
+direct/jump/command adapter. An operator-opened local forward is a direct
+endpoint. `serve` does not create a provider-specific tunnel, deploy remote
+software, push data, or persist anything remotely.
 
 Only an absent registry file selects an empty SSH registry. Unsafe directory or
 file ownership/type/permissions, malformed JSON, invalid descriptors, or an
@@ -67,24 +69,60 @@ unusable persistence path fail startup before the listener or pollers start;
 there is no entry quarantine or synthetic-local fallback for a present invalid
 file. Recovery is to stop the service, repair or intentionally remove the file,
 and restart.
-The persisted document is the closed version-1 `schemaVersion`/`machines`
-envelope from the remote-machine design. Missing or unsupported versions and
-duplicate or unknown fields fail closed; API defaults are normalized before
-the canonical SSH-only document is written.
+The persisted document is the closed version-2 `schemaVersion`/`machines`
+envelope from the remote-machine design. An exact valid version-1 document is
+atomically migrated before listener or poller startup; migration failure keeps
+the original bytes and fails startup. Missing or unsupported versions and
+duplicate or unknown fields fail closed; API defaults are normalized before the
+canonical SSH-only version-2 document is written.
 
-One serialized registry owner validates the complete candidate, synchronizes an
-atomic mode-`0600` save, publishes its revision, cancels the affected poller
-generation, and installs the replacement before responding. Invalid
+One serialized registry owner validates and stages the complete candidate,
+synchronizes an atomic mode-`0600` save, reconciles the affected poller
+generation and snapshot/status state, then publishes the advanced revision
+before responding. A reconciliation failure compensates disk and runtime back
+to the prior revision; failed compensation latches
+`registry_reconciliation_required` until controlled restart recovery. Invalid
 descriptors, attempts to mutate `local`, unsafe machine ids or SSH options, and
 inline secret material leave both persisted and running state unchanged.
 Registry mutations, `GET /api/refresh`, and `DELETE /api/cache` require the
 remote-machine design's loopback/same-origin gate and
 `X-CCUsage-Gauge-Mutation: 1`; rejected requests perform no work.
 
+### Remote-machine observability actions
+
+The existing `client` command group adds:
+
+```text
+ccusage-gauge client machines test-connection <id> [--api-port <port>] [--json]
+ccusage-gauge client machines refresh <id> [--api-port <port>] [--json]
+```
+
+Both commands call the guarded additive routes defined in
+`design-docs/specs/design-remote-machine-collection.md` and set
+`X-CCUsage-Gauge-Mutation: 1`. Test connection reports `reachable` or `failed`
+plus the sanitized diagnostic and safe remediation. Refresh reloads the
+registry, recollects the selected enabled machine immediately, and reports
+refreshed/failed ids. Neither command accepts raw SSH arguments or a command to
+execute. A decoded action result with `status: "failed"` is written to stderr
+and exits `4`; successful `reachable` or `ok` results are written to stdout and
+exit `0`. `--json` preserves the exact action response on the corresponding
+stream.
+
+`config-check`, `usage-snapshot`, `serve`, and client runtime failures use the
+persistent bootstrap logger defined in `design-docs/specs/architecture.md`.
+Runtime commands activate it before configuration parsing; help and version do
+not activate it and remain side-effect free. The active file is still created
+lazily on the first record. CLI stderr and JSON error behavior remain
+authoritative for the caller even when persistent logging is unavailable.
+
 ## Exit and Error Behavior
 
 - `0`: requested operation completed successfully.
 - `2`: invalid command, option, or user-supplied value.
+- `3`: a `client` command could not reach the dashboard API.
+- `4`: a `client` command received an actionable non-5xx rejection or a
+  completed machine action with `status: "failed"`.
+- `5`: a `client` command received an API 5xx or unavailable snapshot/range.
 - `1`: configuration, state, `ccusage`, asset, bind, decoding, or other runtime
   failure.
 
@@ -92,6 +130,8 @@ Human-readable errors go to standard error and identify the failed boundary
 without printing raw usage output or environment contents. JSON output includes a
 machine-readable error code when JSON mode was requested. There is no fallback
 from an explicitly configured invalid `ccusagePath` to a different executable.
+`design-docs/specs/client-commands.md` remains authoritative for the complete
+client-command error-stream and exit-status mapping.
 
 The CLI reuses `AppCore` configuration, persistence, validation, aggregation, and
 HTTP behavior. It must not become a second implementation of product rules.

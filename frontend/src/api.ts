@@ -13,10 +13,28 @@ export interface MetricRow {
 export interface MetricTotals extends Omit<MetricRow, "date" | "agent" | "model" | "machine"> {}
 export interface MachineScope {
   requested: string;
+  dataDisposition: "current" | "historical";
   includedMachineIds: string[];
   staleMachineIds: string[];
   unavailableMachineIds: string[];
+  excludedFromCurrentTotalsMachineIds: string[];
+  machineAvailability: MachineAvailability[];
+  lastHourDataGaps: MachineDataGap[];
+  evaluatedAt: string;
   generatedAt?: string;
+}
+export interface MachineAvailability {
+  machine: string; available: boolean; unavailableSince?: string;
+  reasonCode: string;
+}
+export interface MachineDataGap {
+  machine: string; startAt: string; endAt: string; reasonCode: string;
+}
+export interface MachineLatestEvent {
+  machine: string; latestEventAt?: string;
+  markerState: "observed" | "noEvent" | "stale" | "unavailable";
+  inLastHour: boolean;
+  dataQuality?: "timestamped" | "sessionEstimated";
 }
 export interface MetricsResponse { range: string; rows: MetricRow[]; totals: MetricTotals; scope: MachineScope }
 export interface CostRow {
@@ -34,6 +52,7 @@ export interface CostSeriesResponse {
   rows: CostRow[];
   totalUSD: number;
   scope: MachineScope;
+  machineLatestEvents: MachineLatestEvent[];
 }
 export interface BudgetResponse {
   budgetUSD?: number; spentUSD: number; remainingUSD?: number; overageUSD: number;
@@ -69,7 +88,12 @@ export interface DashboardUIStateResponse { state?: DashboardUIState }
 export interface SSHConnection {
   host: string; port: number; user: string; identityFile?: string;
   extraOptions: string[]; remoteCcusagePath: string;
+  proxy?: SSHProxy;
 }
+export type SSHProxy =
+  | { kind: "direct" }
+  | { kind: "jump"; host: string; port: number; user: string; identityFile?: string; knownHostsFile?: string }
+  | { kind: "command"; executable: string };
 export interface Machine {
   id: string; displayName: string; kind: "local" | "ssh"; enabled: boolean; ssh?: SSHConnection;
 }
@@ -78,8 +102,29 @@ export interface MachineStatus {
   collectionState: "disabled" | "neverCollected" | "healthy" | "stale" | "error";
   snapshotAvailable: boolean; collectionInProgress: boolean; stale: boolean;
   coverageStart?: string; snapshotGeneratedAt?: string; lastAttemptAt?: string;
-  lastSuccessAt?: string; lastErrorAt?: string;
-  lastError?: { code: string; message: string }; refreshIntervalSeconds: number;
+  lastSuccessAt?: string; consecutiveFailureCount: number; unavailableSince?: string;
+  staleSince?: string; lastErrorAt?: string;
+  lastError?: SanitizedDiagnostic; lastHourDataGap?: { startAt: string; endAt: string };
+  refreshIntervalSeconds: number;
+}
+export interface SanitizedDiagnostic {
+  code: string; message: string; detail?: string; remediation?: string;
+}
+export interface MachineConnectionTestResponse {
+  machine: string; status: "reachable" | "failed"; testedAt: string;
+  diagnostic?: SanitizedDiagnostic;
+}
+export interface MachineRefreshResponse {
+  status: "ok" | "failed"; requested: string; refreshedMachineIds: string[];
+  failedMachineIds: string[]; generatedAt: string; diagnostic?: SanitizedDiagnostic;
+}
+export interface AvailabilityErrorResponse {
+  error: string | { code: string; message: string };
+  machine?: string; collectionState?: MachineStatus["collectionState"];
+  refreshIntervalSeconds?: number; scope?: MachineScope;
+  machineLatestEvents?: MachineLatestEvent[];
+  requestedCoverageStart?: string;
+  availableCoverageStart?: string;
 }
 export interface MachinesResponse { machines: Machine[] }
 export interface ChartColorScheme { machines: Record<string, string>; models: Record<string, string> }
@@ -93,10 +138,24 @@ export async function requestJSON<T>(path: string, init?: RequestInit): Promise<
   const response = await fetch(path, init);
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload?.error?.message ?? `Request failed (${response.status})`);
+    const message = typeof payload?.error === "string"
+      ? payload.error
+      : payload?.error?.message ?? `Request failed (${response.status})`;
+    throw new DashboardRequestError(response.status, message, payload);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+export class DashboardRequestError<T = unknown> extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly payload: T,
+  ) {
+    super(message);
+    this.name = "DashboardRequestError";
+  }
 }
 
 export function mutationJSON<T>(path: string, init: RequestInit = {}): Promise<T> {

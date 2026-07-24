@@ -17,6 +17,7 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
     case "blocks": payload = #"{"blocks":[]}"#
     case "daily": payload = #"{"daily":[]}"#
     case "session": payload = #"{"session":[]}"#
+    case "--version": payload = "ccusage 1.0"
     default: throw CCUsageCommandFailure(runnerKind: .local, phase: .commandExited, exitStatus: 2)
     }
     return ProcessResult(stdout: Data(payload.utf8), stderr: Data(), exitStatus: 0)
@@ -133,17 +134,39 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
     #expect(throws: MachineRegistryStoreError.registryPermissionsInvalid) { try MachineRegistryStore(fileURL: file).load() }
   }
 
-  @Test func repairsLegacyConfigurationDirectoryPermissions() throws {
+  @Test func rejectsUnsafeExistingConfigurationDirectoryPermissions() throws {
     let root = try machineTemporaryDirectory()
     let directory = root.appendingPathComponent("config/ccusage-gauge", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
 
-    let registry = try MachineRegistryStore(fileURL: directory.appendingPathComponent("machines.json")).load()
-
-    #expect(registry.machines == [.local])
+    let store = MachineRegistryStore(fileURL: directory.appendingPathComponent("machines.json"))
+    #expect(throws: MachineRegistryStoreError.registryPermissionsInvalid) { try store.load() }
     let permissions = try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? NSNumber
-    #expect(permissions?.intValue == 0o700)
+    #expect(permissions?.intValue == 0o755)
+  }
+
+  @Test func migratesVersionOneToCanonicalVersionTwoWithoutChangingMachines() throws {
+    let root = try machineTemporaryDirectory()
+    let directory = root.appendingPathComponent("config/ccusage-gauge", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+    let file = directory.appendingPathComponent("machines.json")
+    let original = #"""
+    {"schemaVersion":1,"machines":[{
+      "id":"remote","displayName":"Remote","kind":"ssh","enabled":true,
+      "ssh":{"host":"localhost","port":22,"user":"user","extraOptions":[],"remoteCcusagePath":"ccusage"}
+    }]}
+    """#
+    try Data(original.utf8).write(to: file)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+
+    let registry = try MachineRegistryStore(fileURL: file).load()
+    let migrated = String(decoding: try Data(contentsOf: file), as: UTF8.self)
+
+    #expect(registry.machines.map(\.id) == ["local", "remote"])
+    #expect(migrated.contains(#""schemaVersion" : 2"#))
+    #expect(try MachineRegistryStore(fileURL: file).load() == registry)
   }
 
   @Test(arguments: ["", "A", "-machine", "machine-", "a_b", "a.b", "all", "local"])
@@ -186,7 +209,12 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
     )
     status = try await store.status(machine: "local", now: Date(timeIntervalSince1970: 102))
     #expect(status.machines[0].collectionState == .error)
-    #expect(status.machines[0].lastError == SanitizedCollectionError(code: "invalid_response", message: "ccusage response was invalid"))
+    #expect(status.machines[0].lastError == SanitizedCollectionError(
+      code: "invalid_response",
+      message: "ccusage response was invalid",
+      detail: "ccusage returned an incompatible response.",
+      remediation: "Verify the installed ccusage version and retry."
+    ))
   }
 
   @Test func aggregatePreservesProvenanceAndUsesOldestGeneratedAt() async throws {
@@ -204,6 +232,55 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
     #expect(selection.scope.includedMachineIds == ["local", "remote"])
     #expect(selection.scope.generatedAt == other.generatedAt)
     #expect(Set(selection.snapshot!.dashboardMetrics.map(\.machine)) == ["local", "remote"])
+  }
+
+  @Test func currentSelectionExcludesStaleHistoryButHistoricalSelectionRetainsIt() async throws {
+    let remote = MachineDescriptor(
+      id: "remote", displayName: "Remote", kind: .ssh, enabled: true,
+      ssh: SSHConnection(host: "localhost", port: 22, user: "user")
+    )
+    let store = MachineSnapshotStore(
+      registry: try MachineRegistry(sshMachines: [remote]),
+      refreshIntervalSeconds: 20
+    )
+    let local = snapshot(machine: "local", generatedAt: Date(timeIntervalSince1970: 195), cost: 1)
+    let stale = snapshot(machine: "remote", generatedAt: Date(timeIntervalSince1970: 100), cost: 99)
+    await store.publish(
+      machineID: "local",
+      snapshot: local,
+      coverageStart: local.activeBoundaryAt,
+      revision: 0,
+      generation: 0,
+      now: local.generatedAt
+    )
+    await store.publish(
+      machineID: "remote",
+      snapshot: stale,
+      coverageStart: stale.activeBoundaryAt,
+      revision: 0,
+      generation: 0,
+      now: stale.generatedAt
+    )
+
+    let current = try await store.selection(
+      machine: "all",
+      now: Date(timeIntervalSince1970: 200),
+      dataDisposition: .current
+    )
+    let historical = try await store.selection(
+      machine: "all",
+      now: Date(timeIntervalSince1970: 200),
+      dataDisposition: .historical
+    )
+
+    #expect(current.scope.includedMachineIds == ["local"])
+    #expect(current.scope.excludedFromCurrentTotalsMachineIds == ["remote"])
+    #expect(current.scope.staleMachineIds == ["remote"])
+    #expect(current.snapshot?.costSinceResetUSD == 1)
+    #expect(current.scope.lastHourDataGaps.map(\.machine) == ["remote"])
+    #expect(historical.scope.includedMachineIds == ["local", "remote"])
+    #expect(historical.snapshot?.costSinceResetUSD == 100)
+    #expect(current.machineLatestEvents.first { $0.machine == "remote" }?.markerState == "stale")
   }
 
   private func snapshot(machine: String, generatedAt: Date, cost: Decimal) -> CostSnapshot {
@@ -514,6 +591,234 @@ private func aggregateSnapshot(machine: String, generatedAt: Date, cost: Decimal
     #expect(preflight.headers["Access-Control-Allow-Origin"] == nil)
   }
 
+  @Test func machineActionsReloadValidRegistryWithoutRestartAndRefreshTarget() async throws {
+    let runtime = try await routerRuntime()
+    defer { Task { await runtime.collector.stop() } }
+    let body = Data(
+      #"{"id":"remote","displayName":"Remote","kind":"ssh","enabled":true,"ssh":{"host":"localhost","port":22,"user":"ccusage"}}"#.utf8
+    )
+    let created = await runtime.router.route(
+      target: "/api/machines",
+      method: "POST",
+      headers: mutationHeaders,
+      body: body,
+      listenerPort: 18_081
+    )
+    #expect(created.status == 201)
+
+    var persisted = String(decoding: try Data(contentsOf: runtime.paths.machinesFile), as: UTF8.self)
+    persisted = persisted.replacingOccurrences(of: #""displayName" : "Remote""#, with: #""displayName" : "Edited""#)
+    try Data(persisted.utf8).write(to: runtime.paths.machinesFile, options: .atomic)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o600],
+      ofItemAtPath: runtime.paths.machinesFile.path
+    )
+
+    let tested = await runtime.router.route(
+      target: "/api/machines/remote/test-connection",
+      method: "POST",
+      headers: mutationHeaders,
+      body: Data("{}".utf8),
+      listenerPort: 18_081
+    )
+    let testPayload = try DashboardAPIClient.makeDecoder()
+      .decode(MachineConnectionTestResponse.self, from: tested.body)
+    #expect(tested.status == 200)
+    #expect(testPayload.status == "reachable")
+    #expect((await runtime.owner.current()).machine(id: "remote")?.displayName == "Edited")
+
+    let refreshed = await runtime.router.route(
+      target: "/api/machines/remote/refresh",
+      method: "POST",
+      headers: mutationHeaders,
+      body: Data("{}".utf8),
+      listenerPort: 18_081
+    )
+    let refreshPayload = try DashboardAPIClient.makeDecoder()
+      .decode(RefreshResponse.self, from: refreshed.body)
+    #expect(refreshed.status == 200)
+    #expect(refreshPayload.status == "ok")
+    #expect(refreshPayload.refreshedMachineIds == ["remote"])
+  }
+
+  @Test func machineCRUDSupportsCompleteReplacementPatchAndDelete() async throws {
+    let runtime = try await routerRuntime()
+    defer { Task { await runtime.collector.stop() } }
+    let created = await runtime.router.route(
+      target: "/api/machines",
+      method: "POST",
+      headers: mutationHeaders,
+      body: Data(
+        #"{"id":"remote","displayName":"Remote","kind":"ssh","enabled":true,"ssh":{"host":"target.example","port":22,"user":"ccusage","extraOptions":[],"proxy":{"kind":"direct"},"remoteCcusagePath":"ccusage"}}"#.utf8
+      ),
+      listenerPort: 18_081
+    )
+    #expect(created.status == 201)
+
+    let replaced = await runtime.router.route(
+      target: "/api/machines/remote",
+      method: "PUT",
+      headers: mutationHeaders,
+      body: Data(
+        #"{"displayName":"Via jump","kind":"ssh","enabled":true,"ssh":{"host":"target.example","port":2222,"user":"worker","extraOptions":[],"proxy":{"kind":"jump","host":"jump.example","port":2200,"user":"jump"},"remoteCcusagePath":"/usr/local/bin/ccusage"}}"#.utf8
+      ),
+      listenerPort: 18_081
+    )
+    try #require(replaced.status == 200)
+    let replacement = try JSONDecoder().decode(MachineDescriptor.self, from: replaced.body)
+    #expect(replacement.displayName == "Via jump")
+    #expect(replacement.ssh?.proxy == .jump(SSHJumpProxy(
+      host: "jump.example",
+      port: 2200,
+      user: "jump"
+    )))
+
+    let proxyExecutable = runtime.paths.machinesFile.deletingLastPathComponent()
+      .appendingPathComponent("test-tunnel")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: proxyExecutable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: proxyExecutable.path)
+    let patched = await runtime.router.route(
+      target: "/api/machines/remote",
+      method: "PATCH",
+      headers: mutationHeaders,
+      body: Data("""
+        {"displayName":"Via command","ssh":{"host":"target.example","port":22,"user":"worker","extraOptions":[],
+        "proxy":{"kind":"command","executable":"\(proxyExecutable.path)"},"remoteCcusagePath":"ccusage"}}
+        """.utf8),
+      listenerPort: 18_081
+    )
+    try #require(patched.status == 200)
+    let patch = try JSONDecoder().decode(MachineDescriptor.self, from: patched.body)
+    #expect(patch.displayName == "Via command")
+    #expect(patch.ssh?.proxy == .command(executable: proxyExecutable.path))
+
+    let listed = await runtime.router.route(
+      target: "/api/machines", method: "GET", headers: [:], body: Data(), listenerPort: 18_081
+    )
+    let shown = await runtime.router.route(
+      target: "/api/machines/remote", method: "GET", headers: [:], body: Data(), listenerPort: 18_081
+    )
+    #expect(listed.status == 200)
+    #expect(shown.status == 200)
+
+    let deleted = await runtime.router.route(
+      target: "/api/machines/remote",
+      method: "DELETE",
+      headers: mutationHeaders,
+      body: Data(),
+      listenerPort: 18_081
+    )
+    #expect(deleted.status == 204)
+    #expect((await runtime.owner.current()).machine(id: "remote") == nil)
+    #expect(await runtime.router.route(
+      target: "/api/machines/remote", method: "GET", headers: [:], body: Data(), listenerPort: 18_081
+    ).status == 404)
+  }
+
+  @Test func mutationRoutesRejectMalformedRequestsAndUnsupportedMethods() async throws {
+    let runtime = try await routerRuntime()
+    defer { Task { await runtime.collector.stop() } }
+    let validBody = Data(
+      #"{"id":"remote","displayName":"Remote","kind":"ssh","enabled":false,"ssh":{"host":"localhost","port":22,"user":"ccusage"}}"#.utf8
+    )
+    #expect(await runtime.router.route(
+      target: "/api/machines", method: "PUT", headers: mutationHeaders, body: validBody, listenerPort: 18_081
+    ).status == 405)
+    #expect(await runtime.router.route(
+      target: "/api/machines", method: "POST",
+      headers: mutationHeaders.merging(["content-type": "text/plain"]) { _, new in new },
+      body: validBody, listenerPort: 18_081
+    ).status == 415)
+    #expect(await runtime.router.route(
+      target: "/api/machines/%72emote", method: "GET", headers: [:], body: Data(), listenerPort: 18_081
+    ).status == 400)
+    #expect(await runtime.router.route(
+      target: "/api/machines", method: "POST", headers: mutationHeaders,
+      body: Data(#"{"id":"remote"}"#.utf8), listenerPort: 18_081
+    ).status == 400)
+    #expect(await runtime.router.route(
+      target: "/api/dashboard-state", method: "PUT", headers: mutationHeaders,
+      body: Data("{}".utf8), listenerPort: 18_081
+    ).status == 400)
+    #expect(await runtime.router.route(
+      target: "/api/chart-colors", method: "POST", headers: [:], body: Data(), listenerPort: 18_081
+    ).status == 405)
+  }
+
+  @Test func refreshCacheAndSelectionErrorsUseDocumentedResponses() async throws {
+    let runtime = try await routerRuntime()
+    defer { Task { await runtime.collector.stop() } }
+    let refreshed = await runtime.router.route(
+      target: "/api/refresh?machine=local",
+      method: "GET",
+      headers: mutationHeaders,
+      body: Data(),
+      listenerPort: 18_081
+    )
+    #expect(refreshed.status == 200)
+
+    let cache = runtime.paths.aggregationCacheFile(forMachine: "local")
+    try FileManager.default.createDirectory(
+      at: cache.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try Data("cache".utf8).write(to: cache)
+    let cleared = await runtime.router.route(
+      target: "/api/cache?machine=local",
+      method: "DELETE",
+      headers: mutationHeaders,
+      body: Data(),
+      listenerPort: 18_081
+    )
+    #expect(cleared.status == 200)
+    #expect(!FileManager.default.fileExists(atPath: cache.path))
+
+    #expect(await runtime.router.route(
+      target: "/api/cache", method: "POST", headers: mutationHeaders, body: Data(), listenerPort: 18_081
+    ).status == 405)
+    #expect(await runtime.router.route(
+      target: "/api/refresh?machine=missing", method: "GET", headers: mutationHeaders,
+      body: Data(), listenerPort: 18_081
+    ).status == 404)
+    #expect(await runtime.router.route(
+      target: "/api/machine-status?machine=missing", method: "GET", headers: [:],
+      body: Data(), listenerPort: 18_081
+    ).status == 404)
+    #expect(await runtime.router.route(
+      target: "/api/machine-status?machine=bad%20id", method: "GET", headers: [:],
+      body: Data(), listenerPort: 18_081
+    ).status == 400)
+  }
+
+  @Test func queryRoutesValidateDatesRangesGranularityAndUnknownPaths() async throws {
+    let runtime = try await routerRuntime()
+    defer { Task { await runtime.collector.stop() } }
+    await runtime.collector.store.publish(
+      machineID: "local",
+      snapshot: aggregateSnapshot(machine: "local", generatedAt: Date(), cost: 3),
+      coverageStart: .distantPast,
+      revision: 0,
+      generation: 0,
+      now: Date()
+    )
+    let statuses: [(String, Int)] = [
+      ("/api/health", 200),
+      ("/api/day?machine=local", 400),
+      ("/api/period?range=custom&start=2026-07-01&machine=local", 400),
+      ("/api/period?range=custom&start=2026-07-01&end=2026-07-02&machine=local", 200),
+      ("/api/metrics?range=custom&start=2026-07-01&end=2026-07-02&machine=local", 200),
+      ("/api/cost-series?range=custom&start=2026-07-01&end=2026-07-02&granularity=daily&machine=local", 200),
+      ("/api/period?range=invalid&machine=local", 400),
+      ("/api/cost-series?range=today&granularity=invalid&machine=local", 400),
+      ("/api/unknown?machine=local", 404)
+    ]
+    for (target, expected) in statuses {
+      #expect(await runtime.router.route(
+        target: target, method: "GET", headers: [:], body: Data(), listenerPort: 18_081
+      ).status == expected)
+    }
+  }
+
   private var mutationHeaders: [String: String] {
     [
       "host": "127.0.0.1:18081",
@@ -541,14 +846,18 @@ private func routerRuntime(chartColors: ChartColorConfiguration = ChartColorConf
   let registry = try registryStore.load()
   let store = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: 20)
   let stateStore = StateStore(fileURL: paths.stateFile)
-  let collector = try MachineCollector(registry: registry, store: store) { descriptor in
+  let collector = try MachineCollector(
+    registry: registry,
+    store: store,
+    connectionTester: { _ in }
+  ) { descriptor in
     SnapshotService(
       stateStore: stateStore,
       client: CCUsageClient(commandRunner: StubCCUsageRunner(), machine: descriptor.id),
       aggregationCache: nil
     )
   }
-  let owner = MachineRegistryMutationOwner(store: registryStore, registry: registry)
+  let owner = MachineRegistryMutationOwner(store: registryStore, registry: registry, runtime: collector)
   return RouterRuntime(
     router: MachineDashboardRouter(store: store, collector: collector, mutationOwner: owner, paths: paths, chartColors: chartColors),
     collector: collector,

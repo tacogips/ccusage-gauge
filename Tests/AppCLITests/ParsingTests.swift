@@ -15,7 +15,11 @@ struct CommandParsingTests {
     #expect(ClientCommand.helpMessage().contains("machines"))
     #expect(ClientCommand.helpMessage().contains("dashboard"))
     #expect(MachinesAddCommand.helpMessage().contains("--identity-file"))
+    #expect(MachinesAddCommand.helpMessage().contains("--proxy-jump-host"))
+    #expect(MachinesAddCommand.helpMessage().contains("--proxy-command-executable"))
     #expect(MachinesAddCommand.helpMessage().contains("contents are never read"))
+    #expect(MachinesCommand.helpMessage().contains("test-connection"))
+    #expect(MachinesCommand.helpMessage().contains("refresh"))
     #expect(DashboardCommand.helpMessage().contains("cost-series"))
     #expect(DashboardCommand.helpMessage().contains("machine-status"))
   }
@@ -77,6 +81,43 @@ struct CommandParsingTests {
     #expect(add.identityFile == "/tmp/ccusage-gauge-test-id")
     #expect(add.sshOptions == ["-4", "-o ConnectTimeout=10"])
     #expect(add.disabled)
+  }
+
+  @Test func parsesStructuredProxyAndActionCommands() throws {
+    let jump = try #require(RootCommand.parseAsRoot([
+      "client", "machines", "add", "remote",
+      "--host", "target.example", "--user", "target",
+      "--proxy-jump-host", "jump.example", "--proxy-jump-user", "jump",
+      "--proxy-jump-port", "2200",
+      "--proxy-jump-known-hosts-file", "/tmp/known-hosts"
+    ]) as? MachinesAddCommand)
+    #expect(jump.proxyJumpHost == "jump.example")
+    #expect(jump.proxyJumpUser == "jump")
+    #expect(jump.proxyJumpPort == 2200)
+    #expect(jump.proxyJumpKnownHostsFile == "/tmp/known-hosts")
+
+    let test = try RootCommand.parseAsRoot(["client", "machines", "test-connection", "remote"])
+    let refresh = try RootCommand.parseAsRoot(["client", "machines", "refresh", "remote"])
+    #expect(test is MachinesTestConnectionCommand)
+    #expect(refresh is MachinesRefreshCommand)
+  }
+
+  @Test func rejectsConflictingOrIncompleteProxyOptions() {
+    #expect(throws: (any Error).self) {
+      _ = try RootCommand.parseAsRoot([
+        "client", "machines", "add", "remote",
+        "--host", "target.example", "--user", "target",
+        "--proxy-jump-host", "jump.example",
+        "--proxy-command-executable", "/usr/local/bin/tunnel"
+      ])
+    }
+    #expect(throws: (any Error).self) {
+      _ = try RootCommand.parseAsRoot([
+        "client", "machines", "add", "remote",
+        "--host", "target.example", "--user", "target",
+        "--proxy-jump-host", "jump.example"
+      ])
+    }
   }
 
   @Test func rejectsMissingRequiredHost() {

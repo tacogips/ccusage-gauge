@@ -34,6 +34,36 @@ struct RendererTests {
     #expect(text.contains("ssh.identityFile: /secret/key"))
   }
 
+  @Test func rendersStructuredProxyAndSanitizedActionFailures() {
+    let descriptor = MachineDescriptor(
+      id: "remote",
+      displayName: "Remote",
+      kind: .ssh,
+      enabled: true,
+      ssh: SSHConnection(
+        host: "target.example",
+        port: 22,
+        user: "target",
+        proxy: .jump(SSHJumpProxy(host: "jump.example", user: "jump"))
+      )
+    )
+    let detail = MachineRenderer.show(descriptor)
+    #expect(detail.contains("ssh.proxy.kind: jump"))
+    #expect(detail.contains("ssh.proxy.host: jump.example"))
+
+    let diagnostic = MachineDiagnosticClassifier.diagnostic(for: "auth_failed")
+    let response = MachineConnectionTestResponse(
+      machine: "remote",
+      status: "failed",
+      testedAt: Date(timeIntervalSince1970: 0),
+      diagnostic: diagnostic
+    )
+    let rendered = MachineRenderer.connectionTest(response)
+    #expect(rendered.contains("remote: failed"))
+    #expect(rendered.contains("diagnostic: auth_failed"))
+    #expect(rendered.contains("remediation:"))
+  }
+
   @Test func rendersBudgetSummary() {
     let json = #"""
     {"activeBoundaryAt":"2026-07-21T00:00:00Z","budgetUSD":100,"overageUSD":0,

@@ -8,12 +8,16 @@ the implementation and any later reviewer share the same premises.
 
 ## Decisions
 
-1. Transport: SSH-exec over a forwarded port.
-   - Host opens a port-forward / IAP tunnel to the machine's `sshd` and runs
-     `ssh <machine> ccusage <cmd> --json`, tagging the output with the machine id.
-   - Remote setup is only `ccusage` + `sshd` (already present on a GCP box).
+1. Transport: provider-neutral SSH exec.
+   - The host reaches the machine directly, through a validated structured
+     `ProxyJump` or fixed-protocol `ProxyCommand` adapter, or through an
+     operator-opened local forward represented as a direct endpoint. It runs
+     `ssh <machine> ccusage <cmd> --json`, tagging output with the machine id.
+   - Remote setup is only `ccusage` plus `sshd`; no provider-specific remote
+     component is required.
    - No daemon to deploy, no remote push, nothing persisted on the remote.
-   - Matches the user's "direct ccusage via port-forward" and "lightest remote".
+   - This preserves the original direct-via-forward deployment while applying
+     one behavior contract to other SSH proxy and tunnel arrangements.
    - Prometheus exporter was rejected: heavier remote setup and its counter/gauge
      model loses the per-agent / per-model / token breakdown the dashboard needs.
 
@@ -43,9 +47,18 @@ the implementation and any later reviewer share the same premises.
 5. SSH execution safety contract.
    - Ignore ambient SSH config with `-F /dev/null`, use a fixed canonical option
      order, quote every remote token for the remote POSIX shell, accept only the
-     closed operational option allowlist in the design, and reject config,
+     closed operational option allowlist in the design, and reject raw config,
      proxy, command-hook, environment, remote-command, forwarding, and
-     destination override forms.
+     destination override forms in `extraOptions`.
+   - Proxy behavior is represented only by the optional structured adapter:
+     direct/local-forward endpoints use direct mode, `ProxyJump` uses validated
+     hop fields, and `ProxyCommand` uses an absolute owner-safe executable with
+     one application-owned `connect --host <host> --port <port>` invocation.
+     Raw proxy strings, adapter arguments, environment/configuration values,
+     credentials, and shell fragments remain invalid.
+   - Final targets always enforce host-key verification; jump hops also verify
+     their own host identity. No adapter accepts inline credential contents or
+     can request weakened host-key behavior.
    - `remoteCcusagePath` is one safe bare executable name or absolute POSIX path,
      never a command string.
 
@@ -56,13 +69,19 @@ the implementation and any later reviewer share the same premises.
 
 7. Missing, stale, and aggregate snapshot behavior.
    - A selected enabled machine with no snapshot returns `503`; disabled returns
-     `409`; unknown returns `404`. Retained stale snapshots remain readable.
-   - The all-machine view returns partial `200` results when at least one enabled
-     snapshot exists and exposes included, stale, and unavailable ids in response
-     scope metadata; no usable snapshots returns `503`.
+     `409`; unknown returns `404`. Retained stale snapshots remain readable only
+     for an explicitly historical interval.
+   - Current intervals exclude stale, failed, never-collected, and disabled
+     machines before rows or totals are computed. The all-machine view returns
+     partial `200` results only when at least one enabled machine has an eligible
+     current snapshot; when none does it returns `503` with complete exclusion
+     and availability metadata.
+   - Historical all-machine intervals may include retained stale snapshots and
+     expose included, stale, and unavailable ids in response scope metadata.
    - Aggregation uses the host calendar/reset boundary, the oldest component as
      `generatedAt`, the minimum positive refresh interval, and one host budget.
-     Spending and derived budget values are recomputed from included rows.
+     Spending and derived budget values are recomputed only from eligible
+     included rows.
 
 8. Machine registry HTTP contract.
    - The collection route is exactly `/api/machines`; item updates and deletion
@@ -119,11 +138,15 @@ the implementation and any later reviewer share the same premises.
     - Command runners retain typed launch, timeout, signal, SSH transport-exit,
       and ccusage command-exit failures through `CCUsageClient`; they are not
       collapsed into an unqualified nonzero-exit error.
-    - Public health sanitization is deterministic: launch/timeout/signal/SSH
-      status 255 is `transport_failed`; local or remote ccusage nonzero exit is
-      `remote_command_failed`; response decode/shape is `invalid_response`;
-      cache operations are `cache_failed`; other non-cancellation collection
-      failures are `internal_error`. Raw typed details remain internal.
+    - Public health sanitization is deterministic and ordered. An SSH transport
+      exit uses bounded normalized stderr only to select the closed
+      `host_key_verification_failed`, `auth_failed`, or `tunnel_unreachable`
+      signature family; an unmatched SSH transport exit, launch failure, or
+      signal is `transport_failed`. A runner deadline is `timeout`; local or
+      remote ccusage nonzero exit is `remote_command_failed`; response
+      decode/shape is `invalid_response`; cache operations are `cache_failed`;
+      other non-cancellation collection failures are `internal_error`. Raw
+      typed details and matched stderr are never public.
 
 13. Existing local-cache upgrade behavior.
     - Preserve a sole valid `aggregates.sqlite3` by checkpointing and atomically
@@ -186,16 +209,25 @@ the implementation and any later reviewer share the same premises.
       paths and prove equal rows from different machines remain attributable.
 
 18. Versioned registry representation.
-    - `machines.json` is exactly a closed `{"schemaVersion":1,"machines":[]}`
-      envelope. Both top-level keys are required, only persisted SSH descriptors
-      are allowed, and all object levels reject duplicate and unknown keys.
+    - The current `machines.json` is exactly a closed
+      `{"schemaVersion":2,"machines":[]}` envelope. Both top-level keys are
+      required, only persisted SSH descriptors are allowed, and all object
+      levels reject duplicate and unknown keys.
     - The canonical persisted SSH shape explicitly writes `extraOptions` and
       `remoteCcusagePath`; API omission defaults these to `[]` and `ccusage`
-      before persistence. `identityFile` is the sole optional persisted SSH key
-      and is omitted rather than `null`.
-    - Version 1 is the only accepted version. Missing, lower, higher, malformed,
-      and unversioned representations fail closed without rewrite or fallback.
-      Future formats require an explicit version and tested atomic migration.
+      before persistence. `identityFile` and the structured `proxy` union are
+      optional persisted SSH keys and are omitted rather than `null`; omitted
+      proxy means direct behavior.
+    - The exact existing version-1 envelope remains a recognized migration
+      source and cannot contain `proxy`. A valid version-1 document is atomically
+      rewritten to version 2 with every proxy omitted before registry
+      publication or poller startup. Migration failure preserves the original
+      bytes and fails startup.
+    - Version 2 `direct`, `jump`, and `command` variants reject duplicate,
+      unknown, raw-option, raw-shell, arbitrary-argument, credential-content,
+      and unsafe host-key fields. Missing, unsupported, malformed, and
+      unversioned representations fail closed. Future formats require an
+      explicit version and tested atomic migration.
 
 19. Cache-clear behavioral contract.
     - A clear is atomic for one machine and intentionally partial across an
@@ -212,6 +244,34 @@ the implementation and any later reviewer share the same premises.
       coverage. An incomplete rollback preserves the stale snapshot, stops that
       poller, and fails closed as `cache_failed` until deterministic recovery
       succeeds. The implementation plan owns the concrete durability mechanism.
+
+20. Latest-event metadata when current data is unavailable.
+    - `/api/cost-series` returns `machineLatestEvents` for every resolved
+      selected machine on successful responses and on recognized disabled,
+      snapshot-unavailable, and current-data-unavailable responses.
+    - A retained stale timestamp is metadata only. It can render a distinct
+      stale marker but cannot make stale source rows eligible for current
+      series, totals, budgets, or summary cards.
+    - Never-collected machines return an unavailable marker with a null event
+      timestamp. Malformed and unknown selections have no resolved machine set
+      and omit marker metadata.
+
+21. Provider-neutral behavior and diagnostic fallback.
+    - GCE and IAP remain motivating deployment examples only. Direct SSH,
+      `ProxyJump`, `ProxyCommand`, local forwarding, and equivalent
+      operator-managed tunnels use the same registry, transport, API, action,
+      status, diagnostic, remediation, and UI contracts.
+    - `ProxyJump` and `ProxyCommand` are concrete structured adapter variants,
+      not claims about unsupported ambient SSH configuration. Provider-specific
+      helpers may be selected only as an operator-supplied command-adapter
+      executable implementing the fixed stdio protocol; the application does
+      not accept helper arguments or name or branch on providers.
+    - No provider name, machine id, or tunnel product may select a code path,
+      API field or route, failure enum or classifier, remediation, or UI label.
+    - `internal_error` is the sanitized fallback only after host-key,
+      authentication, proxy/tunnel reachability, timeout, remote-command,
+      invalid-response, and cache classifications do not apply. It never
+      exposes raw stderr or exception text.
 
 ## Open questions
 

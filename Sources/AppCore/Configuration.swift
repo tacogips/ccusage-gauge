@@ -226,13 +226,15 @@ public struct AppPaths: Sendable {
   public let aggregationCacheFile: URL
   public let dashboardStateFile: URL
   public let machinesFile: URL
+  public let logDirectory: URL
 
   public init(
     configFile: URL,
     stateFile: URL,
     aggregationCacheFile: URL,
     dashboardStateFile: URL? = nil,
-    machinesFile: URL? = nil
+    machinesFile: URL? = nil,
+    logDirectory: URL? = nil
   ) {
     self.configFile = configFile
     self.stateFile = stateFile
@@ -240,6 +242,8 @@ public struct AppPaths: Sendable {
     self.dashboardStateFile = dashboardStateFile
       ?? aggregationCacheFile.deletingLastPathComponent().appendingPathComponent("dashboard-state.sqlite3")
     self.machinesFile = machinesFile ?? configFile.deletingLastPathComponent().appendingPathComponent("machines.json")
+    self.logDirectory = logDirectory
+      ?? stateFile.deletingLastPathComponent().appendingPathComponent("logs", isDirectory: true)
   }
 
   public func aggregationCacheFile(forMachine machineID: String) -> URL {
@@ -260,6 +264,11 @@ public struct AppPaths: Sendable {
       aggregationCacheFile: cacheRoot.appendingPathComponent("ccusage-gauge/aggregates.sqlite3"),
       dashboardStateFile: cacheRoot.appendingPathComponent("ccusage-gauge/dashboard-state.sqlite3")
     )
+  }
+
+  public static func defaultLogDirectory(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+    let home = URL(fileURLWithPath: environment["CCUSAGE_GAUGE_HOME"] ?? environment["HOME"] ?? NSHomeDirectory())
+    return home.appendingPathComponent(".local/ccusage-gauge/logs", isDirectory: true)
   }
 }
 

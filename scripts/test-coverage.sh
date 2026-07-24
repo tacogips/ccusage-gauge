@@ -5,7 +5,11 @@ repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
 
 swift test --enable-code-coverage
-profile_path="$(swift test --show-codecov-path)"
+coverage_output_path="$(swift test --show-codecov-path)"
+profile_path="$coverage_output_path"
+if [[ "$coverage_output_path" == *.json ]]; then
+  profile_path="$(dirname "$coverage_output_path")/default.profdata"
+fi
 build_path="$(swift build --show-bin-path)"
 test_binary="$(find "$build_path" -type f -perm -111 -name '*PackageTests' -print -quit)"
 if [[ -z "$test_binary" ]]; then
@@ -31,7 +35,8 @@ import json, sys
 payload = json.loads(sys.argv[1])
 totals = payload["data"][0]["totals"]["lines"]
 percent = float(totals["percent"])
-print(f"AppCore+AppCLI executable line coverage: {percent:.2f}% ({totals['count'] - totals['notcovered']}/{totals['count']})")
+covered = totals.get("covered", totals["count"] - totals.get("notcovered", totals["count"]))
+print(f"AppCore+AppCLI executable line coverage: {percent:.2f}% ({covered}/{totals['count']})")
 if percent < 80.0:
     raise SystemExit("line coverage is below the required 80.0%")
 PY

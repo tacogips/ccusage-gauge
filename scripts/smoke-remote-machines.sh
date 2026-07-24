@@ -117,6 +117,19 @@ register_machine() {
 register_machine machine-a
 register_machine machine-b
 
+connection_json="$("${compose[@]}" exec -T collector curl --fail --silent \
+  -H 'Content-Type: application/json' \
+  -H 'X-CCUsage-Gauge-Mutation: 1' \
+  -X POST http://127.0.0.1:18081/api/machines/machine-a/test-connection \
+  --data '{}')"
+python3 - "$connection_json" <<'PY'
+import json, sys
+result = json.loads(sys.argv[1])
+assert result["machine"] == "machine-a"
+assert result["status"] == "reachable", result
+assert result.get("diagnostic") is None, result
+PY
+
 # Wait until both remote machines have completed their first collection. The
 # `local` machine reports healthy almost immediately, so gate on machine-a and
 # machine-b specifically; querying their metrics before a snapshot exists
@@ -132,42 +145,55 @@ done
 
 machine_a_json="$("${compose[@]}" exec -T collector curl --fail --silent 'http://127.0.0.1:18081/api/metrics?range=all&machine=machine-a')"
 all_json="$("${compose[@]}" exec -T collector curl --fail --silent 'http://127.0.0.1:18081/api/metrics?range=all&machine=all')"
-python3 - "$machine_a_json" "$all_json" <<'PY'
+marker_json="$("${compose[@]}" exec -T collector curl --fail --silent 'http://127.0.0.1:18081/api/cost-series?range=recent12h&granularity=hourly&machine=all')"
+python3 - "$machine_a_json" "$all_json" "$marker_json" <<'PY'
 import json, sys
 one = json.loads(sys.argv[1])
 all_data = json.loads(sys.argv[2])
-assert one["rows"] and all(row["machine"] == "machine-a" for row in one["rows"])
-assert {row["machine"] for row in all_data["rows"]} >= {"machine-a", "machine-b"}
-assert set(all_data["scope"]["includedMachineIds"]) >= {"local", "machine-a", "machine-b"}
+markers = json.loads(sys.argv[3])
+assert one["rows"] and all(row["machine"] == "machine-a" for row in one["rows"]), one
+assert {row["machine"] for row in all_data["rows"]} >= {"machine-a", "machine-b"}, all_data
+assert set(all_data["scope"]["includedMachineIds"]) >= {"local", "machine-a", "machine-b"}, all_data
 remote_total = sum(row["costUSD"] for row in all_data["rows"] if row["machine"] != "local")
 assert remote_total == 3
 assert sum(row["costUSD"] for row in all_data["rows"] if row["machine"] == "local") == 0
+assert {item["machine"] for item in markers["machineLatestEvents"]} >= {"local", "machine-a", "machine-b"}
 PY
 
 "${compose[@]}" stop machine-b >/dev/null
 # Force machine-b to re-poll now so it fails fast (connection refused) and is
-# marked stale, instead of waiting for the full poll interval. The single-machine
-# refresh returns 503 when the only target fails, so do not use --fail here.
+# marked stale, instead of waiting for the full poll interval.
 degraded_json=""
+refresh_json=""
 for _ in $(seq 1 60); do
-  "${compose[@]}" exec -T collector curl --silent -o /dev/null \
+  refresh_json="$("${compose[@]}" exec -T collector curl --silent \
+    -H 'Content-Type: application/json' \
     -H 'X-CCUsage-Gauge-Mutation: 1' \
-    'http://127.0.0.1:18081/api/refresh?machine=machine-b' || true
+    -X POST http://127.0.0.1:18081/api/machines/machine-b/refresh \
+    --data '{}')" || true
   degraded_json="$("${compose[@]}" exec -T collector curl --fail --silent 'http://127.0.0.1:18081/api/metrics?range=all&machine=all')"
   if printf '%s' "$degraded_json" | python3 -c 'import json,sys
 s = json.load(sys.stdin)["scope"]
 sys.exit(0 if "machine-b" in s["staleMachineIds"] or "machine-b" in s["unavailableMachineIds"] else 1)'; then break; fi
   sleep 0.5
 done
-python3 - "$degraded_json" <<'PY'
+current_json="$("${compose[@]}" exec -T collector curl --fail --silent 'http://127.0.0.1:18081/api/metrics?range=today&machine=all')"
+python3 - "$degraded_json" "$current_json" "$refresh_json" <<'PY'
 import json, sys
 data = json.loads(sys.argv[1])
+current = json.loads(sys.argv[2])
+refresh = json.loads(sys.argv[3])
 scope = data["scope"]
 assert "machine-b" in scope["staleMachineIds"] or "machine-b" in scope["unavailableMachineIds"]
 assert data["rows"]
 assert all("machine" in row for row in data["rows"])
 assert "host.docker.internal" not in json.dumps(data)
 assert "id_ed25519" not in json.dumps(data)
+assert refresh["status"] == "failed"
+assert refresh["diagnostic"]["code"] in {"tunnel_unreachable", "timeout", "transport_failed"}
+assert "machine-b" in current["scope"]["excludedFromCurrentTotalsMachineIds"]
+assert all(row["machine"] != "machine-b" for row in current["rows"])
+assert any(gap["machine"] == "machine-b" for gap in current["scope"]["lastHourDataGaps"])
 PY
 
 if "${compose[@]}" port collector 18081 2>/dev/null | grep -q .; then
@@ -194,4 +220,4 @@ if "${compose[@]}" config | grep -E '^[[:space:]]*secrets:|/\.ssh' >/dev/null; t
   printf 'compose configuration contains a forbidden secret or host SSH mount\n' >&2
   exit 1
 fi
-printf 'remote-machine emulation passed: local/two-remote aggregate, degraded partial state, provenance, and tmpfs credential isolation verified\n'
+printf 'remote-machine emulation passed: connection action, targeted refresh, stale exclusion, latest markers, provenance, and tmpfs credential isolation verified\n'

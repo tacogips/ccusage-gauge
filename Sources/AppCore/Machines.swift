@@ -10,12 +10,87 @@ public enum MachineKind: String, Codable, Sendable {
   case ssh
 }
 
+public struct SSHJumpProxy: Codable, Equatable, Sendable {
+  public let host: String
+  public let port: Int
+  public let user: String
+  public let identityFile: String?
+  public let knownHostsFile: String?
+
+  public init(
+    host: String,
+    port: Int = 22,
+    user: String,
+    identityFile: String? = nil,
+    knownHostsFile: String? = nil
+  ) {
+    self.host = host
+    self.port = port
+    self.user = user
+    self.identityFile = identityFile
+    self.knownHostsFile = knownHostsFile
+  }
+}
+
+public enum SSHProxy: Equatable, Sendable {
+  case direct
+  case jump(SSHJumpProxy)
+  case command(executable: String)
+}
+
+extension SSHProxy: Codable {
+  private enum CodingKeys: String, CodingKey {
+    case kind, host, port, user, identityFile, knownHostsFile, executable
+  }
+
+  private enum Kind: String, Codable {
+    case direct, jump, command
+  }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    switch try values.decode(Kind.self, forKey: .kind) {
+    case .direct:
+      self = .direct
+    case .jump:
+      self = .jump(SSHJumpProxy(
+        host: try values.decode(String.self, forKey: .host),
+        port: try values.decode(Int.self, forKey: .port),
+        user: try values.decode(String.self, forKey: .user),
+        identityFile: try values.decodeIfPresent(String.self, forKey: .identityFile),
+        knownHostsFile: try values.decodeIfPresent(String.self, forKey: .knownHostsFile)
+      ))
+    case .command:
+      self = .command(executable: try values.decode(String.self, forKey: .executable))
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    switch self {
+    case .direct:
+      try values.encode(Kind.direct, forKey: .kind)
+    case .jump(let jump):
+      try values.encode(Kind.jump, forKey: .kind)
+      try values.encode(jump.host, forKey: .host)
+      try values.encode(jump.port, forKey: .port)
+      try values.encode(jump.user, forKey: .user)
+      try values.encodeIfPresent(jump.identityFile, forKey: .identityFile)
+      try values.encodeIfPresent(jump.knownHostsFile, forKey: .knownHostsFile)
+    case .command(let executable):
+      try values.encode(Kind.command, forKey: .kind)
+      try values.encode(executable, forKey: .executable)
+    }
+  }
+}
+
 public struct SSHConnection: Codable, Equatable, Sendable {
   public let host: String
   public let port: Int
   public let user: String
   public let identityFile: String?
   public let extraOptions: [String]
+  public let proxy: SSHProxy?
   public let remoteCcusagePath: String
 
   public init(
@@ -24,6 +99,7 @@ public struct SSHConnection: Codable, Equatable, Sendable {
     user: String,
     identityFile: String? = nil,
     extraOptions: [String] = [],
+    proxy: SSHProxy? = nil,
     remoteCcusagePath: String = "ccusage"
   ) {
     self.host = host
@@ -31,6 +107,7 @@ public struct SSHConnection: Codable, Equatable, Sendable {
     self.user = user
     self.identityFile = identityFile
     self.extraOptions = extraOptions
+    self.proxy = proxy
     self.remoteCcusagePath = remoteCcusagePath
   }
 }
@@ -127,9 +204,43 @@ public enum MachineValidation {
         errors["ssh.identityFile"] = "must be a readable user-only regular file"
       }
     }
+    validate(proxy: connection.proxy, requireReadableIdentity: requireReadableIdentity, errors: &errors)
     do { try validateExtraOptions(connection.extraOptions) }
     catch let error as MachineValidationError { errors.merge(error.fieldErrors) { current, _ in current } }
     if !errors.isEmpty { throw MachineValidationError(fieldErrors: errors) }
+  }
+
+  private static func validate(
+    proxy: SSHProxy?,
+    requireReadableIdentity: Bool,
+    errors: inout [String: String]
+  ) {
+    guard let proxy else { return }
+    switch proxy {
+    case .direct:
+      return
+    case .jump(let jump):
+      if !isValidHost(jump.host) { errors["ssh.proxy.host"] = "must be a valid DNS name or IP literal" }
+      if !(1...65_535).contains(jump.port) { errors["ssh.proxy.port"] = "must be in 1...65535" }
+      if !matches(userPattern, jump.user) { errors["ssh.proxy.user"] = "has invalid characters" }
+      for (field, path) in [
+        ("ssh.proxy.identityFile", jump.identityFile),
+        ("ssh.proxy.knownHostsFile", jump.knownHostsFile)
+      ] {
+        guard let path else { continue }
+        if !isNormalizedAbsolutePath(path) {
+          errors[field] = "must be a normalized absolute local path"
+        } else if requireReadableIdentity, field.hasSuffix("identityFile"), !isSafeIdentityFile(path) {
+          errors[field] = "must be a readable user-only regular file"
+        }
+      }
+    case .command(let executable):
+      if !isNormalizedAbsolutePath(executable) {
+        errors["ssh.proxy.executable"] = "must be a normalized absolute executable path"
+      } else if requireReadableIdentity && !isSafeProxyExecutable(executable) {
+        errors["ssh.proxy.executable"] = "must be a current-user executable regular file"
+      }
+    }
   }
 
   public static func normalizedDisplayName(_ value: String) throws -> String {
@@ -235,6 +346,16 @@ public enum MachineValidation {
     return true
   }
 
+  private static func isSafeProxyExecutable(_ path: String) -> Bool {
+    var metadata = stat()
+    guard lstat(path, &metadata) == 0,
+          (metadata.st_mode & S_IFMT) == S_IFREG,
+          metadata.st_uid == getuid(),
+          metadata.st_mode & 0o022 == 0,
+          access(path, X_OK) == 0 else { return false }
+    return true
+  }
+
   private static func matches(_ expression: NSRegularExpression, _ value: String) -> Bool {
     expression.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil
   }
@@ -268,7 +389,8 @@ public enum MachineRegistryStoreError: Error, Equatable, CustomStringConvertible
   public var description: String {
     switch self {
     case .registryLoadFailed: "Machine registry could not be loaded"
-    case .registryPermissionsInvalid: "Machine registry permissions are invalid"
+    case .registryPermissionsInvalid:
+      "Machine registry permissions are invalid. Set the configuration directory mode to 0700 and machines.json to 0600."
     case .registryPersistenceFailed: "Machine registry could not be persisted"
     }
   }
@@ -279,7 +401,12 @@ private struct PersistedMachineRegistry: Codable {
   let machines: [MachineDescriptor]
 }
 
-public struct MachineRegistryStore: @unchecked Sendable {
+public protocol MachineRegistryPersistence: Sendable {
+  func load() throws -> MachineRegistry
+  func save(_ registry: MachineRegistry) throws
+}
+
+public struct MachineRegistryStore: MachineRegistryPersistence, @unchecked Sendable {
   public let fileURL: URL
   private let fileManager: FileManager
 
@@ -298,15 +425,22 @@ public struct MachineRegistryStore: @unchecked Sendable {
       try validateFileMetadata()
       let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
       guard data.count <= 65_536 else { throw MachineRegistryStoreError.registryLoadFailed }
-      try validateClosedShape(data)
+      let schemaVersion = try validateClosedShape(data)
       let persisted = try JSONDecoder().decode(PersistedMachineRegistry.self, from: data)
-      guard persisted.schemaVersion == 1, persisted.machines.allSatisfy({ $0.kind == .ssh }) else {
+      guard persisted.schemaVersion == schemaVersion, persisted.machines.allSatisfy({ $0.kind == .ssh }) else {
         throw MachineRegistryStoreError.registryLoadFailed
       }
       for descriptor in persisted.machines {
         if let connection = descriptor.ssh { try MachineValidation.validate(connection: connection, requireReadableIdentity: true) }
       }
-      return try MachineRegistry(sshMachines: persisted.machines)
+      let registry = try MachineRegistry(sshMachines: persisted.machines)
+      if schemaVersion == 1 {
+        // Best-effort migration: a readable, valid v1 file must keep loading
+        // even when the rewrite cannot be persisted (read-only file or
+        // filesystem); the next successful save writes the v2 shape.
+        try? save(registry)
+      }
+      return registry
     } catch let error as MachineRegistryStoreError {
       throw error
     } catch {
@@ -321,7 +455,7 @@ public struct MachineRegistryStore: @unchecked Sendable {
         try MachineValidation.validate(descriptor: descriptor)
         if let connection = descriptor.ssh { try MachineValidation.validate(connection: connection, requireReadableIdentity: true) }
       }
-      let payload = PersistedMachineRegistry(schemaVersion: 1, machines: registry.sshMachines.sorted { $0.id < $1.id })
+      let payload = PersistedMachineRegistry(schemaVersion: 2, machines: registry.sshMachines.sorted { $0.id < $1.id })
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
       var data = try encoder.encode(payload)
@@ -359,17 +493,8 @@ public struct MachineRegistryStore: @unchecked Sendable {
           metadata.st_uid == getuid() else {
       throw MachineRegistryStoreError.registryPermissionsInvalid
     }
-    if metadata.st_mode & 0o777 != 0o700 {
-      do {
-        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
-      } catch {
-        throw MachineRegistryStoreError.registryPermissionsInvalid
-      }
-      guard lstat(directory.path, &metadata) == 0,
-            (metadata.st_mode & S_IFMT) == S_IFDIR,
-            metadata.st_uid == getuid(), metadata.st_mode & 0o777 == 0o700 else {
-        throw MachineRegistryStoreError.registryPermissionsInvalid
-      }
+    guard metadata.st_mode & 0o777 == 0o700 else {
+      throw MachineRegistryStoreError.registryPermissionsInvalid
     }
   }
 
@@ -398,7 +523,7 @@ public struct MachineRegistryStore: @unchecked Sendable {
     } catch { throw MachineRegistryStoreError.registryPersistenceFailed }
   }
 
-  private func validateClosedShape(_ data: Data) throws {
+  private func validateClosedShape(_ data: Data) throws -> Int {
     guard JSONDuplicateKeyScanner(data: data).isValid else {
       throw MachineRegistryStoreError.registryLoadFailed
     }
@@ -408,16 +533,18 @@ public struct MachineRegistryStore: @unchecked Sendable {
           let machines = object["machines"] as? [[String: Any]] else {
       throw MachineRegistryStoreError.registryLoadFailed
     }
-    // schemaVersion must be the numeric literal 1. Validate the raw JSON token
+    // Validate the raw token so Boolean and exponent spellings cannot alias an
+    // integer through Foundation's NSNumber bridging.
     // (rejecting true/false, strings, and non-integer forms portably) rather than
-    // an NSNumber type check, which cannot reliably tell 0/1 from a boolean on
-    // Darwin. The Codable decode in load() additionally enforces schemaVersion == 1.
+    // an NSNumber type check, which cannot reliably tell 0/1 from a boolean.
     let text = String(decoding: data, as: UTF8.self)
-    guard capturedNumberTokens(named: "schemaVersion", in: text) == ["1"] else {
+    let versionTokens = capturedNumberTokens(named: "schemaVersion", in: text)
+    guard versionTokens.count == 1, let version = Int(versionTokens[0]), [1, 2].contains(version),
+          String(version) == versionTokens[0] else {
       throw MachineRegistryStoreError.registryLoadFailed
     }
     let portTokens = capturedNumberTokens(named: "port", in: text)
-    guard portTokens.count == machines.count,
+    guard portTokens.count >= machines.count,
           portTokens.allSatisfy({ !$0.contains(".") && !$0.lowercased().contains("e") && Int($0) != nil }) else {
       throw MachineRegistryStoreError.registryLoadFailed
     }
@@ -427,12 +554,40 @@ public struct MachineRegistryStore: @unchecked Sendable {
             let ssh = machine["ssh"] as? [String: Any] else {
         throw MachineRegistryStoreError.registryLoadFailed
       }
-      let allowed = Set(["host", "port", "user", "identityFile", "extraOptions", "remoteCcusagePath"])
+      let allowed = Set(["host", "port", "user", "identityFile", "extraOptions", "proxy", "remoteCcusagePath"])
       let required = Set(["host", "port", "user", "extraOptions", "remoteCcusagePath"])
-      guard Set(ssh.keys).isSubset(of: allowed), required.isSubset(of: Set(ssh.keys)), ssh["identityFile"] is NSNull == false else {
+      guard Set(ssh.keys).isSubset(of: version == 1 ? allowed.subtracting(["proxy"]) : allowed),
+            required.isSubset(of: Set(ssh.keys)),
+            ssh["identityFile"] is NSNull == false,
+            ssh["proxy"] is NSNull == false else {
+        throw MachineRegistryStoreError.registryLoadFailed
+      }
+      if let proxy = ssh["proxy"] as? [String: Any] {
+        guard version == 2, let kind = proxy["kind"] as? String else {
+          throw MachineRegistryStoreError.registryLoadFailed
+        }
+        let keys = Set(proxy.keys)
+        switch kind {
+        case "direct":
+          guard keys == ["kind"] else { throw MachineRegistryStoreError.registryLoadFailed }
+        case "jump":
+          let required = Set(["kind", "host", "port", "user"])
+          let allowed = required.union(["identityFile", "knownHostsFile"])
+          guard required.isSubset(of: keys), keys.isSubset(of: allowed),
+                proxy["identityFile"] is NSNull == false,
+                proxy["knownHostsFile"] is NSNull == false else {
+            throw MachineRegistryStoreError.registryLoadFailed
+          }
+        case "command":
+          guard keys == ["kind", "executable"] else { throw MachineRegistryStoreError.registryLoadFailed }
+        default:
+          throw MachineRegistryStoreError.registryLoadFailed
+        }
+      } else if ssh.keys.contains("proxy") {
         throw MachineRegistryStoreError.registryLoadFailed
       }
     }
+    return version
   }
 
   private func capturedNumberTokens(named key: String, in text: String) -> [String] {
@@ -441,89 +596,6 @@ public struct MachineRegistryStore: @unchecked Sendable {
       guard let range = Range(match.range(at: 1), in: text) else { return nil }
       return String(text[range])
     }
-  }
-}
-
-public actor MachineRegistryMutationOwner {
-  private let store: MachineRegistryStore
-  public private(set) var registry: MachineRegistry
-
-  public init(store: MachineRegistryStore, registry: MachineRegistry) {
-    self.store = store
-    self.registry = registry
-  }
-
-  public func current() -> MachineRegistry { registry }
-
-  public func create(_ descriptor: MachineDescriptor) throws -> (MachineRegistry, MachineDescriptor) {
-    guard descriptor.id != "local", descriptor.id != "all", registry.machine(id: descriptor.id) == nil else {
-      throw MachineRegistryMutationError.conflict
-    }
-    let normalized = try normalizedDescriptor(descriptor)
-    let updated = try replaceSSHMachines(registry.sshMachines + [normalized])
-    return (updated, normalized)
-  }
-
-  public func replace(id: String, with descriptor: MachineDescriptor) throws -> (MachineRegistry, MachineDescriptor) {
-    guard id != "local" else { throw MachineRegistryMutationError.conflict }
-    guard registry.machine(id: id) != nil else { throw MachineRegistryMutationError.notFound }
-    let normalized = try normalizedDescriptor(MachineDescriptor(
-      id: id,
-      displayName: descriptor.displayName,
-      kind: descriptor.kind,
-      enabled: descriptor.enabled,
-      ssh: descriptor.ssh
-    ))
-    let machines = registry.sshMachines.map { $0.id == id ? normalized : $0 }
-    let updated = try replaceSSHMachines(machines)
-    return (updated, normalized)
-  }
-
-  public func patch(
-    id: String,
-    displayName: String?,
-    enabled: Bool?,
-    ssh: SSHConnection?
-  ) throws -> (MachineRegistry, MachineDescriptor) {
-    guard id != "local" else { throw MachineRegistryMutationError.conflict }
-    guard let existing = registry.machine(id: id) else { throw MachineRegistryMutationError.notFound }
-    let normalized = try normalizedDescriptor(MachineDescriptor(
-      id: id,
-      displayName: displayName ?? existing.displayName,
-      kind: .ssh,
-      enabled: enabled ?? existing.enabled,
-      ssh: ssh ?? existing.ssh
-    ))
-    let machines = registry.sshMachines.map { $0.id == id ? normalized : $0 }
-    let updated = try replaceSSHMachines(machines)
-    return (updated, normalized)
-  }
-
-  public func delete(id: String) throws -> MachineRegistry {
-    guard id != "local" else { throw MachineRegistryMutationError.conflict }
-    guard registry.machine(id: id) != nil else { throw MachineRegistryMutationError.notFound }
-    return try replaceSSHMachines(registry.sshMachines.filter { $0.id != id })
-  }
-
-  @discardableResult
-  public func replaceSSHMachines(_ machines: [MachineDescriptor]) throws -> MachineRegistry {
-    let candidate = try MachineRegistry(sshMachines: machines, revision: registry.revision + 1)
-    try store.save(candidate)
-    registry = candidate
-    return candidate
-  }
-
-  private func normalizedDescriptor(_ descriptor: MachineDescriptor) throws -> MachineDescriptor {
-    let normalized = MachineDescriptor(
-      id: descriptor.id,
-      displayName: try MachineValidation.normalizedDisplayName(descriptor.displayName),
-      kind: descriptor.kind,
-      enabled: descriptor.enabled,
-      ssh: descriptor.ssh
-    )
-    try MachineValidation.validate(descriptor: normalized)
-    if let connection = normalized.ssh { try MachineValidation.validate(connection: connection, requireReadableIdentity: true) }
-    return normalized
   }
 }
 
