@@ -116,17 +116,44 @@ private struct AuthoritativeUsageTotals {
   var cacheReadTokens = 0
 }
 
+private func calendarDayString(_ date: Date, calendar: Calendar) -> String {
+  let components = calendar.dateComponents([.year, .month, .day], from: date)
+  guard let year = components.year, let month = components.month, let day = components.day else {
+    return ""
+  }
+  return String(format: "%04d-%02d-%02d", year, month, day)
+}
+
+private func parseCalendarDay(_ text: String, calendar: Calendar) -> Date? {
+  let fields = text.split(separator: "-", omittingEmptySubsequences: false)
+  guard fields.count == 3,
+        fields[0].count == 4,
+        fields[1].count == 2,
+        fields[2].count == 2,
+        let year = Int(fields[0]),
+        let month = Int(fields[1]),
+        let day = Int(fields[2]) else {
+    return nil
+  }
+
+  var components = DateComponents()
+  components.calendar = calendar
+  components.timeZone = calendar.timeZone
+  components.year = year
+  components.month = month
+  components.day = day
+  guard let date = calendar.date(from: components),
+        calendarDayString(date, calendar: calendar) == text else {
+    return nil
+  }
+  return date
+}
+
 private func reconciledTimestampedSessions(
   events: [TimestampedUsageEvent],
   metrics: [CCUsageMetricRecord],
   calendar: Calendar
 ) -> [CCUsageSessionMetricRecord] {
-  let formatter = DateFormatter()
-  formatter.calendar = calendar
-  formatter.locale = Locale(identifier: "en_US_POSIX")
-  formatter.timeZone = calendar.timeZone
-  formatter.dateFormat = "yyyy-MM-dd"
-
   let totalsByModelDay = Dictionary(grouping: metrics) {
     AgentModelDay(day: $0.date, agent: $0.agent.lowercased(), model: $0.model)
   }.mapValues { rows in
@@ -140,7 +167,7 @@ private func reconciledTimestampedSessions(
   }
 
   let eventsByModelDay = Dictionary(grouping: events) {
-    AgentModelDay(day: formatter.string(from: $0.timestamp), agent: $0.agent, model: $0.model)
+    AgentModelDay(day: calendarDayString($0.timestamp, calendar: calendar), agent: $0.agent, model: $0.model)
   }
   let allocatedEvents = eventsByModelDay.flatMap { key, groupedEvents -> [CCUsageSessionMetricRecord] in
     guard let authoritative = totalsByModelDay[key] else { return [] }
@@ -697,20 +724,20 @@ public struct SnapshotService: Sendable {
     )
   }
 
-  private func parseDay(_ text: String) -> Date? { makeDayFormatter().date(from: text) }
-  private func formatDay(_ date: Date) -> String { makeDayFormatter().string(from: date) }
+  private func parseDay(_ text: String) -> Date? { parseCalendarDay(text, calendar: calculator.calendar) }
+  private func formatDay(_ date: Date) -> String { calendarDayString(date, calendar: calculator.calendar) }
 
-  /// Returns a `Date -> day-string` formatter backed by one `DateFormatter` and a per-day
-  /// memo. Session/event rows within the same calendar day format identically, so the memo
-  /// collapses the hot partition/result loops to O(unique days) `DateFormatter` calls.
+  /// Returns a memoized `Date -> day-string` formatter. Session/event rows within the same
+  /// calendar day format identically, so the memo avoids repeating calendar component work.
+  /// Calendar components also avoid a swift-corelibs-foundation `DateFormatter` trap for
+  /// resolvable IANA aliases such as `US/Eastern`.
   private func memoizedDayFormatter() -> (Date) -> String {
-    let formatter = makeDayFormatter()
     let calendar = calculator.calendar
     var memo: [Date: String] = [:]
     return { date in
       let key = calendar.startOfDay(for: date)
       if let cached = memo[key] { return cached }
-      let value = formatter.string(from: date)
+      let value = calendarDayString(date, calendar: calendar)
       memo[key] = value
       return value
     }
@@ -744,14 +771,6 @@ public struct SnapshotService: Sendable {
     return candidate
   }
 
-  private func makeDayFormatter() -> DateFormatter {
-    let formatter = DateFormatter()
-    formatter.calendar = calculator.calendar
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = calculator.calendar.timeZone
-    formatter.dateFormat = "yyyy-MM-dd"
-    return formatter
-  }
 }
 
 public enum SnapshotError: Error, Sendable { case missingBaseline, rangeReassemblyFailed }
