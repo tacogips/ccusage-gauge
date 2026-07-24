@@ -72,7 +72,7 @@ enum CommandRuntime {
           guard let connection = descriptor.ssh else {
             throw MachineValidationError(fieldErrors: ["ssh": "is required"])
           }
-          runner = try SSHCCUsageCommandRunner(connection: connection)
+          runner = try remoteRunner(connection: connection, configuration: config)
         }
         _ = try await runner.run(arguments: ["--version"], timeoutSeconds: 30)
       }
@@ -82,7 +82,10 @@ enum CommandRuntime {
         client = CCUsageClient(executable: executable, machine: descriptor.id)
       } else {
         guard let connection = descriptor.ssh else { throw MachineValidationError(fieldErrors: ["ssh": "is required"]) }
-        client = CCUsageClient(commandRunner: try SSHCCUsageCommandRunner(connection: connection), machine: descriptor.id)
+        client = CCUsageClient(
+          commandRunner: try remoteRunner(connection: connection, configuration: config),
+          machine: descriptor.id
+        )
       }
       return SnapshotService(
         stateStore: stateStore,
@@ -137,6 +140,17 @@ enum CommandRuntime {
       ),
       claudeUsageEventLoader: .production(),
       codexUsageEventLoader: .production()
+    )
+  }
+
+  private static func remoteRunner(
+    connection: SSHConnection,
+    configuration: AppConfiguration
+  ) throws -> RetryingCCUsageCommandRunner {
+    RetryingCCUsageCommandRunner(
+      runner: try SSHCCUsageCommandRunner(connection: connection),
+      retryCount: configuration.remoteRetryCount,
+      timeoutSeconds: TimeInterval(configuration.remoteTimeoutSeconds)
     )
   }
 

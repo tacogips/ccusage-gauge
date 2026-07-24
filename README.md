@@ -214,6 +214,8 @@ The generated defaults are:
   "dashboardAutostart": true,
   "pollIntervalSeconds": 20,
   "cacheRetentionDays": 365,
+  "remoteRetryCount": 3,
+  "remoteTimeoutSeconds": 15,
   "chartColors": {
     "light": { "machines": {}, "models": {} },
     "dark": { "machines": {}, "models": {} }
@@ -229,6 +231,8 @@ The generated defaults are:
 | `dashboardAutostart` | boolean; default `true` | Starts the local dashboard server when the menu-bar application starts. |
 | `pollIntervalSeconds` | integer; default `20` | Usage refresh interval in seconds. It must be positive. |
 | `cacheRetentionDays` | integer; default `365` | Retains the aggregate cache for this many days from its creation time. It must be positive. Expired cache data is purged during regular snapshot refreshes and rebuilt once. |
+| `remoteRetryCount` | integer; default `3` | Number of retries after a failed remote SSH command, from `0` through `10`. The default permits four total attempts. |
+| `remoteTimeoutSeconds` | integer; default `15` | Timeout for each remote SSH command attempt, from `1` through `600` seconds. Local collection retains its existing timeout behavior. |
 | `chartColors` | object; default empty `light` and `dark` schemes | Optional fixed graph colors for each appearance, keyed by exact machine ID or model name. Values must use `#RRGGBB`. Identities without an override, including newly introduced models, receive a deterministic scheme-specific fallback color that stays stable across metric, range, and filter changes. |
 
 Configuration is loaded when the application starts. After changing any field,

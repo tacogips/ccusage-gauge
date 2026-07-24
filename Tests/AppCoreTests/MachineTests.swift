@@ -24,6 +24,26 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
   }
 }
 
+private actor SequencedCCUsageRunner: CCUsageCommandRunner {
+  private var remainingFailures: Int
+  private var observedTimeouts: [TimeInterval] = []
+
+  init(failures: Int) {
+    remainingFailures = failures
+  }
+
+  func run(arguments: [String], timeoutSeconds: TimeInterval) async throws -> ProcessResult {
+    observedTimeouts.append(timeoutSeconds)
+    if remainingFailures > 0 {
+      remainingFailures -= 1
+      throw CCUsageCommandFailure(runnerKind: .ssh, phase: .timedOut)
+    }
+    return ProcessResult(stdout: Data("ok".utf8), stderr: Data(), exitStatus: 0)
+  }
+
+  func observations() -> [TimeInterval] { observedTimeouts }
+}
+
 @Suite("SSHCommandRunnerTests") struct SSHCommandRunnerTests {
   @Test func usesSystemSSHExecutable() throws {
     let runner = try SSHCCUsageCommandRunner(connection: SSHConnection(host: "localhost", port: 22, user: "user"))
@@ -98,6 +118,27 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
     } catch let command as CCUsageCommandFailure {
       #expect(command.phase == (failure == .spawnFailed ? .spawnFailed : .timedOut))
     }
+  }
+
+  @Test func remoteRetryDefaultsUseThreeRetriesAndFifteenSecondAttempts() async throws {
+    let underlying = SequencedCCUsageRunner(failures: 3)
+    let runner = RetryingCCUsageCommandRunner(runner: underlying)
+
+    _ = try await runner.run(arguments: ["daily"], timeoutSeconds: 30)
+
+    #expect(runner.retryCount == 3)
+    #expect(runner.timeoutSeconds == 15)
+    #expect(await underlying.observations() == [15, 15, 15, 15])
+  }
+
+  @Test func remoteRetryStopsAfterConfiguredRetryCount() async {
+    let underlying = SequencedCCUsageRunner(failures: 4)
+    let runner = RetryingCCUsageCommandRunner(runner: underlying, retryCount: 3, timeoutSeconds: 15)
+
+    await #expect(throws: CCUsageCommandFailure.self) {
+      _ = try await runner.run(arguments: ["daily"], timeoutSeconds: 30)
+    }
+    #expect(await underlying.observations() == [15, 15, 15, 15])
   }
 }
 
@@ -391,6 +432,38 @@ private func aggregateSnapshot(machine: String, generatedAt: Date, cost: Decimal
 }
 
 @Suite("CoverageAwareExpansionTests") struct CoverageAwareExpansionTests {
+  @Test func activeMachineFilterScopesInitialAndManualRefresh() async throws {
+    let remote = MachineDescriptor(
+      id: "remote", displayName: "Remote", kind: .ssh, enabled: true,
+      ssh: SSHConnection(host: "localhost", port: 22, user: "user")
+    )
+    let registry = try MachineRegistry(sshMachines: [remote])
+    let store = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: 20)
+    let localRunner = CollectCountingRunner()
+    let remoteRunner = CollectCountingRunner()
+    let collector = try MachineCollector(registry: registry, store: store) { descriptor in
+      SnapshotService(
+        stateStore: StateStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+        client: CCUsageClient(
+          commandRunner: descriptor.id == "local" ? localRunner : remoteRunner,
+          machine: descriptor.id
+        ),
+        aggregationCache: nil
+      )
+    }
+    defer { Task { await collector.stop() } }
+
+    await collector.start(machineIDs: ["local"])
+    let localRefresh = await collector.refresh(machine: "all")
+    await collector.setActiveMachineIDs(["remote"])
+    let remoteRefresh = await collector.refresh(machine: "all")
+
+    #expect(localRefresh.succeeded == ["local"])
+    #expect(remoteRefresh.succeeded == ["remote"])
+    #expect(await localRunner.collectCount() > 0)
+    #expect(await remoteRunner.collectCount() > 0)
+  }
+
   @Test func skipsCollectionWhenPublishedCoverageAlreadySatisfiesRequest() async throws {
     let registry = try MachineRegistry(sshMachines: [])
     let store = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: 20)

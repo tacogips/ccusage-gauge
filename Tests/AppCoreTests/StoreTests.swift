@@ -18,6 +18,8 @@ import Testing
     #expect(value == AppConfiguration())
     #expect(value.pollIntervalSeconds == 20)
     #expect(value.cacheRetentionDays == 365)
+    #expect(value.remoteRetryCount == 3)
+    #expect(value.remoteTimeoutSeconds == 15)
     #expect(value.chartColors == ChartColorConfiguration())
     let original = try Data(contentsOf: file)
     _ = try store.loadOrCreate()
@@ -37,12 +39,23 @@ import Testing
     let json = #"{"ccusagePath":null,"defaultResetTerm":"daily","dashboardPort":18081,"dashboardAutostart":true,"pollIntervalSeconds":20}"#
     let value = try JSONDecoder().decode(AppConfiguration.self, from: Data(json.utf8))
     #expect(value.cacheRetentionDays == 365)
+    #expect(value.remoteRetryCount == 3)
+    #expect(value.remoteTimeoutSeconds == 15)
     #expect(value.chartColors == ChartColorConfiguration())
   }
 
   @Test func rejectsInvalidCacheRetention() {
     #expect(throws: ConfigurationError.invalidCacheRetention(0)) {
       try AppConfiguration(cacheRetentionDays: 0).validate()
+    }
+  }
+
+  @Test func rejectsInvalidRemoteRetryAndTimeoutSettings() {
+    #expect(throws: ConfigurationError.invalidRemoteRetryCount(11)) {
+      try AppConfiguration(remoteRetryCount: 11).validate()
+    }
+    #expect(throws: ConfigurationError.invalidRemoteTimeout(0)) {
+      try AppConfiguration(remoteTimeoutSeconds: 0).validate()
     }
   }
 

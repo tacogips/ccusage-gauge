@@ -143,6 +143,8 @@ public enum ResetCycle: Codable, Equatable, Sendable {
 public struct AppConfiguration: Codable, Equatable, Sendable {
   public static let defaultPollIntervalSeconds = 20
   public static let defaultCacheRetentionDays = 365
+  public static let defaultRemoteRetryCount = 3
+  public static let defaultRemoteTimeoutSeconds = 15
 
   public var ccusagePath: String?
   public var defaultResetTerm: String
@@ -150,6 +152,8 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
   public var dashboardAutostart: Bool
   public var pollIntervalSeconds: Int
   public var cacheRetentionDays: Int
+  public var remoteRetryCount: Int
+  public var remoteTimeoutSeconds: Int
   public var chartColors: ChartColorConfiguration
 
   public init(
@@ -159,6 +163,8 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     dashboardAutostart: Bool = true,
     pollIntervalSeconds: Int = AppConfiguration.defaultPollIntervalSeconds,
     cacheRetentionDays: Int = AppConfiguration.defaultCacheRetentionDays,
+    remoteRetryCount: Int = AppConfiguration.defaultRemoteRetryCount,
+    remoteTimeoutSeconds: Int = AppConfiguration.defaultRemoteTimeoutSeconds,
     chartColors: ChartColorConfiguration = ChartColorConfiguration()
   ) {
     self.ccusagePath = ccusagePath
@@ -167,12 +173,14 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     self.dashboardAutostart = dashboardAutostart
     self.pollIntervalSeconds = pollIntervalSeconds
     self.cacheRetentionDays = cacheRetentionDays
+    self.remoteRetryCount = remoteRetryCount
+    self.remoteTimeoutSeconds = remoteTimeoutSeconds
     self.chartColors = chartColors
   }
 
   private enum CodingKeys: String, CodingKey {
     case ccusagePath, defaultResetTerm, dashboardPort, dashboardAutostart
-    case pollIntervalSeconds, cacheRetentionDays, chartColors
+    case pollIntervalSeconds, cacheRetentionDays, remoteRetryCount, remoteTimeoutSeconds, chartColors
   }
 
   public init(from decoder: Decoder) throws {
@@ -184,6 +192,10 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     pollIntervalSeconds = try container.decode(Int.self, forKey: .pollIntervalSeconds)
     cacheRetentionDays = try container.decodeIfPresent(Int.self, forKey: .cacheRetentionDays)
       ?? AppConfiguration.defaultCacheRetentionDays
+    remoteRetryCount = try container.decodeIfPresent(Int.self, forKey: .remoteRetryCount)
+      ?? AppConfiguration.defaultRemoteRetryCount
+    remoteTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .remoteTimeoutSeconds)
+      ?? AppConfiguration.defaultRemoteTimeoutSeconds
     chartColors = try container.decodeIfPresent(ChartColorConfiguration.self, forKey: .chartColors)
       ?? ChartColorConfiguration()
   }
@@ -193,6 +205,12 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     guard (1...65_535).contains(dashboardPort) else { throw ConfigurationError.invalidPort(dashboardPort) }
     guard pollIntervalSeconds > 0 else { throw ConfigurationError.invalidPollInterval(pollIntervalSeconds) }
     guard cacheRetentionDays > 0 else { throw ConfigurationError.invalidCacheRetention(cacheRetentionDays) }
+    guard (0...10).contains(remoteRetryCount) else {
+      throw ConfigurationError.invalidRemoteRetryCount(remoteRetryCount)
+    }
+    guard (1...600).contains(remoteTimeoutSeconds) else {
+      throw ConfigurationError.invalidRemoteTimeout(remoteTimeoutSeconds)
+    }
     if let ccusagePath, !ccusagePath.hasPrefix("/") { throw ConfigurationError.pathMustBeAbsolute }
     try chartColors.validate()
   }
@@ -203,6 +221,8 @@ public enum ConfigurationError: Error, Equatable, CustomStringConvertible, Senda
   case invalidPort(Int)
   case invalidPollInterval(Int)
   case invalidCacheRetention(Int)
+  case invalidRemoteRetryCount(Int)
+  case invalidRemoteTimeout(Int)
   case invalidChartColorKey(section: String, key: String)
   case invalidChartColor(section: String, key: String, value: String)
   case pathMustBeAbsolute
@@ -213,6 +233,8 @@ public enum ConfigurationError: Error, Equatable, CustomStringConvertible, Senda
     case .invalidPort(let value): "Dashboard port must be between 1 and 65535 (received \(value))"
     case .invalidPollInterval(let value): "Poll interval must be positive (received \(value))"
     case .invalidCacheRetention(let value): "Cache retention days must be positive (received \(value))"
+    case .invalidRemoteRetryCount(let value): "Remote retry count must be between 0 and 10 (received \(value))"
+    case .invalidRemoteTimeout(let value): "Remote timeout must be between 1 and 600 seconds (received \(value))"
     case .invalidChartColorKey(let section, let key): "Chart color key in \(section) is invalid: \(key.debugDescription)"
     case .invalidChartColor(let section, let key, let value): "Chart color for \(section).\(key) must use #RRGGBB (received \(value))"
     case .pathMustBeAbsolute: "Configured ccusagePath must be an absolute path"

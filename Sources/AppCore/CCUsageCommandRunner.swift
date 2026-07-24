@@ -113,6 +113,35 @@ public protocol CCUsageCommandRunner: Sendable {
   func run(arguments: [String], timeoutSeconds: TimeInterval) async throws -> ProcessResult
 }
 
+public struct RetryingCCUsageCommandRunner: CCUsageCommandRunner, Sendable {
+  private let runner: any CCUsageCommandRunner
+  public let retryCount: Int
+  public let timeoutSeconds: TimeInterval
+
+  public init(
+    runner: any CCUsageCommandRunner,
+    retryCount: Int = AppConfiguration.defaultRemoteRetryCount,
+    timeoutSeconds: TimeInterval = TimeInterval(AppConfiguration.defaultRemoteTimeoutSeconds)
+  ) {
+    self.runner = runner
+    self.retryCount = max(0, retryCount)
+    self.timeoutSeconds = max(1, timeoutSeconds)
+  }
+
+  public func run(arguments: [String], timeoutSeconds _: TimeInterval) async throws -> ProcessResult {
+    var remainingRetries = retryCount
+    while true {
+      try Task.checkCancellation()
+      do {
+        return try await runner.run(arguments: arguments, timeoutSeconds: timeoutSeconds)
+      } catch {
+        if error is CancellationError || remainingRetries == 0 { throw error }
+        remainingRetries -= 1
+      }
+    }
+  }
+}
+
 public struct LocalCCUsageCommandRunner: CCUsageCommandRunner, Sendable {
   public let executable: URL
   private let processRunner: any CCUsageProcessRunning

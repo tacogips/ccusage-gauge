@@ -614,6 +614,7 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
   private var pollers: [String: Task<Void, Never>] = [:]
   private var inFlight: [String: Task<CostSnapshot, Error>] = [:]
   private var pendingCoverage: [String: Date] = [:]
+  private var activeMachineIDs: Set<String>?
   private let calendar: Calendar
   private let now: @Sendable () -> Date
   private let connectionTester: ConnectionTester
@@ -644,8 +645,9 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
     }
   }
 
-  public func start() {
-    for descriptor in registry.machines where descriptor.enabled { startPoller(descriptor) }
+  public func start(machineIDs: [String]? = nil) {
+    activeMachineIDs = machineIDs.map(Set.init)
+    for descriptor in activeDescriptors() { startPoller(descriptor) }
   }
 
   public func stop() async {
@@ -683,8 +685,16 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
     }
     await store.replaceRegistry(updated, generations: generations)
     for id in changedIDs {
-      if let descriptor = updated.machine(id: id), descriptor.enabled { startPoller(descriptor) }
+      if let descriptor = updated.machine(id: id), descriptor.enabled, isActive(id) { startPoller(descriptor) }
     }
+  }
+
+  public func setActiveMachineIDs(_ machineIDs: [String]) async {
+    let requested = Set(machineIDs)
+    activeMachineIDs = requested
+    let excluded = pollers.keys.filter { !requested.contains($0) }
+    for id in excluded { await pause(machineID: id) }
+    for descriptor in activeDescriptors() { startPoller(descriptor) }
   }
 
   public func pause(machineID: String) async {
@@ -695,7 +705,7 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
   }
 
   public func resume(machineID: String) {
-    guard let descriptor = registry.machine(id: machineID), descriptor.enabled else { return }
+    guard let descriptor = registry.machine(id: machineID), descriptor.enabled, isActive(machineID) else { return }
     startPoller(descriptor)
   }
 
@@ -711,8 +721,17 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
 
   public func refresh(machine requested: String) async -> (succeeded: [String], failed: [String]) {
     let targets = requested == "all"
-      ? registry.machines.filter(\.enabled)
+      ? activeDescriptors()
       : registry.machines.filter { $0.id == requested && $0.enabled }
+    return await refresh(targets: targets)
+  }
+
+  public func refresh(machineIDs: [String]) async -> (succeeded: [String], failed: [String]) {
+    let requested = Set(machineIDs)
+    return await refresh(targets: registry.machines.filter { requested.contains($0.id) && $0.enabled })
+  }
+
+  private func refresh(targets: [MachineDescriptor]) async -> (succeeded: [String], failed: [String]) {
     return await withTaskGroup(of: (String, Bool).self) { group in
       for descriptor in targets {
         group.addTask { [weak self] in
@@ -730,7 +749,7 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
 
   public func expand(machine requested: String, earliestDate: Date) async {
     let targets = requested == "all"
-      ? registry.machines.filter(\.enabled)
+      ? activeDescriptors()
       : registry.machines.filter { $0.id == requested && $0.enabled }
     await withTaskGroup(of: Void.self) { group in
       for descriptor in targets {
@@ -751,7 +770,7 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
   }
 
   private func startPoller(_ descriptor: MachineDescriptor) {
-    guard pollers[descriptor.id] == nil else { return }
+    guard pollers[descriptor.id] == nil, isActive(descriptor.id) else { return }
     let generation = generations[descriptor.id, default: 0]
     let revision = registry.revision
     pollers[descriptor.id] = Task { [weak self] in
@@ -772,7 +791,15 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
   }
 
   private func isCurrent(machineID: String, generation: UInt64, revision: UInt64) -> Bool {
-    generation == generations[machineID] && revision == registry.revision
+    generation == generations[machineID] && revision == registry.revision && isActive(machineID)
+  }
+
+  private func activeDescriptors() -> [MachineDescriptor] {
+    registry.machines.filter { $0.enabled && isActive($0.id) }
+  }
+
+  private func isActive(_ machineID: String) -> Bool {
+    activeMachineIDs?.contains(machineID) ?? true
   }
 
   private func collect(

@@ -154,7 +154,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
             guard let connection = descriptor.ssh else {
               throw MachineValidationError(fieldErrors: ["ssh": "is required"])
             }
-            runner = try SSHCCUsageCommandRunner(connection: connection)
+            runner = try Self.remoteRunner(connection: connection, configuration: loaded)
           }
           _ = try await runner.run(arguments: ["--version"], timeoutSeconds: 30)
         }
@@ -163,7 +163,10 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
         guard let connection = descriptor.ssh else { throw MachineValidationError(fieldErrors: ["ssh": "is required"]) }
         return SnapshotService(
           stateStore: store,
-          client: CCUsageClient(commandRunner: try SSHCCUsageCommandRunner(connection: connection), machine: descriptor.id),
+          client: CCUsageClient(
+            commandRunner: try Self.remoteRunner(connection: connection, configuration: loaded),
+            machine: descriptor.id
+          ),
           defaultRefreshIntervalSeconds: loaded.pollIntervalSeconds,
           aggregationCache: UsageAggregationCache(
             fileURL: paths.aggregationCacheFile(forMachine: descriptor.id),
@@ -189,8 +192,9 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       if effectiveBudgetMachineIDs(state: currentState, descriptors: registry.machines) == ["local"] {
         await loadInitialMenuBarSnapshot(using: service)
       }
-      await collector.start()
-      let initialCollection = Task { await collector.refresh(machine: "local") }
+      let budgetMachineIDs = effectiveBudgetMachineIDs(state: currentState, descriptors: registry.machines)
+      await collector.start(machineIDs: budgetMachineIDs)
+      let initialCollection = Task { await collector.refresh(machineIDs: budgetMachineIDs) }
       _ = await initialCollection.value
       await refresh()
       startPolling(
@@ -412,10 +416,15 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       showError("Select at least one machine to include in the budget.")
       return
     }
-    await mutateState {
+    guard await mutateState({
       $0.budgetUSD = value
       $0.budgetMachineIDs = machineIDs
+    }) else {
+      return
     }
+    await machineCollector?.setActiveMachineIDs(machineIDs)
+    _ = await machineCollector?.refresh(machineIDs: machineIDs)
+    await refresh()
   }
 
   @objc private func setRefreshInterval() {
@@ -488,7 +497,22 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  @objc private func refreshAction() { Task { await refresh() } }
+  @objc private func refreshAction() {
+    Task { await reloadSelectedMachines() }
+  }
+
+  private func reloadSelectedMachines() async {
+    guard let machineSnapshotStore, let machineCollector else {
+      await refresh()
+      return
+    }
+    let state = try? await stateStore?.load(defaultCycle: defaultResetCycle)
+    let descriptors = await machineSnapshotStore.descriptors()
+    let machineIDs = effectiveBudgetMachineIDs(state: state ?? currentState, descriptors: descriptors)
+    await machineCollector.setActiveMachineIDs(machineIDs)
+    _ = await machineCollector.refresh(machineIDs: machineIDs)
+    await refresh()
+  }
 
   @objc private func retryValidation() { Task { await bootstrap() } }
 
@@ -560,6 +584,17 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     if enabledIDs.contains("local") { return ["local"] }
     if let fallback = descriptors.first(where: \.enabled)?.id { return [fallback] }
     return []
+  }
+
+  nonisolated private static func remoteRunner(
+    connection: SSHConnection,
+    configuration: AppConfiguration
+  ) throws -> RetryingCCUsageCommandRunner {
+    RetryingCCUsageCommandRunner(
+      runner: try SSHCCUsageCommandRunner(connection: connection),
+      retryCount: configuration.remoteRetryCount,
+      timeoutSeconds: TimeInterval(configuration.remoteTimeoutSeconds)
+    )
   }
 
   private static func statusTitle(_ snapshot: CostSnapshot) -> String {
