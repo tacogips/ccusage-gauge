@@ -186,6 +186,20 @@ public actor MachineSnapshotStore {
     )
     entries[machineID] = entry
   }
+  @discardableResult
+  public func extendPublishedCoverage(
+    machineID: String,
+    coverageStart: Date,
+    revision: UInt64,
+    generation: UInt64
+  ) -> Bool {
+    guard var entry = fencedEntry(machineID: machineID, revision: revision, generation: generation),
+          entry.snapshot != nil else { return false }
+    entry.coverageStart = min(entry.coverageStart ?? coverageStart, coverageStart)
+    entries[machineID] = entry
+    mergeCache = nil
+    return true
+  }
 
   public func clear(machineID: String) {
     guard var entry = entries[machineID] else { return }
@@ -871,11 +885,23 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
       guard let self else { return }
       let current = self.now()
       let weekStart = self.calendar.dateInterval(of: .weekOfYear, for: current)?.start ?? self.calendar.startOfDay(for: current)
-      _ = try? await self.collect(descriptor: descriptor, earliestDate: weekStart, phase: .loadingWeek)
+      guard (try? await self.collect(descriptor: descriptor, earliestDate: weekStart, phase: .loadingWeek)) != nil else {
+        return
+      }
       guard !Task.isCancelled else { return }
       let monthStart = self.calendar.dateInterval(of: .month, for: current)?.start ?? weekStart
       let warmStart = self.calendar.date(byAdding: .month, value: -1, to: monthStart) ?? monthStart
-      _ = try? await self.collect(descriptor: descriptor, earliestDate: warmStart, phase: .loadingHistory)
+      if let persistedStart = await self.persistedCoverageStart(machineID: descriptor.id, now: current),
+         persistedStart <= warmStart {
+        _ = await self.store.extendPublishedCoverage(
+          machineID: descriptor.id,
+          coverageStart: persistedStart,
+          revision: revision,
+          generation: generation
+        )
+      } else {
+        _ = try? await self.collect(descriptor: descriptor, earliestDate: warmStart, phase: .loadingHistory)
+      }
       while !Task.isCancelled, await self.isCurrent(machineID: descriptor.id, generation: generation, revision: revision) {
         do { try await Task.sleep(for: .seconds(max(1, AppConfiguration.defaultPollIntervalSeconds))) }
         catch { break }
@@ -886,6 +912,10 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
 
   private func isCurrent(machineID: String, generation: UInt64, revision: UInt64) -> Bool {
     generation == generations[machineID] && revision == registry.revision && isActive(machineID)
+  }
+
+  private func persistedCoverageStart(machineID: String, now: Date) async -> Date? {
+    await services[machineID]?.persistedCoverageStart(now: now)
   }
 
   private func activeDescriptors() -> [MachineDescriptor] {

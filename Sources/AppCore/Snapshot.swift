@@ -528,6 +528,11 @@ public struct SnapshotService: Sendable {
     await aggregationCache?.purge()
   }
 
+  public func persistedCoverageStart(now: Date = Date()) async -> Date? {
+    guard let cached = await validAggregationCache(now: now) else { return nil }
+    return parseDay(cached.cachedFrom)
+  }
+
   private func nextUncachedDay(after text: String, today: Date) -> String? {
     guard let cachedThrough = parseDay(text),
           let next = calculator.calendar.date(byAdding: .day, value: 1, to: cachedThrough) else { return nil }
