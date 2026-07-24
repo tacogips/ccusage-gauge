@@ -90,6 +90,31 @@ in-memory controller and never changes the operator's login items.
 Expected result: invalid configuration is visible from the menu surface without
 opening logs, while state-only actions remain available when state storage is valid.
 
+## E2E-011: Unreachable remote machine with partial local usage
+
+1. Quit the fixture app and run `scripts/build-e2e-app.sh unreachable`.
+2. Launch the rebuilt app and wait for the unreachable SSH attempt to time out.
+3. Verify the status value remains `$3.75` from the successful local fixture
+   instead of changing to `$!`.
+4. Verify the status icon accessibility label is
+   `Warning: machine usage collection failed`.
+5. Verify the menu contains `Warning: 1 machine collection failure` and its
+   detail identifies `Unreachable test machine: Connection timed out`.
+6. Open the dashboard and verify both machine checkboxes are initially checked.
+7. During refresh, verify progress lists separate `local` and `unreachable`
+   rows with their own completed/total values.
+8. After refresh completes, verify the dashboard still shows the local `$3.75`
+   totals and a warning-icon health card for `Unreachable test machine`.
+9. Uncheck `unreachable`, refresh, and verify load status and requests name only
+   `local`; confirm the remote machine's `lastAttemptAt` does not change.
+10. Re-select `unreachable`, refresh, and verify the partial-success warning
+    returns without hiding local usage.
+
+Expected result: checked-machine scope controls collection and progress exactly;
+remote failure is visible on both UI surfaces while successful local data remains
+usable. The reserved test address and all E2E files remain isolated below
+`.build/e2e`.
+
 ## E2E-005: Missing ccusage validation with writable state
 
 1. Quit the fixture app and run `scripts/build-e2e-app.sh missing`.

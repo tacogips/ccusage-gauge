@@ -6,7 +6,14 @@ import { availabilityErrorCode, dashboardErrorMessage, getCostSeriesState } from
 import { changingProxyKind, draftFromMachine, emptyMachineDraft, machineDraftErrors, machineRequestBody, type MachineDraft, type MachineProxyKind } from "./machineForm";
 import { BreakdownBars, LoadingState, MachineHealthPanel, type MetricKey } from "./DashboardComponents";
 import { MachineAdminPanel } from "./MachineAdminPanel";
-import { initialMachineLimit, matchesMachineSelection, toggledMachineSelection, visibleMachineItems } from "./machineScope";
+import {
+  initialMachineLimit,
+  machineProgressDetail,
+  machineQuery,
+  requestedMachineIDs,
+  toggledMachineSelection,
+  visibleMachineItems,
+} from "./machineScope";
 import { type ColorScheme, seriesColor } from "./seriesColors";
 import { alignedBucketStart, axisCurrency, bucketMilliseconds, chartDateLabel, clippedInterval, nextBucket, niceChartMaximum } from "./usageChartGeometry";
 
@@ -345,32 +352,49 @@ export default function App() {
     ? storedColorScheme
     : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   const [colorScheme, setColorScheme] = createSignal<ColorScheme>(initialColorScheme);
-  const machineSuffix = "machine=all";
-  const withMachine = (path: string) => `${path}${path.includes("?") ? "&" : "?"}${machineSuffix}`;
   const [machines, { refetch: refreshMachines }] = createResource(() => getJSON<MachinesResponse>("/api/machines"));
   const [chartColors] = createResource(() => getJSON<ChartColorsResponse>("/api/chart-colors"));
-  const [machineStatuses, { refetch: refreshMachineStatuses }] = createResource(() => getJSON<MachineStatusResponse>("/api/machine-status?machine=all"));
+  const requestedMachineScope = createMemo(() => requestedMachineIDs(machines()?.machines ?? [], selectedMachines()));
+  const machineSuffix = createMemo(() => isDashboardStateLoaded() && machines() != null
+    ? machineQuery(requestedMachineScope())
+    : undefined);
+  const withMachine = (path: string) => {
+    const suffix = machineSuffix();
+    return suffix == null || suffix.length === 0 ? path : `${path}${path.includes("?") ? "&" : "?"}${suffix}`;
+  };
+  const machineStatusPath = createMemo(() => machineSuffix() == null ? undefined : withMachine("/api/machine-status"));
+  const [machineStatuses, { refetch: refreshMachineStatuses }] = createResource(
+    machineStatusPath,
+    (path) => getJSON<MachineStatusResponse>(path)
+  );
 
-  const periodPath = createMemo(() => range() === "custom"
-    ? `/api/metrics?range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}&${machineSuffix}`
-    : `/api/metrics?range=${range()}&${machineSuffix}`);
+  const periodPath = createMemo(() => machineSuffix() == null ? undefined : range() === "custom"
+    ? withMachine(`/api/metrics?range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`)
+    : withMachine(`/api/metrics?range=${range()}`));
   const [period, { refetch: refreshPeriod }] = createResource(periodPath, (path) => getJSON<MetricsResponse>(path));
-  const costPath = createMemo(() => range() === "custom"
-    ? `/api/cost-series?granularity=${granularity()}&range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}&${machineSuffix}`
-    : `/api/cost-series?granularity=${granularity()}&range=${range()}&${machineSuffix}`);
+  const costPath = createMemo(() => machineSuffix() == null ? undefined : range() === "custom"
+    ? withMachine(`/api/cost-series?granularity=${granularity()}&range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`)
+    : withMachine(`/api/cost-series?granularity=${granularity()}&range=${range()}`));
   const [costSeries, { refetch: refreshCostSeries }] = createResource(costPath, getCostSeriesState);
-  const [budget, { refetch: refreshBudget }] = createResource(() => getJSON<BudgetResponse>("/api/budget?machine=all"));
-  const [loadStatus, { refetch: refreshLoadStatus }] = createResource(() => getJSON<LoadStatusResponse>("/api/load-status?machine=all"));
+  const budgetPath = createMemo(() => machineSuffix() == null ? undefined : withMachine("/api/budget"));
+  const [budget, { refetch: refreshBudget }] = createResource(budgetPath, (path) => getJSON<BudgetResponse>(path));
+  const loadStatusPath = createMemo(() => machineSuffix() == null ? undefined : withMachine("/api/load-status"));
+  const [loadStatus, { refetch: refreshLoadStatus }] = createResource(
+    loadStatusPath,
+    (path) => getJSON<LoadStatusResponse>(path)
+  );
 
   const selectableMachines = createMemo(() => (machines()?.machines ?? []).filter((machine) => machine.enabled));
   const visibleMachines = createMemo(() => visibleMachineItems(selectableMachines(), areAllMachinesVisible()));
-  const machineScopeLabel = createMemo(() => selectedMachines().length === 0
+  const allMachinesSelected = createMemo(() =>
+    selectableMachines().length > 0 && requestedMachineScope().length === selectableMachines().length);
+  const machineScopeLabel = createMemo(() => allMachinesSelected()
     ? "All available machines"
-    : selectedMachines().map((id) => selectableMachines().find((machine) => machine.id === id)?.displayName ?? id).join(", "));
+    : requestedMachineScope().map((id) => selectableMachines().find((machine) => machine.id === id)?.displayName ?? id).join(", "));
   const machineFilteredRows = createMemo(() => (period()?.rows ?? [])
-    .filter((row) => matchesMachineSelection(selectedMachines(), row.machine)));
+    .filter((row) => requestedMachineScope().includes(row.machine)));
   const machineFilteredCostRows = createMemo(() => (costSeries()?.rows ?? [])
-    .filter((row) => matchesMachineSelection(selectedMachines(), row.machine)));
+    .filter((row) => requestedMachineScope().includes(row.machine)));
   const models = createMemo(() => [...new Set(machineFilteredRows().map((row) => row.model))].sort());
   const agents = createMemo(() => [...new Set(machineFilteredRows().map((row) => row.agent))].sort());
   const chartModels = createMemo(() => new Set(machineFilteredCostRows().map((row) => row.model)));
@@ -393,6 +417,15 @@ export default function App() {
     const scheme = colorScheme();
     document.documentElement.dataset.colorScheme = scheme;
     window.localStorage.setItem("ccusage-gauge-color-scheme", scheme);
+  });
+  createEffect(() => {
+    if (!isDashboardStateLoaded() || machines() == null) return;
+    const enabledIDs = new Set(selectableMachines().map((machine) => machine.id));
+    const normalized = selectedMachines().filter((id) => enabledIDs.has(id));
+    const replacement = normalized.length > 0 ? normalized : requestedMachineScope();
+    if (replacement.length === selectedMachines().length
+        && replacement.every((id, index) => id === selectedMachines()[index])) return;
+    setSelectedMachines(replacement);
   });
   createEffect(() => {
     if (!isDashboardStateLoaded() || period()?.range !== range() || costSeries()?.range !== range() || costSeries()?.granularity !== granularity()) return;
@@ -435,11 +468,12 @@ export default function App() {
   const periodAvailabilityError = createMemo(() => availabilityErrorCode(period.error) != null);
   const budgetAvailabilityError = createMemo(() => availabilityErrorCode(budget.error) != null);
   const errorMessage = createMemo(() => dashboardErrorMessage(period.error, costSeries.error, budget.error));
-  const selectedMachineIDs = createMemo(() => selectedMachines().length === 0
-    ? new Set(selectableMachines().map((machine) => machine.id))
-    : new Set(selectedMachines()));
+  const selectedMachineIDs = createMemo(() => new Set(requestedMachineScope()));
   const visibleStatuses = createMemo(() => (machineStatuses()?.machines ?? [])
     .filter((status) => selectedMachineIDs().has(status.id) && status.collectionState !== "healthy"));
+  const statusByMachine = createMemo(() => new Map(
+    (machineStatuses()?.machines ?? []).map((status) => [status.id, status])
+  ));
   const latestEventMarkers = createMemo<MachineLatestEvent[]>(() => (costSeries()?.machineLatestEvents ?? [])
     .filter((marker) => selectedMachineIDs().has(marker.machine)));
   const visibleDataGaps = createMemo(() => (costSeries()?.scope.lastHourDataGaps ?? [])
@@ -486,7 +520,11 @@ export default function App() {
       });
     });
   };
-  const toggleSelectedMachine = (machine: string) => updateMachineSelection((current) => toggledMachineSelection(current, machine));
+  const toggleSelectedMachine = (machine: string) => updateMachineSelection((current) => {
+    const effective = current.length === 0 ? requestedMachineScope() : current;
+    const next = toggledMachineSelection(effective, machine);
+    return next.length === 0 ? effective : next;
+  });
   const toggleAgent = (agent: string) => {
     const nextAgents = selectedAgents().includes(agent)
       ? selectedAgents().filter((item) => item !== agent)
@@ -764,12 +802,22 @@ export default function App() {
         </div>
         <div class="machine-filter">
           <div><p class="eyebrow">MACHINE SCOPE</p><h2>Machines</h2></div>
-          <button classList={{ "model-choice": true, active: selectedMachines().length === 0 }} onClick={() => updateMachineSelection(() => [])}><span>All machines</span></button>
+          <button
+            classList={{ "model-choice": true, active: allMachinesSelected() }}
+            onClick={() => updateMachineSelection(() => selectableMachines().map((machine) => machine.id))}
+          ><span>All machines</span></button>
           <div class="model-list">
             <For each={visibleMachines()} fallback={<p class="muted">{machines.loading ? "Loading machines…" : "No enabled machines."}</p>}>{(machine) => (
-              <label classList={{ "model-choice": true, active: selectedMachines().includes(machine.id) }} title={`${machine.displayName} (${machine.id})`}>
-                <input type="checkbox" checked={selectedMachines().includes(machine.id)} onChange={() => toggleSelectedMachine(machine.id)} />
+              <label classList={{ "model-choice": true, active: selectedMachineIDs().has(machine.id) }} title={`${machine.displayName} (${machine.id})`}>
+                <input type="checkbox" checked={selectedMachineIDs().has(machine.id)} onChange={() => toggleSelectedMachine(machine.id)} />
                 <span>{machine.displayName}</span>
+                <Show when={statusByMachine().get(machine.id)?.collectionState === "error"
+                  || statusByMachine().get(machine.id)?.collectionState === "stale"}>
+                  <svg class="machine-warning-icon" viewBox="0 0 24 24" role="img" aria-label={`${machine.displayName} collection warning`}>
+                    <path d="M12 3 2.7 20h18.6L12 3Z" />
+                    <path d="M12 9v5M12 17.5v.5" />
+                  </svg>
+                </Show>
               </label>
             )}</For>
           </div>
@@ -833,7 +881,7 @@ export default function App() {
             <span classList={{ "background-refresh-status": true, visible: isBackgroundLoading() }} role="status" aria-live="polite">
               <span class="refresh-spinner" aria-hidden="true" />
               {loadStatus()?.isLoading
-                ? `${loadStatus()!.message} · ${loadStatus()!.completed}/${loadStatus()!.total}`
+                ? `${loadStatus()!.message} · ${loadStatus()!.completed}/${loadStatus()!.total} · ${machineProgressDetail(loadStatus())}`
                 : "Updating…"}
             </span>
             <Show when={isCustomEditorOpen()}><div class="custom-calendar" role="group" aria-label="Custom date range">

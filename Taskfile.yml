@@ -111,7 +111,7 @@ tasks:
       - scripts/smoke-remote-machines.sh
 
   e2e:build:
-    desc: Build an isolated macOS app bundle for Computer Use E2E testing
+    desc: Build an isolated macOS app bundle for fixture, missing, or unreachable E2E testing
     cmds:
       - scripts/build-e2e-app.sh {{.CLI_ARGS}}
 

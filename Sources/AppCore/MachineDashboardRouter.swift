@@ -264,10 +264,16 @@ public struct MachineDashboardRouter: Sendable {
     do {
       let requested = try machineSelection(components)
       if requested != "all" {
-        guard let descriptor = await store.descriptors().first(where: { $0.id == requested }) else {
-          return selectionError(MachineSelectionError.notFound(requested))
+        let requestedIDs = requested.split(separator: ",").map(String.init)
+        let descriptors = await store.descriptors()
+        guard requestedIDs.allSatisfy({ id in descriptors.contains(where: { $0.id == id }) }) else {
+          return selectionError(MachineSelectionError.notFound(
+            requestedIDs.first { id in !descriptors.contains(where: { $0.id == id }) } ?? requested
+          ))
         }
-        guard descriptor.enabled else { return selectionError(MachineSelectionError.disabled(requested)) }
+        if let disabled = descriptors.first(where: { requestedIDs.contains($0.id) && !$0.enabled }) {
+          return selectionError(MachineSelectionError.disabled(disabled.id))
+        }
       }
       let result = await collector.refresh(machine: requested)
       guard !result.succeeded.isEmpty else {
@@ -289,8 +295,16 @@ public struct MachineDashboardRouter: Sendable {
       let descriptors = await store.descriptors()
       let targets: [MachineDescriptor]
       if requested == "all" { targets = descriptors }
-      else if let descriptor = descriptors.first(where: { $0.id == requested }) { targets = [descriptor] }
-      else { return selectionError(MachineSelectionError.notFound(requested)) }
+      else {
+        let requestedIDs = requested.split(separator: ",").map(String.init)
+        let requestedSet = Set(requestedIDs)
+        targets = descriptors.filter { requestedSet.contains($0.id) }
+        guard targets.count == requestedIDs.count else {
+          return selectionError(MachineSelectionError.notFound(
+            requestedIDs.first { id in !descriptors.contains(where: { $0.id == id }) } ?? requested
+          ))
+        }
+      }
       var cleared: [String] = []
       var failed: [CacheClearFailureItem] = []
       for descriptor in targets {
@@ -529,16 +543,20 @@ public struct MachineDashboardRouter: Sendable {
 
   private func machineSelection(_ components: URLComponents) throws -> String {
     let values = (components.queryItems ?? []).filter { $0.name == "machine" }
-    guard values.count <= 1 else { throw MachineSelectionError.invalid }
-    let requested = values.first?.value ?? "all"
+    let requestedIDs = values.compactMap(\.value)
+    guard requestedIDs.count == values.count else { throw MachineSelectionError.invalid }
     if let query = components.percentEncodedQuery,
        query.split(separator: "&").contains(where: { item in
          item.hasPrefix("machine=") && item.dropFirst("machine=".count).contains("%")
        }) { throw MachineSelectionError.invalid }
-    guard requested == "all" || requested == "local" || MachineValidation.isCanonicalMachineID(requested) else {
+    if requestedIDs.isEmpty { return "all" }
+    if requestedIDs == ["all"] { return "all" }
+    guard !requestedIDs.contains("all"),
+          requestedIDs.allSatisfy(MachineValidation.isCanonicalMachineID),
+          Set(requestedIDs).count == requestedIDs.count else {
       throw MachineSelectionError.invalid
     }
-    return requested
+    return requestedIDs.joined(separator: ",")
   }
 
   private func selectionError(_ value: Error) -> HTTPResponse {
@@ -876,7 +894,7 @@ public struct MachineDashboardRouter: Sendable {
       status: 400,
       code: "invalid_machine_selection",
       message: "Invalid machine selection",
-      fieldErrors: ["machine": "must use one canonical machine id or all"]
+      fieldErrors: ["machine": "must use one or more unique canonical machine ids, or all"]
     )
   }
 

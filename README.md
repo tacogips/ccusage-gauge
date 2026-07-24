@@ -452,9 +452,16 @@ Build an isolated app bundle with a deterministic `ccusage` fixture:
 task e2e:build -- fixture
 ```
 
+Build the partial-success scenario with the same local fixture and a registered
+SSH machine at the reserved non-routable address `192.0.2.1`:
+
+```bash
+task e2e:build -- unreachable
+```
+
 The Computer Use scenarios and recorded evidence are under
-`design-docs/e2e/`. E2E config and state stay below `.build/e2e` and do not touch
-the operator's production files.
+`design-docs/e2e/`. E2E config, state, and cache stay below `.build/e2e` and do
+not touch the operator's production files.
 
 ## Homebrew Formula
 

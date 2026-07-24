@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 public enum CCUsageRunnerKind: String, Sendable {
   case local
@@ -82,18 +87,27 @@ public struct CCUsageProcessRunner: CCUsageProcessRunning, Sendable {
       process.standardOutput = stdout
       process.standardError = stderr
       do { try process.run() } catch { throw ProcessExecutionFailure.spawnFailed }
+      let processID = process.processIdentifier
+      let ownsProcessGroup = setpgid(processID, processID) == 0
 
       let outHandle = stdout.fileHandleForReading
       let errHandle = stderr.fileHandleForReading
-      async let outData = Task.detached(priority: .utility) { outHandle.readDataToEndOfFile() }.value
-      async let errData = Task.detached(priority: .utility) { errHandle.readDataToEndOfFile() }.value
+      async let outData = readPipe(outHandle)
+      async let errData = readPipe(errHandle)
 
       let deadline = Date().addingTimeInterval(timeoutSeconds)
       while process.isRunning && Date() < deadline {
         try await Task.sleep(for: .milliseconds(20))
       }
       if process.isRunning {
-        process.terminate()
+        signalProcess(processID, signal: SIGTERM, processGroup: ownsProcessGroup)
+        let terminationDeadline = Date().addingTimeInterval(0.25)
+        while process.isRunning && Date() < terminationDeadline {
+          try? await Task.sleep(for: .milliseconds(20))
+        }
+        if process.isRunning {
+          signalProcess(processID, signal: SIGKILL, processGroup: ownsProcessGroup)
+        }
         process.waitUntilExit()
         _ = await outData
         _ = await errData
@@ -106,6 +120,25 @@ public struct CCUsageProcessRunner: CCUsageProcessRunning, Sendable {
         terminationReason: process.terminationReason == .uncaughtSignal ? .uncaughtSignal : .exit
       )
     }.value
+  }
+
+  private func readPipe(_ handle: FileHandle) async -> Data {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .utility).async {
+        continuation.resume(returning: handle.readDataToEndOfFile())
+      }
+    }
+  }
+
+  private func signalProcess(
+    _ processID: Int32,
+    signal: Int32,
+    processGroup: Bool
+  ) {
+    if processGroup {
+      _ = kill(-processID, signal)
+    }
+    _ = kill(processID, signal)
   }
 }
 
