@@ -7,6 +7,13 @@ import Foundation
 struct RenderedResponse {
   let raw: Data
   let text: String
+  let failed: Bool
+
+  init(raw: Data, text: String, failed: Bool = false) {
+    self.raw = raw
+    self.text = text
+    self.failed = failed
+  }
 }
 
 /// Builds the loopback client and runs a command, translating structured client
@@ -32,6 +39,16 @@ enum ClientRuntime {
       let port = try resolvePort(options.apiPort)
       let client = DashboardAPIClient(port: port)
       let rendered = try await render(client)
+      if rendered.failed {
+        if options.json {
+          var data = rendered.raw
+          if data.last != 0x0A { data.append(0x0A) }
+          FileHandle.standardError.write(data)
+        } else {
+          FileHandle.standardError.write(Data((rendered.text + "\n").utf8))
+        }
+        throw ExitCode(4)
+      }
       if options.json {
         var data = rendered.raw
         if data.last != 0x0A { data.append(0x0A) }

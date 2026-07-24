@@ -67,6 +67,13 @@ tasks:
     cmds:
       - bun run check
 
+  frontend:test:
+    desc: Run deterministic dashboard unit tests
+    dir: frontend
+    deps: [frontend:install]
+    cmds:
+      - bun test
+
   frontend:build:
     desc: Build and synchronize the SolidJS dashboard assets
     dir: frontend

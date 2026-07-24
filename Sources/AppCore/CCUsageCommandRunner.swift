@@ -207,10 +207,50 @@ public struct SSHCCUsageCommandRunner: CCUsageCommandRunner, Sendable {
         result += ["-o", String(option.dropFirst(3))]
       }
     }
+    result += proxyArguments()
     result += ["--", MachineValidation.destination(connection)]
     result.append(Self.quoteRemoteToken(connection.remoteCcusagePath))
     result += ccusageArguments.map(Self.quoteRemoteToken)
     return result
+  }
+
+  private func proxyArguments() -> [String] {
+    guard let proxy = connection.proxy else { return [] }
+    switch proxy {
+    case .direct:
+      return []
+    case .jump(let jump):
+      var tokens = [
+        "/usr/bin/ssh", "-F", "/dev/null",
+        "-o", "BatchMode=yes",
+        "-o", "IdentitiesOnly=yes"
+      ]
+      if let identityFile = jump.identityFile {
+        tokens += ["-i", identityFile]
+      }
+      if let knownHostsFile = jump.knownHostsFile {
+        tokens += ["-o", "UserKnownHostsFile=\(knownHostsFile)"]
+      }
+      tokens += [
+        "-o", "StrictHostKeyChecking=yes",
+        "-p", String(jump.port),
+        "-W", "%h:%p",
+        MachineValidation.destination(SSHConnection(
+          host: jump.host,
+          port: jump.port,
+          user: jump.user
+        ))
+      ]
+      return ["-o", "ProxyCommand=\(tokens.map(Self.quoteRemoteToken).joined(separator: " "))"]
+    case .command(let executable):
+      let tokens = [
+        executable,
+        "connect",
+        "--host", connection.host,
+        "--port", String(connection.port)
+      ]
+      return ["-o", "ProxyCommand=\(tokens.map(Self.quoteRemoteToken).joined(separator: " "))"]
+    }
   }
 
   public static func quoteRemoteToken(_ token: String) -> String {

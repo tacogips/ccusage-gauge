@@ -103,9 +103,26 @@ public struct MachineDashboardRouter: Sendable {
     catch { return selectionError(error) }
     let coverage = requestedCoverageStart(path: path, components: components)
     if let coverage { await collector.expand(machine: requested, earliestDate: coverage) }
+    let evaluatedAt = Date()
+    let disposition = dataDisposition(path: path, components: components, now: evaluatedAt)
     let selection: MachineSnapshotSelection
-    do { selection = try await store.selection(machine: requested, requiredCoverageStart: coverage) }
-    catch { return await querySelectionError(error) }
+    do {
+      selection = try await store.selection(
+        machine: requested,
+        now: evaluatedAt,
+        requiredCoverageStart: coverage,
+        dataDisposition: disposition
+      )
+    } catch {
+      return await querySelectionError(
+        error,
+        path: path,
+        requested: requested,
+        evaluatedAt: evaluatedAt,
+        requiredCoverageStart: coverage,
+        dataDisposition: disposition
+      )
+    }
     guard let snapshot = selection.snapshot else { return error(status: 503, code: "snapshot_unavailable", message: "Usage data is temporarily unavailable") }
     do {
       switch path {
@@ -135,7 +152,14 @@ public struct MachineDashboardRouter: Sendable {
       case "/api/cost-series":
         let range = queryValue("range", components) ?? "today"
         let granularity = queryValue("granularity", components) ?? "hourly"
-        return try costResponse(snapshot: snapshot, range: range, granularity: granularity, components: components, scope: selection.scope)
+        return try costResponse(
+          snapshot: snapshot,
+          range: range,
+          granularity: granularity,
+          components: components,
+          scope: selection.scope,
+          machineLatestEvents: selection.machineLatestEvents
+        )
       case "/api/budget":
         return jsonWithScope(queryService.budget(snapshot: snapshot), scope: selection.scope)
       default:
@@ -173,22 +197,28 @@ public struct MachineDashboardRouter: Sendable {
     range: String,
     granularity: String,
     components: URLComponents,
-    scope: DashboardScope
+    scope: DashboardScope,
+    machineLatestEvents: [MachineLatestEvent]
   ) throws -> HTTPResponse {
+    var response: DashboardCostResponse
     if range == "custom" {
       guard let start = queryValue("start", components).flatMap(queryService.parseDay),
             let end = queryValue("end", components).flatMap(queryService.parseDay) else {
         return error(status: 400, code: "invalid_custom_range", message: "Invalid custom range")
       }
-      return jsonWithScope(try queryService.costSeries(
+      response = try queryService.costSeries(
         snapshot: snapshot,
         granularity: granularity,
         range: range,
         startDate: start,
         endDate: end
-      ), scope: scope)
+      )
+    } else {
+      response = try queryService.costSeries(snapshot: snapshot, granularity: granularity, range: range)
     }
-    return jsonWithScope(try queryService.costSeries(snapshot: snapshot, granularity: granularity, range: range), scope: scope)
+    response.scope = scope
+    response.machineLatestEvents = machineLatestEvents
+    return json(response, dateMilliseconds: true)
   }
 
   private func statusRoute(_ components: URLComponents) async -> HTTPResponse {
@@ -304,16 +334,35 @@ public struct MachineDashboardRouter: Sendable {
   ) async -> HTTPResponse {
     let collection = path == "/api/machines"
     let id: String?
+    let action: String?
     if collection {
       id = nil
+      action = nil
     } else {
       let prefix = "/api/machines/"
-      let value = String(path.dropFirst(prefix.count))
-      guard !value.isEmpty, !value.contains("/"), !components.percentEncodedPath.contains("%"),
-            MachineValidation.isCanonicalMachineID(value) else {
+      let suffix = String(path.dropFirst(prefix.count))
+      let parts = suffix.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+      guard (1...2).contains(parts.count),
+            let value = parts.first,
+            !value.isEmpty,
+            !components.percentEncodedPath.contains("%"),
+            MachineValidation.isCanonicalMachineID(value),
+            parts.count == 1 || ["test-connection", "refresh"].contains(parts[1]) else {
         return error(status: 400, code: "invalid_machine_id", message: "Invalid machine id", fieldErrors: ["id": "must use a canonical machine id"])
       }
       id = value
+      action = parts.count == 2 ? parts[1] : nil
+    }
+    if let action, let id {
+      return await machineAction(
+        action,
+        id: id,
+        components: components,
+        method: method,
+        headers: headers,
+        body: body,
+        listenerPort: listenerPort
+      )
     }
     if method == "GET" {
       let registry = await mutationOwner.current()
@@ -372,7 +421,6 @@ public struct MachineDashboardRouter: Sendable {
       default:
         throw MachineBodyError.invalid
       }
-      try await collector.applyRegistry(result.0)
       if method == "DELETE" { return HTTPResponse(status: 204, contentType: "application/json", body: Data()) }
       return json(result.1!, status: method == "POST" ? 201 : 200, headers: method == "POST" ? ["Location": "/api/machines/\(result.1!.id)"] : [:])
     } catch let validation as MachineValidationError {
@@ -381,6 +429,20 @@ public struct MachineDashboardRouter: Sendable {
       return error(status: 409, code: "machine_conflict", message: "Machine conflict")
     } catch MachineRegistryMutationError.notFound {
       return error(status: 404, code: "machine_not_found", message: "Machine not found")
+    } catch MachineRegistryTransactionError.reconciliationRequired {
+      return error(
+        status: 503,
+        code: "registry_reconciliation_required",
+        message: "Machine registry reconciliation is required",
+        extra: ["reconciliationRequired": true]
+      )
+    } catch MachineRegistryTransactionError.reconciliationFailed(let required) {
+      return error(
+        status: 500,
+        code: "registry_reconciliation_failed",
+        message: "Machine registry runtime reconciliation failed",
+        extra: ["reconciliationRequired": required]
+      )
     } catch is MachineBodyError {
       return error(status: 400, code: "invalid_machine", message: "Invalid machine request")
     } catch is DecodingError {
@@ -388,6 +450,81 @@ public struct MachineDashboardRouter: Sendable {
     } catch {
       return self.error(status: 500, code: "registry_persistence_failed", message: "Machine registry could not be persisted")
     }
+  }
+
+  private func machineAction(
+    _ action: String,
+    id: String,
+    components: URLComponents,
+    method: String,
+    headers: [String: String],
+    body: Data,
+    listenerPort: Int
+  ) async -> HTTPResponse {
+    guard method == "POST" else { return methodNotAllowed("POST") }
+    guard mutationAllowed(headers: headers, listenerPort: listenerPort) else { return originRejected() }
+    guard (components.queryItems ?? []).isEmpty,
+          body.isEmpty || String(decoding: body, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == "{}" else {
+      return error(status: 400, code: "invalid_machine_action", message: "Machine action request is invalid")
+    }
+    do {
+      _ = try await mutationOwner.reload()
+    } catch {
+      return self.error(
+        status: 409,
+        code: "registry_reload_failed",
+        message: "Machine registry could not be reloaded"
+      )
+    }
+    let registry = await mutationOwner.current()
+    guard let descriptor = registry.machine(id: id) else {
+      return error(status: 404, code: "machine_not_found", message: "Machine not found")
+    }
+    guard descriptor.enabled else {
+      return error(status: 409, code: "machine_disabled", message: "Machine is disabled")
+    }
+    if action == "test-connection" {
+      let testedAt = Date()
+      do {
+        try await collector.testConnection(machineID: id)
+        return json(MachineConnectionTestResponse(
+          machine: id,
+          status: "reachable",
+          testedAt: testedAt,
+          diagnostic: nil
+        ), dateMilliseconds: true)
+      } catch let error as CCUsageCommandFailure {
+        return json(MachineConnectionTestResponse(
+          machine: id,
+          status: "failed",
+          testedAt: testedAt,
+          diagnostic: MachineDiagnosticClassifier.classify(error)
+        ), dateMilliseconds: true)
+      } catch let error as CCUsageError {
+        return json(MachineConnectionTestResponse(
+          machine: id,
+          status: "failed",
+          testedAt: testedAt,
+          diagnostic: MachineDiagnosticClassifier.classify(error)
+        ), dateMilliseconds: true)
+      } catch {
+        return self.error(
+          status: 503,
+          code: "connection_test_unavailable",
+          message: "Connection test is unavailable"
+        )
+      }
+    }
+    let result = await collector.refresh(machine: id)
+    let diagnostic = try? await store.status(machine: id).machines.first?.lastError
+    return json(RefreshResponse(
+      status: result.failed.isEmpty ? "ok" : "failed",
+      requested: id,
+      refreshedMachineIds: result.succeeded,
+      failedMachineIds: result.failed,
+      generatedAt: Date(),
+      diagnostic: result.failed.isEmpty ? nil : diagnostic ?? MachineDiagnosticClassifier.diagnostic(for: "internal_error")
+    ), dateMilliseconds: true)
   }
 
   private func machineSelection(_ components: URLComponents) throws -> String {
@@ -426,47 +563,132 @@ public struct MachineDashboardRouter: Sendable {
     }
   }
 
-  private func querySelectionError(_ value: Error) async -> HTTPResponse {
+  private func querySelectionError(
+    _ value: Error,
+    path: String,
+    requested: String,
+    evaluatedAt: Date,
+    requiredCoverageStart: Date?,
+    dataDisposition: DashboardDataDisposition
+  ) async -> HTTPResponse {
+    let markers = path == "/api/cost-series"
+      ? (try? await store.latestEvents(machine: requested, now: evaluatedAt))
+      : nil
+    let resolvedScope = try? await store.observabilityScope(
+      machine: requested,
+      now: evaluatedAt,
+      requiredCoverageStart: requiredCoverageStart,
+      dataDisposition: dataDisposition
+    )
     switch value {
     case MachineSelectionError.disabled(let id):
-      return jsonObject([
+      var body: [String: Any] = [
         "error": "machine_disabled",
         "machine": id,
         "collectionState": "disabled",
-        "scope": scopeObject(requested: id, included: [], stale: [], unavailable: [])
-      ], status: 409)
+        "scope": resolvedScope.map(jsonValue) ?? scopeObject(
+          requested: id,
+          included: [],
+          stale: [],
+          unavailable: [],
+          disposition: dataDisposition,
+          evaluatedAt: evaluatedAt
+        )
+      ]
+      if let markers { body["machineLatestEvents"] = jsonValue(markers) }
+      return jsonObject(body, status: 409)
     case MachineSelectionError.unavailable(let id, let state, let interval):
-      return jsonObject([
+      var body: [String: Any] = [
         "error": "snapshot_unavailable",
         "machine": id,
         "collectionState": state.rawValue,
         "refreshIntervalSeconds": interval,
-        "scope": scopeObject(requested: id, included: [], stale: [], unavailable: [id])
-      ], status: 503, headers: ["Retry-After": String(interval)])
+        "scope": resolvedScope.map(jsonValue) ?? scopeObject(
+          requested: id,
+          included: [],
+          stale: [],
+          unavailable: [id],
+          disposition: dataDisposition,
+          evaluatedAt: evaluatedAt
+        )
+      ]
+      if let markers { body["machineLatestEvents"] = jsonValue(markers) }
+      return jsonObject(body, status: 503, headers: ["Retry-After": String(interval)])
+    case MachineSelectionError.currentDataUnavailable(let id, let state, let interval, let scope):
+      var body: [String: Any] = [
+        "error": [
+          "code": "current_data_unavailable",
+          "message": "Current usage data is unavailable"
+        ],
+        "machine": id,
+        "collectionState": state.rawValue,
+        "refreshIntervalSeconds": interval,
+        "scope": jsonValue(scope)
+      ]
+      if let markers { body["machineLatestEvents"] = jsonValue(markers) }
+      return jsonObject(body, status: 503, headers: ["Retry-After": String(interval)])
+    case MachineSelectionError.aggregateCurrentDataUnavailable(let interval, let scope):
+      var body: [String: Any] = [
+        "error": [
+          "code": "current_data_unavailable",
+          "message": "Current usage data is unavailable"
+        ],
+        "refreshIntervalSeconds": interval,
+        "scope": jsonValue(scope)
+      ]
+      if let markers { body["machineLatestEvents"] = jsonValue(markers) }
+      return jsonObject(body, status: 503, headers: ["Retry-After": String(interval)])
     case MachineSelectionError.rangeUnavailable(let id, let requested, let available, let interval):
-      return jsonObject([
+      var body: [String: Any] = [
         "error": "range_unavailable",
         "machine": id,
         "requestedCoverageStart": formatDay(requested),
         "availableCoverageStart": available.map { formatDay($0) } as Any? ?? NSNull(),
         "refreshIntervalSeconds": interval,
-        "scope": scopeObject(requested: id, included: [], stale: [], unavailable: [id])
-      ], status: 503, headers: ["Retry-After": String(interval)])
+        "scope": resolvedScope.map(jsonValue) ?? scopeObject(
+          requested: id,
+          included: [],
+          stale: [],
+          unavailable: [id],
+          disposition: dataDisposition,
+          evaluatedAt: evaluatedAt
+        )
+      ]
+      if let markers { body["machineLatestEvents"] = jsonValue(markers) }
+      return jsonObject(body, status: 503, headers: ["Retry-After": String(interval)])
     case MachineSelectionError.aggregateRangeUnavailable(let requested, let interval):
       let unavailable = await store.descriptors().filter(\.enabled).map(\.id)
-      return jsonObject([
+      var body: [String: Any] = [
         "error": "range_unavailable",
         "requestedCoverageStart": formatDay(requested),
         "refreshIntervalSeconds": interval,
-        "scope": scopeObject(requested: "all", included: [], stale: [], unavailable: unavailable)
-      ], status: 503, headers: ["Retry-After": String(interval)])
+        "scope": resolvedScope.map(jsonValue) ?? scopeObject(
+          requested: "all",
+          included: [],
+          stale: [],
+          unavailable: unavailable,
+          disposition: dataDisposition,
+          evaluatedAt: evaluatedAt
+        )
+      ]
+      if let markers { body["machineLatestEvents"] = jsonValue(markers) }
+      return jsonObject(body, status: 503, headers: ["Retry-After": String(interval)])
     case MachineSelectionError.aggregateUnavailable(let interval):
       let unavailable = await store.descriptors().filter(\.enabled).map(\.id)
-      return jsonObject([
+      var body: [String: Any] = [
         "error": "snapshot_unavailable",
         "refreshIntervalSeconds": interval,
-        "scope": scopeObject(requested: "all", included: [], stale: [], unavailable: unavailable)
-      ], status: 503, headers: ["Retry-After": String(interval)])
+        "scope": resolvedScope.map(jsonValue) ?? scopeObject(
+          requested: "all",
+          included: [],
+          stale: [],
+          unavailable: unavailable,
+          disposition: dataDisposition,
+          evaluatedAt: evaluatedAt
+        )
+      ]
+      if let markers { body["machineLatestEvents"] = jsonValue(markers) }
+      return jsonObject(body, status: 503, headers: ["Retry-After": String(interval)])
     default:
       return selectionError(value)
     }
@@ -476,15 +698,30 @@ public struct MachineDashboardRouter: Sendable {
     requested: String,
     included: [String],
     stale: [String],
-    unavailable: [String]
+    unavailable: [String],
+    disposition: DashboardDataDisposition = .historical,
+    evaluatedAt: Date = Date()
   ) -> [String: Any] {
     [
       "requested": requested,
+      "dataDisposition": disposition.rawValue,
       "includedMachineIds": included,
       "staleMachineIds": stale,
       "unavailableMachineIds": unavailable,
+      "excludedFromCurrentTotalsMachineIds": disposition == .current ? Array(Set(stale + unavailable)).sorted() : [],
+      "machineAvailability": [],
+      "lastHourDataGaps": [],
+      "evaluatedAt": millisecondsTimestamp(evaluatedAt),
       "generatedAt": NSNull()
     ]
+  }
+
+  private func jsonValue<T: Encodable>(_ value: T) -> Any {
+    guard let data = try? encoder(milliseconds: true).encode(value),
+          let object = try? JSONSerialization.jsonObject(with: data) else {
+      return NSNull()
+    }
+    return object
   }
 
   private func statusSelectionError(_ value: Error) -> HTTPResponse {
@@ -528,6 +765,26 @@ public struct MachineDashboardRouter: Sendable {
     }
   }
 
+  private func dataDisposition(
+    path: String,
+    components: URLComponents,
+    now: Date
+  ) -> DashboardDataDisposition {
+    if path == "/api/recent" || path == "/api/budget" { return .current }
+    let today = queryService.calendar.startOfDay(for: now)
+    if path == "/api/day" {
+      guard let day = queryValue("date", components).flatMap(queryService.parseDay) else { return .current }
+      return day >= today ? .current : .historical
+    }
+    let range = queryValue("range", components) ?? "today"
+    if range == "yesterday" { return .historical }
+    if range == "custom" {
+      guard let end = queryValue("end", components).flatMap(queryService.parseDay) else { return .current }
+      return end >= today ? .current : .historical
+    }
+    return .current
+  }
+
   private func queryValue(_ name: String, _ components: URLComponents) -> String? {
     components.queryItems?.first(where: { $0.name == name })?.value
   }
@@ -543,9 +800,33 @@ public struct MachineDashboardRouter: Sendable {
       throw MachineBodyError.invalid
     }
     if let ssh = object["ssh"] as? [String: Any] {
-      let allowed = Set(["host", "port", "user", "identityFile", "extraOptions", "remoteCcusagePath"])
+      let allowed = Set(["host", "port", "user", "identityFile", "extraOptions", "proxy", "remoteCcusagePath"])
       let required = Set(["host", "port", "user"])
-      guard Set(ssh.keys).isSubset(of: allowed), required.isSubset(of: Set(ssh.keys)), ssh["identityFile"] is NSNull == false else {
+      guard Set(ssh.keys).isSubset(of: allowed), required.isSubset(of: Set(ssh.keys)),
+            ssh["identityFile"] is NSNull == false,
+            ssh["proxy"] is NSNull == false else {
+        throw MachineBodyError.invalid
+      }
+      if let proxy = ssh["proxy"] as? [String: Any] {
+        guard let kind = proxy["kind"] as? String else { throw MachineBodyError.invalid }
+        let proxyKeys = Set(proxy.keys)
+        switch kind {
+        case "direct":
+          guard proxyKeys == ["kind"] else { throw MachineBodyError.invalid }
+        case "jump":
+          let required = Set(["kind", "host", "port", "user"])
+          guard required.isSubset(of: proxyKeys),
+                proxyKeys.isSubset(of: required.union(["identityFile", "knownHostsFile"])),
+                proxy["identityFile"] is NSNull == false,
+                proxy["knownHostsFile"] is NSNull == false else {
+            throw MachineBodyError.invalid
+          }
+        case "command":
+          guard proxyKeys == ["kind", "executable"] else { throw MachineBodyError.invalid }
+        default:
+          throw MachineBodyError.invalid
+        }
+      } else if ssh.keys.contains("proxy") {
         throw MachineBodyError.invalid
       }
     }
@@ -580,11 +861,14 @@ public struct MachineDashboardRouter: Sendable {
     status: Int,
     code: String,
     message: String,
-    fieldErrors: [String: String]? = nil
+    fieldErrors: [String: String]? = nil,
+    extra: [String: Any] = [:]
   ) -> HTTPResponse {
     var detail: [String: Any] = ["code": code, "message": message]
     if let fieldErrors { detail["fieldErrors"] = fieldErrors }
-    return jsonObject(["error": detail], status: status)
+    var body: [String: Any] = ["error": detail]
+    body.merge(extra) { current, _ in current }
+    return jsonObject(body, status: status)
   }
 
   private func invalidMachineSelection() -> HTTPResponse {
@@ -622,6 +906,12 @@ public struct MachineDashboardRouter: Sendable {
       encoder.dateEncodingStrategy = .iso8601
     }
     return encoder
+  }
+
+  private func millisecondsTimestamp(_ date: Date) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: date)
   }
 
   private func aggregatePhase(_ values: [DashboardLoadPhase]) -> DashboardLoadPhase {

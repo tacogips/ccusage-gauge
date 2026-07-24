@@ -9,12 +9,17 @@ public struct DashboardHTTPRequest: Sendable {
   public let url: URL
   public let headers: [String: String]
   public let body: Data?
+  /// Overrides the transport's default request timeout. Synchronous
+  /// server-side operations (machine refresh) can outlive the 60-second
+  /// URLSession default.
+  public let timeoutSeconds: TimeInterval?
 
-  public init(method: String, url: URL, headers: [String: String], body: Data?) {
+  public init(method: String, url: URL, headers: [String: String], body: Data?, timeoutSeconds: TimeInterval? = nil) {
     self.method = method
     self.url = url
     self.headers = headers
     self.body = body
+    self.timeoutSeconds = timeoutSeconds
   }
 }
 
@@ -51,6 +56,7 @@ public struct URLSessionDashboardTransport: DashboardHTTPTransport {
   public func send(_ request: DashboardHTTPRequest) async throws -> DashboardHTTPResponse {
     var urlRequest = URLRequest(url: request.url)
     urlRequest.httpMethod = request.method
+    if let timeout = request.timeoutSeconds { urlRequest.timeoutInterval = timeout }
     for (name, value) in request.headers {
       urlRequest.setValue(value, forHTTPHeaderField: name)
     }
@@ -105,6 +111,31 @@ public struct DashboardAPIClient: Sendable {
       throw DashboardClientError.decoding(String(describing: error))
     }
     let response = try await perform(method: "POST", path: "/api/machines", query: [], body: body, mutation: true)
+    return try decode(response)
+  }
+
+  public func machineTestConnection(id: String) async throws -> DashboardAPIResponse<MachineConnectionTestResponse> {
+    let response = try await perform(
+      method: "POST",
+      path: "/api/machines/\(id)/test-connection",
+      query: [],
+      body: Data("{}".utf8),
+      mutation: true
+    )
+    return try decode(response)
+  }
+
+  public func machineRefresh(id: String) async throws -> DashboardAPIResponse<RefreshResponse> {
+    // The server collects synchronously before responding; a slow remote
+    // host can legitimately exceed the 60-second URLSession default.
+    let response = try await perform(
+      method: "POST",
+      path: "/api/machines/\(id)/refresh",
+      query: [],
+      body: Data("{}".utf8),
+      mutation: true,
+      timeoutSeconds: 300
+    )
     return try decode(response)
   }
 
@@ -196,13 +227,14 @@ public struct DashboardAPIClient: Sendable {
     path: String,
     query: [URLQueryItem],
     body: Data?,
-    mutation: Bool
+    mutation: Bool,
+    timeoutSeconds: TimeInterval? = nil
   ) async throws -> DashboardHTTPResponse {
     let url = try makeURL(path: path, query: query)
     var headers: [String: String] = [:]
     if body != nil { headers["Content-Type"] = "application/json" }
     if mutation { headers["X-CCUsage-Gauge-Mutation"] = "1" }
-    let request = DashboardHTTPRequest(method: method, url: url, headers: headers, body: body)
+    let request = DashboardHTTPRequest(method: method, url: url, headers: headers, body: body, timeoutSeconds: timeoutSeconds)
     let response: DashboardHTTPResponse
     do {
       response = try await transport.send(request)

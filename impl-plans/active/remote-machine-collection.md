@@ -1,731 +1,899 @@
-# Remote Machine ccusage Collection
+# Provider-Neutral Remote-Machine Observability and Startup Logging
 
 **Status**: Ready for Implementation
 **Workflow Mode**: issue-resolution
-**Issue Reference**: implementation plan
-`impl-plans/active/remote-machine-collection.md`; no external issue number or URL
-was supplied.
-**Design References**: `design-docs/specs/design-remote-machine-collection.md`,
-`design-docs/specs/architecture.md`, `design-docs/specs/command.md`, and
-`design-docs/user-qa/2026-07-16-remote-machines-decisions.md`
-**Codex Agent References**: None supplied; no reference-behavior trace or
-intentional divergence applies.
+**Issue Reference**: `workflowExecution:codex-design-and-implement-review-loop-session-627`;
+`communication:comm-001485`; GitHub issue not supplied.
+**Design Review**: Accepted by Step 3 in `communication:comm-001494`; no high or
+mid findings.
+**Codex Agent References**: None supplied. No external reference-repository
+trace, intentional divergence, or Cursor adapter boundary applies.
 
-## Purpose
+## Source of Truth
 
-Implement the accepted SSH-exec remote collection design without re-litigating
-its locked decisions: a synthetic local machine plus registered SSH machines,
-host-only per-machine caches, machine-aware API/frontend behavior, and a
-credential-ephemeral Docker Compose emulation under Colima.
+- `design-docs/specs/design-remote-machine-collection.md#target-architecture`
+- `design-docs/specs/architecture.md#remote-machine-collection`
+- `design-docs/specs/command.md#remote-machine-observability-actions`
+- `design-docs/specs/client-commands.md#command-tree`
+- `design-docs/user-qa/2026-07-16-remote-machines-decisions.md#decisions`
+
+The accepted design controls whenever this plan is less specific. Implementation
+must not weaken its provider-neutral rule, host-key enforcement, diagnostic
+sanitization, stale-data exclusion, versioned registry migration, or startup-log
+durability contract.
+
+## Current Baseline
+
+The branch already contains the first remote-machine implementation:
+
+- `Sources/AppCore/CCUsageCommandRunner.swift` has typed local/SSH runners.
+- `Sources/AppCore/Machines.swift` persists schema version 1 and owns registry
+  mutations.
+- `Sources/AppCore/MachineCollection.swift` has a per-machine snapshot store and
+  collector, but its public health/scope DTOs predate the accepted observability
+  fields.
+- `Sources/AppCore/MachineDashboardRouter.swift` provides machine-aware routes,
+  CRUD, refresh, cache clear, and mutation gating.
+- `Sources/AppCLI/Commands/ClientMachineCommands.swift` provides list/show/add,
+  while the accepted proxy options and machine actions are not yet represented.
+- `frontend/src/App.tsx` and `frontend/src/api.ts` provide baseline machine
+  selection and registration.
+- `Sources/AppCore/HTTPService.swift` is 1001 lines and must be split before
+  behavior is added.
+- No persistent bootstrap JSONL logger exists.
+
+Implementation is therefore an additive, compatibility-preserving revision of
+the existing feature, not a greenfield replacement.
 
 ## Deliverables
 
-- [ ] Safe local/SSH command-runner abstraction with typed failure preservation.
-- [ ] Fail-closed, versioned machine registry and serialized runtime mutations.
-- [ ] Per-machine provenance, caches, snapshots, polling, health, and coverage.
-- [ ] Machine-aware query, refresh, cache-clear, registry, and status APIs.
-- [ ] `serve` and menu-bar runtime wiring that fails before bind on unsafe state.
-- [ ] Frontend machine selection, attribution, registration, and health UI.
-- [ ] Docker Compose emulation and a credential-isolation smoke test for Colima.
-- [ ] Coverage enforcement, documentation, and recorded verification evidence.
+- [x] Responsibility-based HTTP split with every non-generated Swift file below
+  1000 lines and routing behavior preserved.
+- [x] Closed schema-version-2 registry with atomic version-1 migration and
+  provider-neutral `direct`, `jump`, and fixed-protocol `command` adapters.
+- [x] Deterministic typed and sanitized collection diagnostics with no raw
+  stderr, connection values, paths, or secret material in public surfaces.
+- [x] Exact machine-health, unavailability, last-hour gap, current-data
+  exclusion, scope, and latest-event contracts.
+- [x] Validated no-restart registry reload, connection test, and targeted
+  refresh with revision/generation fencing.
+- [x] State-root JSONL bootstrap logging with 10 MiB rotation, 72-hour retention,
+  secure permissions, fallback behavior, and deterministic concurrency tests.
+- [x] CLI and SolidJS support for proxy adapters, actions, prominent degraded
+  status, exclusions, data gaps, and latest-event markers.
+- [x] Focused Swift/frontend tests, provider-neutral audits, smoke coverage,
+  synchronized documentation, and final command evidence.
 
 ## Execution Rules
 
-- Complete tasks in dependency order. After each Swift task, run the narrowest
-  relevant build/test and `swiftlint` when available; keep Swift files below
-  1000 lines and split them by responsibility.
-- Preserve unrelated dirty-worktree changes. Do not stage, commit, push, or use
-  destructive cleanup unless separately requested.
-- Preserve the accepted SSH-exec transport, closed option allowlist, POSIX token
-  quoting, host-only per-machine SQLite caches, synthetic `local`, fail-closed
-  registry rules, and ephemeral-key security model.
-- Use standalone Docker Compose under Colima only. Never place credentials in
-  image layers, named volumes, committed/runtime host files, the host's real
-  `~/.ssh`, container arguments/environment/logs, or ordinary mounts.
-- Build frontend assets with `cd frontend && bun install && bun run build`.
-- Record each task's date, status, changed deliverables, commands/results,
-  environmental limitations, and next task in the Progress Log.
+- Remain on `feat/remote-machine-observability-logging`; do not commit or push.
+- Preserve unrelated worktree changes and do not weaken or delete tests.
+- Prefer existing SwiftPM targets. Add files by responsibility instead of a new
+  module unless an existing target cannot keep the boundary testable.
+- Keep every non-generated Swift file below 1000 lines. Do not add tests to
+  `Tests/AppCoreTests/CCUsageTests.swift`, which is already near the limit.
+- Use injected clocks, filesystems, process runners, and transports for
+  deterministic failure, boundary, rotation, migration, and concurrency tests.
+- Every planned focused test file defines a same-named Swift Testing suite.
+  Confirm the suite appears in `swift test list` before relying on its exact
+  `swift test --filter <SuiteName>` command; a zero-test match is a failure.
+- Run the narrowest relevant Swift test after each Swift task and `swiftlint`
+  after Swift edits when available. Record an unavailable tool as a limitation.
+- Treat API changes as additive. Existing direct descriptors, existing client
+  commands, legacy provenance decoding, and guarded `GET /api/refresh` remain
+  compatible.
+- No provider name, machine id, or tunnel product may select a code path, DTO,
+  route, failure code, classifier, remediation, or UI label. GCE and IAP remain
+  documentation examples only.
+- Never log or expose secrets, private-key contents, credential values, raw
+  stderr, raw exceptions, command lines, request bodies, or advice to disable
+  host-key checking.
+- After each task, append a dated Progress Log entry with status, changed files,
+  commands and results, findings addressed, limitations, residual risks, and
+  the next task. Checkboxes represent evidence, not intent.
 
-## Phase A - Transport abstraction (AppCore)
-
-### TASK-001: Introduce safe local and SSH command runners
+## TASK-001: Characterize and Split the HTTP Boundary
 
 **Depends On**: None
-**Write Scope**: `Sources/AppCore/CCUsage.swift`, focused command-runner tests in
-`Tests/AppCoreTests/`
-**Parallelizable**: No
 
-In `CCUsage.swift`, extract a `CCUsageCommandRunner` protocol:
-   `func run(arguments: [String], timeoutSeconds: TimeInterval) async throws -> ProcessResult`.
-   - `LocalCCUsageCommandRunner`: wraps existing `CCUsageProcessRunner` + resolved
-     executable URL (current behavior).
-   - `CCUsageClient` takes a `CCUsageCommandRunner` (keep a convenience init from
-     `executable` so existing call sites/tests compile).
-Add `SSHCCUsageCommandRunner`: builds
-   `/usr/bin/ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes [-i path]
-   -p port [allowlisted options] -- user@host <quoted-remote-command>` and runs it
-   via a `Process` runner. Serialize every remote token with POSIX single-quote
-   escaping because OpenSSH crosses a remote-shell boundary. Validate the exact
-   user, host, local-path, remote executable grammar and closed extra-option
-   allowlist from the design; reject all unlisted config, proxy, hook,
-   environment, remote-command, forwarding, and override forms. Add the design's
-   typed `CCUsageCommandFailure` and preserve it through `CCUsageClient` and
-   `CCUsageError`: launch failure -> `spawnFailed`, deadline expiry ->
-   `timedOut`, signal termination -> `signalled`, SSH status 255 ->
-   `transportExited`, SSH status 1...254 -> `commandExited`, and any nonzero
-   local status -> `commandExited`. Do not retain the unqualified
-   `CCUsageError.nonzeroExit` collapse. Test canonical argv, remote quoting,
-   every allowed option family, representative rejected/alternate forms, and
-   every process-outcome classification with an injected fake process runner
-   (no real ssh).
+**Design References**:
+
+- `design-docs/specs/design-remote-machine-collection.md#current-architecture-baseline`
+- `design-docs/specs/architecture.md#dashboard-service`
+
+**Write Scope**:
+
+- `Sources/AppCore/HTTPService.swift`
+- new responsibility files under `Sources/AppCore/`, expected to separate
+  `DashboardSnapshotCache`, `DashboardRouter`, and `DashboardHTTPServer`
+- `Tests/AppCoreTests/HTTPServiceSplitTests.swift`, containing the explicitly
+  named `HTTPServiceSplitTests` suite
+
+**Parallelizable**: No. This establishes stable routing seams for later API work.
+
+**Work**:
+
+1. Capture existing router, snapshot-cache, static-asset, request-parser,
+   listener lifecycle, shutdown, and restart behavior with focused tests.
+2. Move cohesive types out of `HTTPService.swift` without changing public names,
+   access control, routes, headers, body encoding, listener behavior, or resource
+   lookup.
+3. Keep `MachineDashboardRouter` composition intact and avoid widening mutable
+   state or introducing cross-file global state.
+
+**Deliverables**:
+
+- behavior-preserving files organized by HTTP responsibility;
+- regression tests for route delegation, listener start/stop/restart, and
+  packaged/static assets; and
+- all affected Swift files below 1000 lines.
 
 **Completion Criteria**:
 
-- [ ] Existing local behavior remains source-compatible through the convenience
-  initializer and fixed argument arrays.
-- [ ] SSH argv, destination formatting, POSIX remote-token quoting, path checks,
-  and the complete allow/reject matrix match the accepted design.
-- [ ] Typed spawn, timeout, signal, transport-exit, and command-exit failures are
-  preserved and covered without invoking real SSH.
+- [x] Existing dashboard and machine-route tests pass unchanged.
+- [x] `HTTPService.swift` and every new Swift file are below 1000 lines.
+- [x] No route, DTO, header, status, or listener behavior changes in this task.
 
 **Verification**:
 
-- `swift test --filter CCUsageTests`
-- `swiftlint Sources Tests` when available
+- `swift test --filter HTTPServiceSplitTests`
+- `swift test --filter APIRouteTests`
+- `swift build`
+- `swiftlint Sources Tests`
 
-## Phase B - Machine registry (AppCore + CLI)
-
-### TASK-002: Implement the registry, mutation owner, and cache migration
+## TASK-002: Implement Registry Version 2 and the Proxy Adapter Boundary
 
 **Depends On**: TASK-001
-**Write Scope**: machine registry/path/cache files in `Sources/AppCore/`, startup
-wiring seams in `Sources/AppCLI/`, and focused registry/cache tests
-**Parallelizable**: No
 
-Add `Machines.swift`: `MachineDescriptor`, `SSHConnection`, `MachineKind`,
-   `MachineRegistry` (Codable), `MachineRegistryStore` (load/create/save at
-   `machines.json`, 0600, always yields a synthetic `local`). Validation: unique
-   ids, the design's canonical 1...63-byte lowercase machine-id grammar,
-   reserved `local`/`all`, one-pass canonical route/query decoding, normalized
-   bounded display names, stable field-error paths, complete SSH grammar,
-   immutable synthetic `local`, no inline secret content, and revalidation
-   immediately before launch. Make load fail closed: require a real
-   current-user-owned mode-`0700` app directory and a regular, single-link,
-   current-user-owned mode-`0600` registry opened without following a final
-   symlink; bound and fully decode/revalidate it before any listener, cache
-   migration, or poller starts. Only absence means empty. Prove a missing-file
-   directory can safely create/sync/remove a temporary file. Map unsafe metadata
-   or content to sanitized startup failure without chmod, quarantine, rewrite,
-   backup promotion, or local-only fallback; document offline repair/removal.
-   Implement the exact closed version-1 persisted envelope from the design:
-   required integer `schemaVersion: 1`, required `machines`, SSH-only persisted
-   descriptors, required canonical `extraOptions` and `remoteCcusagePath`,
-   optional-but-never-null `identityFile`, deterministic id ordering, and
-   duplicate/unknown-key rejection at every object level. Normalize API
-   omission defaults before saving. Reject missing/unversioned/lower/higher
-   versions without automatic rewrite; reserve future versions for explicit
-   atomic migrations.
-   Add a process-wide mutation actor that serializes complete-candidate
-   validation, mode enforcement, temp-file sync, atomic replacement as commit,
-   registry revision publication, old-generation cancellation/status
-   reconciliation, and replacement registration before responding. Fence every
-   poll publication by registry revision and poller generation.
-`AppPaths`: add `machinesFile` + `aggregationCacheFile(forMachine:)` helper
-   (`aggregates-<id>.sqlite3`).
-   Add the locked local-cache upgrader before any local cache/poller opens:
-   validate/checkpoint/close a sole regular `aggregates.sqlite3`, enforce cache
-   directory `0700` and file `0600`, and atomically rename it in the same
-   directory to `aggregates-local.sqlite3`. Never copy, merge, or overwrite.
-   Destination wins conflicts while source is retained and ignored; invalid
-   legacy input rebuilds cleanly; permission/checkpoint/race/rename failures
-   map to `cache_failed` without a partial destination. Local cache clear must
-   serialize with polling and atomically stage both namespaces and sidecars
-   before publishing an empty store.
+**Design References**:
+
+- `design-docs/specs/design-remote-machine-collection.md#ssh-command-boundary-and-allowlist`
+- `design-docs/specs/design-remote-machine-collection.md#provider-neutral-ssh-proxy-adapter`
+- `design-docs/specs/design-remote-machine-collection.md#persisted-registry-schema`
+- `design-docs/specs/design-remote-machine-collection.md#serialized-registry-mutation-ownership`
+- `design-docs/specs/client-commands.md#command-tree`
+- `design-docs/specs/client-commands.md#http-mapping`
+
+**Write Scope**:
+
+- `Sources/AppCore/Machines.swift`, split into registry model, validation,
+  persistence/migration, and mutation-owner files as needed
+- `Sources/AppCore/CCUsageCommandRunner.swift`
+- `Sources/AppCore/MachineHTTPModels.swift`
+- `Sources/AppCore/DashboardAPIModels.swift`
+- `Sources/AppCLI/Commands/ClientMachineCommands.swift`
+- `Tests/AppCoreTests/SSHTransportTests.swift`
+- `Tests/AppCoreTests/MachineRegistryV2Tests.swift`
+- `Tests/AppCLITests/ProxyAdapterCommandTests.swift`
+
+**Parallelizable**: No. Registry model splitting and shared AppCore/CLI test
+compilation make this part of the ordered implementation chain.
+
+**Work**:
+
+1. Add the closed `SSHConnection.proxy` union:
+   - omitted/direct adds no proxy behavior;
+   - jump accepts only validated host, port, user, optional identity file, and
+     optional known-hosts file;
+   - command accepts only an absolute owner-safe executable and constructs the
+     fixed `connect --host <validated-host> --port <validated-port>` invocation.
+2. Reject raw `-J`, `ProxyJump`, `ProxyCommand`, proxy arguments, placeholders,
+   environment/configuration values, credentials, shell fragments, and host-key
+   weakening. Preserve independent target verification and jump-host
+   verification.
+3. Keep `-F /dev/null`, fixed option order, remote-token POSIX quoting, the
+   closed `extraOptions` allowlist, and immediate pre-launch path validation.
+4. Make schema version 2 the only written representation. Enforce exact required
+   and optional fields, duplicate/unknown-key rejection at every level,
+   deterministic id ordering, normalized API defaults, and omitted rather than
+   null optional fields.
+5. Decode the exact existing version-1 representation only as a migration
+   source. Atomically synchronize and replace it with version 2 before registry
+   publication or poller startup. Preserve original bytes and runtime state on
+   failure and surface sanitized `registry_migration_failed`.
+6. Extend API/CLI payloads with the structured proxy fields. CLI add options use
+   mutually exclusive jump and command groups and never accept a raw proxy
+   string or command-adapter arguments.
+
+**Deliverables**:
+
+- structured proxy and registry-v2 domain models;
+- atomic version-1-to-version-2 migration;
+- canonical SSH argv generation for direct, jump, and command adapters;
+- additive API/client DTOs and CLI parsing; and
+- adversarial fixtures for serialization, paths, arguments, shell input,
+  duplicate keys, schema versions, and host-key policy.
 
 **Completion Criteria**:
 
-- [ ] Version-1 registry parsing, validation, deterministic persistence, file
-  safety, missing-file behavior, and sanitized failures match the design.
-- [ ] One mutation owner commits disk state before revision/runtime publication
-  and fences late poll results by revision and generation.
-- [ ] Per-machine cache paths and the atomic local-cache migration/clear behavior
-  preserve valid history and fail without partial destinations.
+- [x] Existing direct descriptors remain source/API compatible.
+- [x] Every successful save is canonical schema version 2.
+- [x] A valid version-1 file migrates once before publication; every migration
+  failure preserves its bytes and publishes no revision.
+- [x] Target and jump-host identities are independently enforced.
+- [x] The command adapter accepts no operator-supplied arguments and cannot
+  weaken the target SSH handshake.
+- [x] No provider-specific token exists in a code-facing contract.
 
 **Verification**:
 
-- `swift test --filter MachineRegistry`
-- `swift test --filter AggregationCache`
-- `swiftlint Sources Tests` when available
+- `swift test --filter SSHTransportTests`
+- `swift test --filter MachineRegistryV2Tests`
+- `swift test --filter ProxyAdapterCommandTests`
+- `swiftlint Sources Tests`
 
-## Phase C - Machine-aware records + snapshot store (AppCore)
-
-### TASK-003: Add complete machine provenance
+## TASK-003: Add Sanitized Diagnostics and Deterministic Health State
 
 **Depends On**: TASK-002
-**Write Scope**: record/snapshot/query DTO files in `Sources/AppCore/` and focused
-coding, aggregation, and serialization tests
-**Parallelizable**: No
 
-Add non-optional `machine: String` (initializer default `"local"`) to
-   `CCUsageCostRecord`, `CCUsageMetricRecord`, and
-   `CCUsageSessionMetricRecord`. Add backward-compatible decoding that maps an
-   absent key to `local`; encoding and APIs always emit the key. Update
-   inits/call sites; every block, daily, and session cache/source read
-   force-stamps the owning machine id. Add non-optional `machine` to
-   `RecentPoint` and `DashboardCostRow`; copy provenance before bucketing and
-   include machine in aggregation keys. Test legacy decode, explicit decode,
-   default construction, always-present encoding, invalid provenance rejection,
-   cache ownership stamping, and every response-row serialization path.
+**Design References**:
 
-**Completion Criteria**:
+- `design-docs/specs/design-remote-machine-collection.md#typed-command-failures-and-health-sanitization`
+- `design-docs/specs/design-remote-machine-collection.md#machine-collection-status-contract`
 
-- [ ] Legacy decoding/default construction yields `local`; new encoding and all
-  row-producing APIs always include a validated machine id.
-- [ ] Every source/cache read stamps its owning machine and aggregation keys keep
-  otherwise-equal rows from different machines distinct.
+**Write Scope**:
 
-**Verification**:
+- new diagnostic/classifier files under `Sources/AppCore/`
+- `Sources/AppCore/MachineCollection.swift`, split by status DTO/state
+  derivation, snapshot store, and collector responsibility as needed
+- `Tests/AppCoreTests/MachineDiagnosticsTests.swift`
+- `Tests/AppCoreTests/MachineHealthTests.swift`
 
-- `swift test --filter CCUsageTests`
-- `swift test --filter DashboardTests`
-- `swiftlint Sources Tests` when available
+**Parallelizable**: No. The health contract depends on the final transport
+failure boundary.
 
-### TASK-004: Implement per-machine collection and snapshot state
+**Work**:
 
-**Depends On**: TASK-001, TASK-002, TASK-003
-**Write Scope**: collector/snapshot files in `Sources/AppCore/` and focused
-collector, coverage, concurrency, and health-mapping tests
-**Parallelizable**: No
+1. Preserve typed runner kind, phase, termination reason, exit status, and
+   bounded stderr internally through `CCUsageClient`.
+2. Implement the ordered, fixture-driven SSH stderr classifier from the design:
+   at most 4096 bytes, UTF-8 replacement, POSIX case-folding, whitespace/control
+   normalization, and host-key before authentication before tunnel reachability.
+3. Map failures to the exact closed public codes and application-owned strings:
+   `host_key_verification_failed`, `auth_failed`, `tunnel_unreachable`,
+   `timeout`, `remote_command_failed`, `transport_failed`, `invalid_response`,
+   `cache_failed`, and fallback-only `internal_error`.
+4. Extend `SanitizedCollectionError` additively with nullable `detail` and
+   `remediation`; newly classified failures populate all four fields.
+5. Extend collection status with consecutive failure count, first unavailable
+   instant, stale-since instant, last-hour data gap, and the exact
+   `disabled|error|neverCollected|stale|healthy` precedence. Add overlapping-
+   condition tests proving that a failed first collection is `error`, a retained
+   snapshot with an uncleared error is `stale`, and an age-stale snapshot cannot
+   be classified as `healthy`. Success clears the
+   active failure interval; cancellation and superseded generations publish
+   nothing.
+6. Keep raw stderr, matches, exit status, connection values, paths, raw
+   exceptions, commands, and identity material out of API, CLI, UI, and logs.
 
-Add a `MachineSnapshotStore` actor: per-machine snapshot, inclusive coverage start,
-   transient load status, and `MachineCollectionStatus`.
-   `MachineCollector`: builds a `SnapshotService` per enabled machine (local ->
-   local runner + reconciliation loaders; ssh -> ssh runner, no event loaders),
-   each with its own per-machine cache; a `PollingService`-style loop per machine.
-   Map typed runner failures and collection stages to the design's exact closed
-   health codes/messages: spawn/timeout/signal/SSH-255 -> `transport_failed`,
-   command exit -> `remote_command_failed`, decode/shape -> `invalid_response`,
-   cache operation -> `cache_failed`, unexpected orchestration ->
-   `internal_error`. Poller cancellation publishes no error, and no typed
-   details, status, stderr, arguments, or paths enter API health state.
-   Store inclusive `coverageStart` and transient `DashboardLoadStatus` per
-   machine. Make scheduled polling retain the earliest loaded coverage; coalesce
-   same-machine loads and follow an in-flight load with any newly requested
-   earlier expansion. At startup, sequence each enabled machine's initial work
-   as a current-host-calendar-week load followed by a warm through the start of
-   the previous host-calendar month. The warm sequence runs independently per
-   machine, never publishes a narrower coverage boundary, and follows the same
-   coalescing, failure-retention, cancellation, revision, and generation fences
-   as scheduled/manual loads. Add focused tests that assert the current-week
-   request occurs before the previous-month warm, warm requests are per-machine,
-   successful warm coverage only moves earlier, and a failed/cancelled/late warm
-   cannot replace the current-week snapshot or publish an error/result.
+**Deliverables**:
+
+- closed diagnostic classifier and public DTO;
+- one shared health-state derivation used by status and query errors; and
+- deterministic fixtures for all classifier families, fallbacks, timestamps,
+  age boundaries, consecutive failures, cancellation, and sanitization.
 
 **Completion Criteria**:
 
-- [ ] Each enabled machine owns one runner, snapshot service, cache, poll loop,
-  coverage boundary, transient load status, and collection-health state.
-- [ ] Same-machine loads coalesce without losing earlier coverage requests, and
-  cancellation or late generations cannot publish an error/result.
-- [ ] Each enabled machine performs the required ordered startup sequence:
-  current-week load first, then previous-month warm; focused tests prove order,
-  per-machine independence, earlier-only coverage, and safe warm failure.
-- [ ] Public errors use only the accepted sanitized codes and never expose raw
-  runner details, stderr, arguments, connection data, identity data, or paths.
+- [x] Every accepted diagnostic family is independently distinguishable.
+- [x] `internal_error` is used only after all narrower classifications fail.
+- [x] Prominent status data can expose last success, sanitized failure,
+  unavailable since, stale since, and last-hour gap deterministically.
+- [x] Public/log outputs contain no raw diagnostic input or unsafe remediation.
 
 **Verification**:
 
-- `swift test --filter Snapshot`
-- `swift test --filter MachineCollector`
-- `swift test --filter StartupWarm`
-- `swiftlint Sources Tests` when available
+- `swift test --filter MachineDiagnosticsTests`
+- `swift test --filter MachineHealthTests`
+- `swiftlint Sources Tests`
 
-## Phase D - Machine-aware API (AppCore HTTPService)
+## TASK-004: Enforce Current-Data Eligibility and Add Observability Metadata
 
-### TASK-005: Implement machine-aware queries and control operations
+**Depends On**: TASK-003
+
+**Design References**:
+
+- `design-docs/specs/design-remote-machine-collection.md#machine-aware-snapshot-and-api`
+- `design-docs/specs/design-remote-machine-collection.md#latest-event-and-last-hour-marker-contract`
+- `design-docs/specs/architecture.md#remote-machine-collection`
+
+**Write Scope**:
+
+- machine scope/status/selection files split from
+  `Sources/AppCore/MachineCollection.swift`
+- `Sources/AppCore/DashboardAPIModels.swift`
+- `Sources/AppCore/DashboardQuery.swift`
+- query/scope files split from `Sources/AppCore/MachineDashboardRouter.swift`
+- `Tests/AppCoreTests/MachineCurrentDataTests.swift`
+- `Tests/AppCoreTests/MachineLatestEventTests.swift`
+
+**Parallelizable**: No. All query routes must share one finalized eligibility
+and state derivation.
+
+**Work**:
+
+1. Derive the effective half-open interval and exact
+   `current|historical` disposition before selecting rows.
+2. For current intervals, exclude stale, error, never-collected, and disabled
+   machines before rows, aggregates, totals, budgets, or summaries are
+   calculated. Recompute values only from eligible source rows.
+3. Preserve retained stale snapshots only for explicit historical queries.
+   Concrete stale current queries return structured
+   `503 current_data_unavailable`; all-machine queries return partial `200` only
+   when at least one current-eligible snapshot remains.
+4. Add the exact additive `DashboardScope` fields:
+   `dataDisposition`, `excludedFromCurrentTotalsMachineIds`,
+   `machineAvailability`, `lastHourDataGaps`, and `evaluatedAt`, while preserving
+   existing fields and oldest-included `generatedAt`.
+5. Add `machineLatestEvents` to every successful `/api/cost-series` response and
+   recognized disabled, snapshot-unavailable, and current-data-unavailable
+   response. Derive markers from unbucketed retained source timestamps before
+   presentation filters, and keep marker metadata independent of row
+   eligibility.
+6. Apply the same provenance, scope, interval, and stale gate to
+   `/api/recent`, `/api/day`, `/api/period`, `/api/metrics`,
+   `/api/cost-series`, and `/api/budget`.
+
+**Deliverables**:
+
+- one interval/disposition and current-eligibility service;
+- additive scope, availability, gap, and latest-event DTOs;
+- structured current-data errors; and
+- deterministic host-calendar, interval-boundary, stale-exclusion, marker, and
+  all-machine partial-result tests.
+
+**Completion Criteria**:
+
+- [x] Retained stale history cannot enter any current row, series, total,
+  budget, or summary.
+- [x] Every excluded current machine has a concrete reason and unavailable
+  instant, with the last-hour intersection when applicable.
+- [x] Cost-series success and recognized unavailable envelopes contain one
+  latest-event item per resolved selected machine.
+- [x] Stale latest-event metadata never makes stale rows eligible.
+
+**Verification**:
+
+- `swift test --filter MachineCurrentDataTests`
+- `swift test --filter MachineLatestEventTests`
+- `swift test --filter DashboardQueryTests`
+- `swiftlint Sources Tests`
+
+## TASK-005: Add Validated Reload, Connection Test, and Targeted Refresh
 
 **Depends On**: TASK-002, TASK-003, TASK-004
-**Write Scope**: query routing, aggregation, load/refresh, cache-clear, and
-mutation-policy code in `Sources/AppCore/HTTPService.swift` or responsibility-
-split AppCore files, plus focused router/control tests
-**Parallelizable**: No
 
-Update `DashboardRouter` to resolve `?machine=` (default `all`). Provide a snapshot
-   selector: single machine -> that snapshot; `all` -> merged snapshot (rows
-   stamped with machine id, totals recomputed). Thread through every `/api/*`
-   query route. Add non-optional machine attribution to response rows and a
-   common `scope` object containing requested, included, stale, unavailable, and
-   conservative generated-at values. Implement the design's `400` malformed,
-   `404` unknown, `409` disabled, and `503` no-usable-snapshot bodies plus
-   `Retry-After`; derive a concrete query error's `collectionState` through the
-   same function and store revision as `/api/machine-status` (`disabled`,
-   `neverCollected`, or `error` as applicable), while aggregate errors omit the
-   singular state. Stale snapshots and partial all-machine results return `200`.
-   For all-machine budget/reset metadata, use the host calendar and current host
-   boundary, oldest included generation time, minimum positive refresh interval,
-   one host budget, and row-derived spending/remaining/overage values. Preserve
-   range-driven loading: expand insufficient selected-machine coverage, retain
-   the earliest coverage across scheduled/manual refresh, and implement scoped
-   `/api/refresh`, `/api/load-status`, and `/api/cache` contracts with the
-   design's partial-success rules. For cache clear, freeze one registry
-   revision and implement atomic per-machine transaction directories and commit
-   markers, stable machine order, startup/pre-clear reconciliation, and
-   deliberate cross-machine partial success: `200` all committed, `207` mixed,
-   `500` none committed with per-item `cache_failed`. Return stable
-   `complete|partial|failed` outcome plus ordered `clearedMachineIds` and
-   `failedMachines`; include disabled descriptors in `all` and allow concrete
-   disabled-cache deletion. Retain/resume cleanly rolled-back stores, empty/resume
-   committed stores, and retain stale/stop pollers that require reconciliation.
-   Treat registry POST/PUT/PATCH/DELETE,
-   `GET /api/refresh`, and `DELETE /api/cache` as the complete explicit control
-   mutation inventory. Before any work, require a recognized loopback authority,
-   exact same-origin/fetch metadata for browser calls, and
-   `X-CCUsage-Gauge-Mutation: 1`; allow header-bearing non-browser calls without
-   browser metadata, reject all other cases with sanitized `403`, no CORS
-   authorization, and no observable state change. Route cache-clear runtime
-   reconciliation through the registry mutation actor's current revision while
-   its cache owner serializes file/store operations.
+**Design References**:
 
-**Completion Criteria**:
+- `design-docs/specs/design-remote-machine-collection.md#serialized-registry-mutation-ownership`
+- `design-docs/specs/design-remote-machine-collection.md#no-restart-connection-test-and-targeted-refresh`
+- `design-docs/specs/command.md#remote-machine-observability-actions`
 
-- [ ] Every query route supports canonical `machine=<id|all>`, emits complete
-  provenance/scope, and returns the accepted single/aggregate status semantics.
-- [ ] Coverage expansion, refresh, and load-status preserve earliest coverage
-  and the specified partial-success/stale-retention behavior.
-- [ ] Cache clear is atomic per machine, partial across `all`, crash-reconcilable,
-  stable in ordering, and serialized with pollers/registry revision ownership.
-- [ ] Every explicit control mutation enforces the exact loopback origin/fetch
-  metadata/mutation-header policy before any observable state change.
+**Write Scope**:
 
-**Verification**:
+- registry reload/reconciliation files under `Sources/AppCore/`
+- `Sources/AppCore/MachineCollection.swift`
+- action routing files split from `Sources/AppCore/MachineDashboardRouter.swift`
+- `Sources/AppCore/MachineHTTPModels.swift`
+- `Sources/AppCore/DashboardAPIClient.swift`
+- `Sources/AppCLI/Commands/ClientCommand.swift`
+- `Sources/AppCLI/Commands/ClientMachineCommands.swift`
+- `Sources/AppCLI/ClientRuntime.swift`
+- `Sources/AppCLI/Rendering/MachineRenderer.swift`
+- `Tests/AppCoreTests/MachineActionTests.swift`
+- `Tests/AppCLITests/MachineActionCommandTests.swift`
+- `Tests/AppCLITests/MachineActionRenderingTests.swift`
 
-- `swift test --filter DashboardTests`
-- `swift test --filter CacheClear`
-- `swift test --filter MutationPolicy`
-- `swiftlint Sources Tests` when available
+**Parallelizable**: No. It mutates the registry/collector contract and freezes
+the DTOs consumed by the frontend.
 
-### TASK-006: Implement machine registry and status HTTP contracts
+**Work**:
 
-**Depends On**: TASK-002, TASK-004, TASK-005
-**Write Scope**: machine CRUD/status DTOs and routes in `Sources/AppCore/`, plus
-focused HTTP contract tests
-**Parallelizable**: No
+1. Route existing registry `POST`, `PUT`, `PATCH`, and `DELETE` through the same
+   process-wide transaction owner. Each response waits for complete-candidate
+   validation, synchronized mode-`0600` atomic persistence, immutable revision
+   publication, affected-generation increment, cancellation and awaiting of the
+   old poller, snapshot/status reconciliation, and non-throwing replacement
+   registration. A pre-commit failure changes neither disk nor runtime;
+   unaffected pollers continue; every late result is revision/generation fenced.
+2. Before either action, reload and fully validate `machines.json` through the
+   serialized registry owner. Migrate valid version 1 before publication.
+   Invalid input returns `409 registry_reload_failed`, preserves the committed
+   in-memory revision/pollers, and runs no action.
+3. Publish a valid changed registry atomically, increment affected generations,
+   cancel and await replaced pollers, reconcile status/snapshots, and fence every
+   late publication by revision and generation.
+4. Add guarded `POST /api/machines/{id}/test-connection`. Use the same validated
+   runner with fixed `--version`; do not write cache, change collection status,
+   replace snapshots, create tunnels, or execute caller-provided commands.
+5. Add guarded `POST /api/machines/{id}/refresh`. Coalesce with current
+   collection for the new revision, retain coverage and last snapshot, and
+   return the exact additive `RefreshResponse` diagnostic semantics.
+6. Add typed `DashboardAPIClient` methods and
+   `ccusage-gauge client machines test-connection|refresh` commands. Preserve
+   exact stdout/stderr, JSON, and exit-code rules.
+7. Keep guarded `GET /api/refresh` compatible and apply the same mutation gate
+   before reload, body decoding, selection, or work.
 
-Implement `GET/POST /api/machines` and
-   `GET/PUT/PATCH/DELETE /api/machines/{id}` using the exact shared DTOs,
-   status codes, headers, field-error envelope, reserved-local behavior, and
-   atomic-save ordering in the design. Implement the exact
-   `GET /api/machine-status?machine=<id|all>` envelope, canonical selection
-   errors, local-first/id ordering, nullable timestamp and coverage fields,
-   deterministic `disabled|neverCollected|healthy|stale|error` precedence, and
-   closed sanitized-error codes. Disabled and unavailable machines remain
-   successful status items rather than selection failures.
+**Deliverables**:
+
+- serialized disk reload and runtime reconciliation;
+- complete CRUD persistence-to-runtime transactions before response;
+- exact action routes and response DTOs;
+- typed client/CLI action support; and
+- deterministic filesystem, revision, generation, coalescing, cancellation,
+  invalid-reload, migration, concurrent CRUD, disabled/unknown, unaffected
+  poller, and output-stream tests.
 
 **Completion Criteria**:
 
-- [ ] Collection/item CRUD exactly matches accepted DTOs, status codes, headers,
-  validation envelopes, immutable-id/local rules, and persistence-before-runtime
-  ordering.
-- [ ] Machine-status uses local-first ordering, exact state precedence and
-  nullability, sanitized closed errors, and shared revision-consistent state
-  derivation with concrete query errors.
+- [x] Valid disk edits are usable by test/refresh without app restart.
+- [x] Every CRUD response observes its persisted revision and fully reconciled
+  affected poller/store state; concurrent mutations lose no update.
+- [x] Invalid or failed migration edits change neither runtime nor disk.
+- [x] Test connection has no collection/cache/status side effects.
+- [x] Targeted refresh never enables a machine, drops retained coverage, or
+  weakens host-key policy.
+- [x] Removed/replaced pollers cannot publish after the action response.
 
 **Verification**:
 
-- `swift test --filter MachineRoute`
-- `swift test --filter MachineStatus`
-- `swiftlint Sources Tests` when available
+- `swift test --filter MachineActionTests`
+- `swift test --filter DashboardAPIClientTests`
+- `swift test --filter MachineActionCommandTests`
+- `swift test --filter MachineActionRenderingTests`
+- `swiftlint Sources Tests`
 
-## Phase E - CLI wiring
+## TASK-006: Implement Secure Persistent Bootstrap Logging
 
-### TASK-007: Wire the production runtimes
+**Depends On**: TASK-001, TASK-005
 
-**Depends On**: TASK-002, TASK-004, TASK-005, TASK-006
-**Write Scope**: `Sources/AppCLI/`, `Sources/CCUsageGaugeMenuBar/`, runtime
-composition seams in `Sources/AppCore/`, and focused CLI/runtime tests
-**Parallelizable**: No
+**Design References**:
 
-`serve` builds the registry, `MachineCollector`, `MachineSnapshotStore`, and a
-   `DashboardRouter` that reads from the store. Registry mutations restart the
-   affected machine's poller through the sole mutation actor. Fail before bind
-   on every unsafe/invalid registry or persistence-path condition. Keep
-   single-machine `usage-snapshot` working (local). Add the optional `machines`
-   list subcommand only if it does not delay or broaden the required feature.
+- `design-docs/specs/architecture.md#persistent-startup-and-bootstrap-log`
+- `design-docs/specs/command.md#remote-machine-observability-actions`
+
+**Write Scope**:
+
+- `Sources/AppCore/Configuration.swift` for `AppPaths.logDirectory`
+- `Sources/AppCore/BootstrapLogger.swift`
+- `Sources/AppCore/BootstrapLogFileSystem.swift`
+- `Sources/AppCore/BootstrapLogLock.swift`
+- `Sources/AppCLI/RootCommand.swift`
+- `Sources/AppCLI/Runtime.swift`
+- `Sources/CCUsageGaugeMenuBar/MenuBarApp.swift`
+- `Tests/AppCoreTests/BootstrapLoggerTests.swift`
+- `Tests/AppCLITests/BootstrapLoggingCommandTests.swift`
+
+**Parallelizable**: No. Execute after TASK-005 so shared AppCore and test-target
+compilation has one plan owner at a time.
+
+**Work**:
+
+1. Add a side-effect-free `AppCore` bootstrap logger and explicit `activate()`.
+   Menu-bar and runtime CLI commands activate before configuration, state,
+   registry, cache, executable, asset, or listener work; help/version remain
+   side-effect free. Activation may validate/create the directory, select the
+   fallback, acquire the maintenance lock, and apply retention, but must not
+   create `ccusage-gauge.jsonl` until the first append.
+2. Derive `~/.local/ccusage-gauge/logs` from the state root and add one fallback
+   attempt to the default state-root log directory when an explicit override
+   fails. Never record rejected paths or underlying exceptions.
+3. Require current-user-owned real directories at `0700` and regular,
+   single-link current-user-owned files at `0600`; do not follow or repair
+   unsafe objects.
+4. Append one-line JSON records using only closed runtime, phase, code,
+   severity, and application-owned message values. Each encoded record is
+   capped at exactly 16 KiB; oversized dynamic input is never copied or emitted.
+5. Before an append exceeding 10 MiB, atomically rotate with UTC timestamp and
+   collision-safe monotonic sequence. Remove only rotated files whose
+   modification time is strictly older than 72 hours; retain a file exactly at
+   the boundary and never delete the active or unrelated files.
+6. Serialize activation, append, rotation, and cleanup across tasks/processes
+   with an advisory lock. Logging failure must not mask or block the original
+   runtime error.
+
+**Deliverables**:
+
+- secure state-root JSONL logger;
+- early menu-bar and CLI lifecycle integration;
+- closed sanitized record schema; and
+- injected clock/filesystem/limit/retention tests for exact size boundaries,
+  the 16 KiB record boundary, activation without active-file creation, first
+  append creation, retention before/at 72 hours, collisions, permissions/types,
+  fallback, concurrent append, malformed config, registry, SSH/process, and
+  listener failures.
 
 **Completion Criteria**:
 
-- [ ] CLI and menu-bar service load/validate the registry and migrate the local
-  cache before listener or poller startup, and share the same mutation owner.
-- [ ] Unsafe/invalid persistence state fails before bind; local-only
-  `usage-snapshot` remains compatible.
+- [x] Malformed config and other early runtime failures are persisted before
+  their existing UI/stderr presentation when logging is available.
+- [x] Help/version create no directories or files.
+- [x] Activation performs maintenance without creating the active JSONL file;
+  the first append creates it and no encoded record exceeds 16 KiB.
+- [x] Rotation, retention, permissions, fallback, and concurrency match the
+  accepted contract exactly.
+- [x] Log records contain no raw config, stderr, exception text, environment,
+  commands, request bodies, topology, paths, credentials, or usage data.
 
 **Verification**:
 
-- `swift test --filter CommandTests`
-- `swift test --filter HTTPServiceTests`
-- `swift build`
-- `swiftlint Sources Tests` when available
+- `swift test --filter BootstrapLoggerTests`
+- `swift test --filter BootstrapLoggingCommandTests`
+- `swiftlint Sources Tests`
 
-## Phase F - Frontend
+## TASK-007: Implement the Frontend Observability and Action Experience
 
-### TASK-008: Add frontend machine workflows
+**Depends On**: TASK-002, TASK-003, TASK-004, TASK-005 DTO freeze, TASK-006
 
-**Depends On**: TASK-005 and TASK-006 DTOs frozen
-**Write Scope**: `frontend/` and generated
-`Sources/AppCore/Resources/Web/` assets only
-**Parallelizable**: Yes, after TASK-005/TASK-006 DTOs are frozen; write scope is
-disjoint from TASK-007
+**Design References**:
 
-Update `api.ts` with machine types + `machine` param on all query, refresh, load-status,
-    and cache calls; exact collection/item CRUD DTOs and
-    `/api/machine-status` clients. Add `X-CCUsage-Gauge-Mutation: 1` to refresh,
-    cache deletion, and registry mutation requests only.
-Update `App.tsx` with a machine selector in the sidebar ("All machines" + entries), scope
-    label on stats/chart/table, machine column/attribution when scope = all.
-Add a machines registration screen (add/edit/remove ssh info, enable toggle, show
-    collection status). Build with `bun run build` -> assets land in
-    `Sources/AppCore/Resources/Web/assets`.
+- `design-docs/specs/design-remote-machine-collection.md#dashboard-ui`
+- `design-docs/specs/design-remote-machine-collection.md#latest-event-and-last-hour-marker-contract`
+- `design-docs/specs/architecture.md#frontend-contract`
+
+**Write Scope**:
+
+- `frontend/src/api.ts`
+- `frontend/src/App.tsx`, split into machine configuration, health, action, and
+  chart components before additions make it harder to maintain
+- `frontend/src/styles.css` and focused component/style modules
+- `frontend/tests/`
+- `frontend/package.json`
+- generated `Sources/AppCore/Resources/Web/` only after source tests/checks pass
+
+**Parallelizable**: No. Start only after backend DTOs and bootstrap integration
+are complete.
+
+**Work**:
+
+1. Add exact proxy-adapter request/response types and safe direct/jump/command
+   form controls. Provide no raw SSH option, proxy string, shell command,
+   adapter-argument, environment, or credential field.
+2. Render persistent high-contrast stale/unavailable panels with last success,
+   sanitized diagnostic, unavailable/stale since, last-hour gap, and explicit
+   current-total exclusion.
+3. Add per-SSH-machine Test connection and Refresh controls with per-machine
+   in-flight suppression. Retain action results until the next edit/action and
+   treat HTTP-200 `status: failed` as failure.
+4. After refresh success or failure, refetch the design-specified registry,
+   status, current metrics, cost-series, and budget sets. A failed connection
+   test refetches nothing.
+5. Render latest-event markers and data-gap spans for the last-hour sub-daily
+   chart from successful or recognized unavailable responses. Distinguish
+   observed, no-event, stale, and unavailable without implying stale inclusion.
+6. Extract pure derivation/rendering helpers where possible and add Bun tests.
+   Add a repository `frontend:test` task if absent.
+
+**Deliverables**:
+
+- typed frontend proxy, status, scope, marker, gap, and action contracts;
+- maintainable machine/status/chart components;
+- deterministic frontend tests for provider neutrality, panels, exclusions,
+  action state/refetch behavior, markers, and data gaps; and
+- synchronized production assets.
 
 **Completion Criteria**:
 
-- [ ] All query/control/CRUD/status requests use the accepted shared contract;
-  the mutation header appears on control mutations only.
-- [ ] All-machine and concrete-machine views show unambiguous provenance/scope,
-  and registration/enable/edit/remove/status flows expose sanitized failures.
-- [ ] The production frontend build updates packaged assets without committing
-  dependency caches.
+- [x] The UI exposes every accepted status/action field without raw sensitive
+  data or provider-specific labels.
+- [x] Summary cards consume only server-selected eligible rows and visibly list
+  excluded machines.
+- [x] Action success/failure and refetch behavior match the design.
+- [x] Frontend tests, typecheck, and clean build pass before assets are synced.
 
 **Verification**:
 
-- `cd frontend && bun install && bun run build`
+- `cd frontend && bun test`
 - `task frontend:check`
-- `swift build`
+- `task frontend:build`
 
-## Phase G - Docker Compose emulation + verification
+## TASK-008: Complete Cross-Layer Regression, Smoke, and Documentation Coverage
 
-The accepted and only emulation topology is standalone Docker Compose under
-Colima. Docker Swarm, `docker stack deploy`, and credential-storage fallbacks
-are forbidden. Missing prerequisites are recorded as verification limitations;
-they do not block creation of the emulation assets or authorize another
-topology.
+**Depends On**: TASK-002 through TASK-007
 
-### TASK-009: Build the Compose emulation topology
+**Design References**:
 
-**Depends On**: TASK-001, TASK-002, TASK-007, TASK-008
-**Write Scope**: `deploy/emulation/` and `deploy/emulation/.runtime/` ignore rule
-**Parallelizable**: No
+- `design-docs/specs/design-remote-machine-collection.md#local-emulation-docker-compose--colima`
+- `design-docs/specs/design-remote-machine-collection.md#rollout-and-compatibility`
+- `design-docs/specs/architecture.md#rollout-and-verification-constraints`
+- `design-docs/user-qa/2026-07-16-remote-machines-decisions.md#decisions`
 
-Add `deploy/emulation/`:
-    - `Dockerfile.machine`: minimal image with `sshd` + a `ccusage` stub script
-      that emits canned per-machine JSON (blocks/daily/session) so no node/ccusage
-      install is needed in the container; seeded numbers differ per machine.
-    - `Dockerfile.collector`: multi-stage Linux Swift build producing
-      `/usr/local/bin/ccusage-gauge` with packaged web resources. The
-      unprivileged runtime installs only its Swift runtime dependencies, SQLite
-      runtime, OpenSSH client, CA certificates, curl, and a valid zero-cost local
-      `ccusage` stub. Its entrypoint validates secret/config/cache access and
-      execs `ccusage-gauge serve --port 18081`; it never copies or logs a secret.
-    - `compose.yaml`: define `machine-a`, `machine-b`, `keygen`, and one
-      collector. Give every service that receives key material its own
-      service-scoped `tmpfs` secret directory. `keygen` creates one ed25519
-      client-authentication pair only in its tmpfs and remains alive for the
-      run. Each SSH machine also has a separate host-key tmpfs, generates its
-      own unique ephemeral ed25519 host key at startup after verifying the mount
-      type, applies `root:root`/`0600` to the private key and `0644` to its public
-      key, and starts `sshd` with only that explicit `HostKey` path. A
-      provisioning command
-      pipes the private key directly from keygen into collector tmpfs and pipes
-      only the public key into each machine tmpfs; set the identity to mode
-      `0400` and authorized-key ownership/modes required by `sshd`. Never expand
-      key bytes into arguments, environment, tracing, captured output, or logs,
-      and fail before collection unless every destination is a tmpfs mount.
-      Standalone Compose file-backed `secrets:` are not used for credentials.
-      Bind collector cache/config to disposable, gitignored
-      `deploy/emulation/.runtime/` directories that are scanned to exclude keys.
-      Never use host `~/.ssh`, host files for emulation keys, ordinary credential mounts, image
-      layers, named volumes, container writable layers, environment, arguments,
-      or logs for key material. The production `identityFile` contract may
-      reference an operator-managed host file, but the application must never
-      copy its key contents into application-managed persistence. Publish fixed
-      machine SSH ports but no collector API port. Registry entries use the
-      Compose host-gateway and published SSH
-      ports instead of service DNS or direct port 22, preserving the forwarded-
-      port boundary. Production packaging remains a host `serve` process.
+**Write Scope**:
 
-**Completion Criteria**:
-
-- [ ] Compose defines two distinct SSH machines, keygen, and one unprivileged
-  collector with no published collector API port.
-- [ ] Client and host keys exist only in service-scoped tmpfs mounts and are
-  transferred by non-logging pipes; runtime/config/cache mounts remain
-  credential-free and disposable.
-- [ ] Registry connections traverse host-gateway published SSH ports, preserving
-  the forwarded-port boundary.
-
-**Verification**:
-
-- `docker compose -f deploy/emulation/compose.yaml config`
-- `git check-ignore deploy/emulation/.runtime/`
-
-### TASK-010: Add the end-to-end emulation smoke test
-
-**Depends On**: TASK-009
-**Write Scope**: `scripts/smoke-remote-machines.sh` only
-**Parallelizable**: No
-
-Add `scripts/smoke-remote-machines.sh`: self-check Colima, Docker Engine,
-    Docker Compose, image-build, host-gateway, and tmpfs prerequisites -> start
-    Colima when available and needed -> `docker compose build` and bring up the
-    project -> generate the one-time client-authentication pair in keygen tmpfs
-    -> pipe it into the service tmpfs destinations -> generate one machine-local
-    host key in each SSH server's host-key tmpfs -> validate placement,
-    ownership, modes, and non-empty distinct host-key fingerprints ->
-    wait for the collector -> call its loopback API only via
-    `docker compose exec collector curl http://127.0.0.1:18081` -> register machines via
-    `/api/machines` -> assertions, setting
-    `X-CCUsage-Gauge-Mutation: 1` on every state-changing call:
-    per-machine `/api/metrics?machine=machine-a`, aggregate `?machine=all`, and
-    filter/provenance correctness -> assert synthetic `local` is healthy with
-    zero cost and aggregate totals equal `machine-a + machine-b` -> deliberately
-    stop or make one registered SSH machine unavailable while retaining its
-    last usable snapshot, then assert the accepted degraded/partial contracts:
-    concrete status is sanitized `stale` or `error` as appropriate; `machine=all`
-    returns `200` when at least one usable snapshot remains; scope lists exact
-    included/stale/unavailable machine ids with no raw SSH/process details; rows
-    retain machine provenance; totals include only the declared included
-    machines; and the aggregate error path returns `503` only when no usable
-    snapshot remains -> verify the
-    collector has no published HTTP port, all credential destinations are
-    tmpfs, and keys are absent from images, ordinary mounts, writable layers,
-    runtime data, process environment/arguments, logs, named volumes, and Git
-    candidates -> always run `docker compose down`, remove the credential-free
-    runtime directory, and verify no emulation container or client/host-key
-    tmpfs remains; when lifecycle regeneration is explicitly tested, assert a
-    clean subsequent start produces host-key fingerprints different from the
-    prior run. If a prerequisite is unavailable, emit the exact limitation and
-    exit without claiming runtime or credential-isolation success.
-
-**Completion Criteria**:
-
-- [ ] The script validates prerequisites, builds/starts/provisions the topology,
-  exercises local, concrete remote, aggregate, provenance, and health behavior,
-  and always performs bounded cleanup.
-- [ ] Runtime assertions cover a deliberately degraded remote machine and prove
-  the accepted partial-state status, scope, provenance, totals, sanitization,
-  stale retention, and no-usable-snapshot contracts.
-- [ ] It proves key placement/isolation and the absence of credentials from all
-  forbidden locations without printing key bytes.
-- [ ] Missing Colima/Docker prerequisites produce an explicit limitation and do
-  not claim runtime or isolation success.
-
-**Verification**:
-
-- `bash -n scripts/smoke-remote-machines.sh`
+- new focused tests under `Tests/AppCoreTests/` and `Tests/AppCLITests/`
 - `scripts/smoke-remote-machines.sh`
+- `scripts/smoke-dashboard.sh` and `scripts/smoke-isolated-runtime.sh` only when
+  required to exercise accepted behavior
+- `deploy/emulation/` only for provider-neutral direct/forwarded SSH fixtures
+- `Taskfile.yml`
+- `README.md`
+- accepted design documents only for implementation-status synchronization
+- this implementation plan
 
-### TASK-011: Add coverage, documentation, and closeout evidence
+**Parallelizable**: No. This integrates all cross-layer contracts.
 
-**Depends On**: TASK-001 through TASK-010
-**Write Scope**: `.gitignore`, `README.md`, `Taskfile.yml`, coverage tooling under
-`scripts/`, tests needed for the threshold, and this implementation plan
-**Parallelizable**: No
+**Work**:
 
-Update `.gitignore` (`deploy/emulation/.runtime/`), `README`, and
-    `Taskfile.yml` with emulation tasks. Add `task test:coverage` backed by a
-    repository script that runs `swift test --enable-code-coverage`, discovers
-    the SwiftPM coverage artifact and test binary without an architecture-fixed
-    path, invokes the active toolchain's `llvm-cov`, includes executable lines
-    in `Sources/AppCore` and `Sources/AppCLI`, excludes tests/generated code/web
-    resources, and fails below 80.0% total line coverage or when tooling or
-    artifacts are unavailable.
+1. Fill remaining deterministic matrices: direct/jump/command neutrality;
+   classifier precedence/fallback; current/historical interval boundaries;
+   stale exclusion on every route; recognized error envelopes; latest-event
+   markers; registry migration/reload; action concurrency; logging rotation,
+   retention, permissions, fallback, redaction, and concurrent append.
+2. Preserve the accepted baseline contracts with explicit regression suites:
+   legacy-only local-cache migration, destination-wins conflict handling,
+   unsafe legacy input, WAL checkpoint/mode enforcement, injected migration
+   failures with no partial destination, restart retry, both local cache
+   namespaces and sidecars on clear, per-machine crash recovery, complete/mixed/
+   zero-success cache-clear responses, and no stale-cache resurrection.
+3. Re-run explicit mutation-origin tests for every CRUD, refresh, action, and
+   cache-delete route; prove rejected origin/fetch/header/preflight cases make no
+   registry, cache, poller, status, or refresh change. Re-run complete machine
+   provenance across block/timeline, daily, session, recent/day/period, metrics,
+   and every cost-series granularity, including otherwise-equal cross-machine
+   rows. Re-run coverage retention, per-machine expansion, concurrent
+   all-machine expansion, failed-expansion retention, and startup warm ordering.
+4. Extend remote-machine smoke coverage to prove guarded test connection and
+   targeted refresh after a validated registry edit, retained stale history,
+   partial current aggregates, exact exclusion metadata, latest-event metadata,
+   sanitized failure output, and recovery. Keep standalone Compose under Colima
+   and the existing ephemeral tmpfs credential model.
+5. Add or update Taskfile entries for frontend tests and smoke execution without
+   changing release/publish behavior.
+6. Update README and implementation-status documentation with provider-neutral
+   terminology, log location/rotation/retention, action commands, safe
+   remediation, and exact environment limitations.
+7. Audit added code-facing text for GCE/IAP/GCP/provider-specific branching,
+   unsafe host-key advice, raw stderr exposure, fixed machine ids, and secret or
+   machine-local path leakage.
+8. Run the repository-supported `task test:coverage` path and retain its
+   architecture-independent SwiftPM/`llvm-cov` discovery. It must measure
+   executable lines in `Sources/AppCore` and `Sources/AppCLI`, exclude tests,
+   generated code, and copied web resources, and fail below 80.0%. Missing
+   tooling or an unreadable artifact is a failed gate, not an environment skip.
+
+**Deliverables**:
+
+- complete deterministic Swift/frontend regression coverage;
+- enhanced provider-neutral smoke assertions;
+- task automation and operator documentation; and
+- audit evidence with exact limitations where the environment prevents a
+  runtime check.
 
 **Completion Criteria**:
 
-- [ ] Documentation and task automation describe only the accepted standalone
-  Compose/Colima topology and its prerequisite limitations.
-- [ ] Executable lines in `Sources/AppCore` and `Sources/AppCLI` meet the 80.0%
-  threshold through architecture-independent coverage artifact discovery.
-- [ ] All verification commands and any environmental limitation are recorded;
-  all task/deliverable checkboxes reflect evidence rather than intent.
-- [ ] Final-gate evidence records each command, exit result, and material
-  assertion for frontend typecheck/build, Swift build/test/coverage/lint, CLI
-  smoke, loopback HTTP smoke, SwiftPM/Formula/Cask release-layout scaffolding,
-  remote-machine emulation, whitespace, and worktree hygiene. A skipped command
-  remains an explicit unmet criterion unless the design permits an environmental
-  limitation; Colima/Docker limitations never count as runtime/isolation proof.
+- [x] Every Step 1 acceptance criterion maps to at least one deterministic test
+  or explicit smoke assertion.
+- [x] Local-cache migration/clear recovery, mutation-origin rejection,
+  complete row provenance, and coverage retention remain explicitly verified.
+- [x] Direct, jump, command, local-forward, and equivalent tunnel behavior share
+  one code-facing contract.
+- [x] Smoke failures report exact environment limitations without claiming
+  unexecuted runtime or credential-isolation proof.
+- [x] Documentation and plan status match the implemented behavior.
+- [x] `task test:coverage` reports at least 80.0% executable-line coverage for
+  AppCore and AppCLI; missing tools or artifacts remain verification failures.
 
 **Verification**:
 
+- `task test`
 - `task test:coverage`
+- `task lint`
+- `task frontend:test`
+- `task frontend:check`
+- `task frontend:build`
+- `bash -n scripts/smoke-remote-machines.sh`
+- `task smoke:remote-machines`
+- `if rg -n -i 'gce|iap|gcp|google cloud' Sources frontend/src; then exit 1; fi`
+- `if rg -n 'StrictHostKeyChecking=no|UserKnownHostsFile=/dev/null' Sources frontend/src; then exit 1; fi`
+
+## TASK-009: Run Final Gates and Record Closeout Evidence
+
+**Depends On**: TASK-001 through TASK-008
+
+**Design References**:
+
+- `design-docs/specs/design-remote-machine-collection.md#rollout-and-compatibility`
+- `design-docs/specs/architecture.md#rollout-and-verification-constraints`
+
+**Write Scope**:
+
+- `impl-plans/active/remote-machine-collection.md`
+- documentation corrections required by final evidence
+
+**Parallelizable**: No.
+
+**Work**:
+
+1. Run focused failures first, then the full repository gates.
+2. Record each exact command, exit result, material assertion, limitation, and
+   residual risk in the Progress Log.
+3. Inspect the final diff for unrelated changes, credentials, private URLs,
+   machine-local absolute paths, provider-specific code-facing contracts,
+   generated asset/source mismatch, files at or above 1000 lines, and accidental
+   test removal.
+4. Confirm the branch is unchanged and no commit was created.
+5. Move this plan to `impl-plans/completed/` only after implementation review
+   accepts and every non-environmental completion criterion passes.
+6. Exercise packaged resources and release scaffolding without publishing:
+   `task smoke:assets`, Formula archive dry runs, and Cask archive dry runs.
+   The Cask dry run executes on macOS; a non-macOS runner records the exact
+   platform limitation and leaves that check unverified rather than passing it.
+
+**Completion Criteria**:
+
+- [x] Focused tests and all full gates pass, or each permitted environment
+  limitation is exact and leaves the affected criterion visibly unverified.
+- [x] No non-generated Swift file is 1000 lines or longer.
+- [x] No commit or push was created.
+- [x] Coverage is at least 80.0%; `task build`, packaged-resource checks, and
+  non-publishing Formula/Cask scaffolding checks have explicit results.
+- [x] Final progress evidence lists changed files, review decisions, addressed
+  findings, verification results, limitations, TODOs, and residual risks.
+
+**Verification**:
+
+- `task test`
+- `task test:coverage`
+- `task lint`
+- `task frontend:test`
 - `task frontend:check`
 - `task frontend:build`
 - `task build`
-- `task test`
-- `task lint` when SwiftLint is available
-- `task smoke:isolated-runtime` (CLI and isolated-path evidence)
-- `task smoke:dashboard` (loopback HTTP readiness, routes, shutdown, restart,
-  and final port-release evidence)
-- `task smoke:assets` (SwiftPM, Formula, and Cask packaged-resource layouts plus
-  missing-resource diagnostics)
+- `nix flake check`
+- `task smoke:assets`
+- `task smoke:isolated-runtime`
+- `task smoke:dashboard`
+- `task smoke:remote-machines`
 - `scripts/build-homebrew-release.sh --dry-run darwin-arm64 darwin-x64`
 - `scripts/build-homebrew-cask-release.sh --dry-run darwin-arm64 darwin-x64`
-  on macOS (release-script scaffolding only; do not publish)
-- `bash -n scripts/smoke-remote-machines.sh`
-- `bash scripts/smoke-remote-machines.sh`
+  on macOS; otherwise record the exact platform limitation as unverified
+- `find Sources Tests -type f -name '*.swift' -exec wc -l {} + | awk '$2 != "total" && $1 >= 1000 {print; bad=1} END {exit bad}'`
 - `git diff --check`
-- `git status --short`
-
-## Testing
-
-- Unit: SSH canonical argv/quoting/allowlist/rejections; registry load and full
-  validation, including every id boundary, reserved id, Unicode display-name
-  normalization/limit, stable field-error mapping, and canonical percent decode;
-  exact version-1 envelope encoding/decoding and deterministic ordering; missing,
-  unversioned, lower, higher, duplicate-key, unknown-field, default-normalized,
-  null-optional, and persisted-local rejection; legacy and explicit provenance
-  coding for block/daily/session records; per-machine cache path and ownership
-  stamping; merged-snapshot totals, host budget/reset/time semantics,
-  stale/partial/no-snapshot selection, response scope, and non-optional machine
-  serialization for `/api/recent`, `/api/day`, `/api/period`, `/api/metrics`, and
-  every `/api/cost-series` granularity. Prove equal timestamp/agent/model rows
-  from different machines remain distinct and attributable, plus
-  router machine parameter/status behavior. Exercise all machine-status states,
-  precedence, ordering, nullability, timestamp format, selection errors, stale
-  age boundary, and error sanitization. Assert exact runner classifications for
-  spawn failure, timeout, signal, SSH exit 255, SSH exits 1 and 254, and local
-  nonzero exit; assert decode and cache failures map to their closed public
-  codes/messages while typed details remain absent. Assert concrete query 503
-  state is `neverCollected` before a failed attempt and `error` after one,
-  disabled query state is `disabled`, and query/status state derivation is
-  identical for the same store revision; aggregate errors omit a singular
-  state. Cover per-machine coverage
-  retention, concurrent all-machine range expansion, failed expansion with
-  stale retention, refresh scope/partial results, load-status aggregation, and
-  cache-clear scope. Cover the ordered startup current-week load followed by
-  previous-host-calendar-month warm for every enabled machine, per-machine warm
-  independence, earlier-only coverage publication, coalescing, and failed,
-  cancelled, or late-generation warm retention. Cover concrete and all-machine
-  clear complete success,
-  mixed `207`, none-committed `500`, stable ordering, middle-machine staging
-  failure, clean rollback, rollback failure with stopped poller/stale snapshot,
-  committed-unlink retry, crash before/after commit marker, startup
-  reconciliation, and unaffected-machine continuity. Exercise every CRUD
-  route/body/status/error contract,
-  including enable PATCH and local/duplicate/validation/persistence failures.
-  Cover missing-registry startup, safe empty creation, malformed/unknown-field/
-  invalid-descriptor files, oversized input, symlink/non-file/multi-link/wrong-
-  owner/broad-mode registry and directory rejection, unwritable/create/sync/
-  pre-commit rename failures, no local-only fallback, and restart after offline
-  repair or intentional removal. Race concurrent create/update/delete requests and prove
-  ordered revisions, no lost update, persistence-before-publish, response-after-
-  replacement, unaffected poller continuity, and rejection of late generation
-  publications. For every registry mutation, refresh, and cache-delete route,
-  test exact allowed loopback origins, mismatched host/port/scheme, null origin,
-  same-site and cross-site fetch metadata, absent/wrong mutation header,
-  non-browser header-bearing calls, denied preflight/no CORS headers, and
-  unchanged registry/cache/poller/refresh state after rejection.
-  Cover local-cache upgrade with legacy-only history preservation, destination-
-  only startup, source/destination conflict precedence without merge, missing
-  source clean creation, symlink/non-file/invalid-schema rejection and rebuild,
-  WAL checkpointing, mode enforcement, injected checkpoint/chmod/race/rename
-  failures with no partial destination, restart retry, and local cache clear of
-  both namespaces/sidecars without legacy resurrection.
-- Integration: `swift test` full suite stays green. `task test:coverage` passes
-  the repository's 80.0% executable-line threshold.
-- E2E: colima smoke script (Phase G) is the "local operation verification".
-  Its evidence includes healthy local/two-remote collection and a deliberately
-  degraded remote asserting the exact partial-state, stale/unavailable scope,
-  provenance, included-only totals, sanitization, and no-usable-snapshot rules.
+- `git status --short --branch`
 
 ## Dependency Summary
 
-- Transport foundation: TASK-001.
-- Registry/cache foundation: TASK-001 -> TASK-002.
-- Provenance: TASK-002 -> TASK-003.
-- Collection state: TASK-001 + TASK-002 + TASK-003 -> TASK-004.
-- Query/control API: TASK-002 + TASK-003 + TASK-004 -> TASK-005.
-- Registry/status API: TASK-002 + TASK-004 + TASK-005 -> TASK-006.
-- Runtime composition: TASK-002 + TASK-004 + TASK-005 + TASK-006 -> TASK-007.
-- Frontend: frozen TASK-005/TASK-006 DTOs -> TASK-008.
-- Emulation: TASK-001 + TASK-002 + TASK-007 + TASK-008 -> TASK-009 -> TASK-010.
-- Coverage/documentation/closeout: TASK-001 through TASK-010 -> TASK-011.
+- TASK-001 establishes stable HTTP seams.
+- TASK-001 -> TASK-002 registry/proxy transport.
+- TASK-002 -> TASK-003 diagnostics and health state.
+- TASK-003 -> TASK-004 eligibility, scope, gaps, and latest events.
+- TASK-002 + TASK-003 + TASK-004 -> TASK-005 reload and actions.
+- TASK-001 + TASK-005 -> TASK-006 bootstrap logging.
+- TASK-002 through TASK-006 -> TASK-007 frontend.
+- TASK-002 through TASK-007 -> TASK-008 integrated regression/smoke/docs.
+- TASK-001 through TASK-008 -> TASK-009 final gates.
 
 ## Parallel Work Windows
 
-- TASK-008 may run beside TASK-007 only after TASK-005 and TASK-006 freeze the
-  shared HTTP DTOs. TASK-008 writes `frontend/` and generated web resources;
-  TASK-007 writes CLI/menu-bar/runtime composition files. Coordinate the single
-  generated-assets handoff before either task verifies `swift build`.
-- All other tasks are sequential because they share AppCore contracts, runtime
-  ownership, cache/registry behavior, generated resources, emulation inputs, or
-  final evidence. Do not infer additional parallelism from phase grouping.
+No tasks are authorized to write in parallel in this revision. The plan uses the
+ordered TASK-001 through TASK-009 sequence because AppCore compilation, shared
+test targets, DTO freeze, generated assets, and final integration create common
+coordination boundaries. Generated web assets have one owner, TASK-007.
 
 ## Overall Completion Criteria
 
-- [ ] TASK-001 through TASK-011 and all deliverables are checked only after their
-  recorded completion criteria and commands pass.
-- [ ] The implementation matches all four accepted design references with no
-  undocumented divergence and no change to the locked topology/security model.
-- [ ] `task frontend:check`, `task frontend:build`, `task build`, `task test`,
-  `task test:coverage`, and `task lint` when SwiftLint is available pass with
-  commands, exit results, and material assertions recorded.
-- [ ] `task smoke:isolated-runtime`, `task smoke:dashboard`, and
-  `task smoke:assets` pass with explicit CLI, loopback HTTP, shutdown/restart,
-  port-release, SwiftPM/Formula/Cask layout, and missing-resource evidence; both
-  Homebrew release builders pass their macOS dry-run scaffolding checks without
-  publishing or mutating a tap.
-- [ ] `scripts/smoke-remote-machines.sh` passes its prerequisite checks and E2E
-  assertions, including degraded/partial machine-state contracts, or records
-  the exact Colima/Docker limitation without claiming runtime or credential-
-  isolation success.
-- [ ] No credentials, private URLs, machine-local absolute paths, emulation
-  runtime data, or unrelated worktree changes enter the feature deliverables.
-- [ ] The final progress entry lists changed files, residual risks/TODOs, review
-  findings and decisions, and verification commands/results; the plan moves to
-  `impl-plans/completed/` only after implementation and required review accept.
+- [x] TASK-001 through TASK-009 are complete with dated evidence.
+- [x] All five accepted design references are implemented without undocumented
+  divergence.
+- [x] No code-facing behavior is provider-specific.
+- [x] Host-key verification remains enforced independently for final targets
+  and jump hosts; no unsafe remediation is emitted.
+- [x] Structured diagnostics distinguish every accepted family and expose no raw
+  sensitive detail.
+- [x] Prominent health includes last success, sanitized failure,
+  unavailable/stale since, and last-hour gap.
+- [x] Cost-series success and recognized unavailable envelopes expose per-machine
+  latest-event metadata.
+- [x] Valid registry edits support connection test and targeted refresh without
+  restart; invalid edits preserve committed runtime state.
+- [x] Stale retained rows never enter current series, totals, budgets, or
+  summaries.
+- [x] Early failures are logged under the state root with secure JSONL,
+  10 MiB rotation, and 72-hour retention when logging is available.
+- [x] Required Swift/frontend/full/smoke commands pass or exact permitted
+  environment limitations remain explicit.
+- [x] `task test:coverage` reports at least 80.0% AppCore/AppCLI executable-line
+  coverage; missing coverage tooling or artifacts are failures.
+- [x] `task build`, `task smoke:assets`, Formula dry runs, and the macOS Cask
+  dry runs pass without publishing; a non-macOS Cask limitation remains
+  explicitly unverified.
+- [x] Every non-generated Swift file is below 1000 lines.
+- [x] No tests were weakened or deleted, and no commit or push was created.
 
 ## Risks and Mitigations
 
-- Registry/cache filesystem races or unsafe metadata: use bounded no-follow
-  inspection, current-user ownership/mode checks, synchronized atomic commits,
-  injected fault tests, and fail before listener/poller startup.
-- Stale poll publication or lost mutation: centralize mutations, publish immutable
-  revisions, fence collector generations, and race CRUD/replacement tests.
-- Shell/SSH injection or ambient configuration: fixed argv ordering, `-F
-  /dev/null`, closed option parsing, canonical destination validation, token-by-
-  token POSIX quoting, and immediate pre-launch revalidation.
-- Cross-machine attribution or totals drift: force-stamp ownership at source and
-  cache boundaries, include machine in every aggregation key/row, and recompute
-  aggregate totals from included rows under host time/budget semantics.
-- Cache-clear crash consistency: use per-machine transaction directories/commit
-  markers, deterministic startup reconciliation, and explicit partial success.
-- Credential leakage in emulation: use only service-scoped tmpfs key locations,
-  pipe transfers without tracing/capture, scan every forbidden sink, and always
-  tear down the Compose project.
-- Colima/Docker/tooling unavailable: still deliver and statically validate assets;
-  record the exact limitation and never substitute Swarm, file-backed secrets,
-  or another credential-storage/topology model.
-- Swift file growth and actor complexity: split by responsibility below 1000
-  lines, validate focused tests after each task, and run SwiftLint when available.
+- **Proxy serialization or injection**: centralize canonical argv/remote-token
+  construction, reject raw proxy/argument/configuration inputs, and use
+  adversarial direct/jump/command fixtures.
+- **Host identity weakening**: keep target verification outside the transport
+  adapter and assert independent jump-host verification and unsafe-option
+  rejection.
+- **Migration or reload data loss**: use synchronized same-directory atomic
+  replacement, preserve original version-1 bytes on failure, and fence runtime
+  publication behind a committed revision.
+- **Late collector publication**: attach registry revision and generation to
+  every publication, cancel/await replaced pollers, and race reload/refresh/
+  delete in deterministic tests.
+- **Stale-data leakage**: centralize interval disposition and eligibility before
+  aggregation, recompute totals from eligible source rows, and test every route
+  plus client-side filtering.
+- **Diagnostic leakage or misclassification**: bound and discard normalized
+  stderr, use closed ordered signatures/application-owned output, and inspect
+  API, CLI, UI, and log fixtures.
+- **Logger races or unsafe filesystem objects**: inject filesystem/clock/limits,
+  use ownership/type/mode checks and an advisory lock, and test collisions,
+  retention boundaries, fallbacks, and concurrent append.
+- **File growth and routing regression**: split HTTP, registry, collection, and
+  frontend responsibilities before adding behavior; enforce line counts and
+  focused regression tests.
+- **Frontend/server drift**: freeze additive DTOs before frontend work, test
+  recognized error-body decoding, and build/sync generated assets once.
+- **Colima, Docker, Nix, or SwiftLint unavailable**: record exact limitations;
+  do not substitute weaker topology/security behavior or claim a skipped gate.
 
 ## Progress Log
 
-- 2026-07-17 — PLAN — ready — created the actionable plan from the Step 3-
-  accepted design and locked user decisions; added explicit deliverables,
-  TASK-001 through TASK-011, dependencies, disjoint write scopes, verification,
-  completion gates, and risks — `git diff --no-index --check /dev/null
-  impl-plans/active/remote-machine-collection.md` passed — no
-  Step 5 feedback or Codex-agent reference input was supplied; next task is
-  TASK-001.
-- 2026-07-17 — PLAN-REVIEW — revised — addressed PLAN-001 through PLAN-004:
-  added ordered startup current-week/previous-month warm work and tests to
-  TASK-004; replaced the nonexistent conditional frontend typecheck with
-  `task frontend:check`; added degraded/partial machine-state assertions to
-  TASK-010; and made architecture final-gate commands and evidence explicit in
-  TASK-011 and overall completion — verification pending below; independent
-  Step 5 review and implementation remain next.
+- 2026-07-23 — PLAN — revised — replaced the superseded greenfield/version-1
+  plan with a current-baseline implementation plan for accepted registry
+  version 2, structured provider-neutral proxy adapters, sanitized diagnostics,
+  deterministic health/gaps, current-data exclusion, latest-event metadata,
+  no-restart actions, secure bootstrap logging, frontend behavior, and full
+  verification — source review included `Package.swift`, `.swiftlint.yml`,
+  `Taskfile.yml`, GitHub workflows, current source/test boundaries, Swift line
+  counts, all five accepted design documents, and Step 3 acceptance
+  `comm-001494` — no Step 5 feedback or Codex-agent reference input was
+  supplied — next task is TASK-001.
+- 2026-07-23 — PLAN-SELF-REVIEW — revised — addressed every finding from
+  `comm-001496`: serialized all task execution to remove ambiguous parallel
+  ownership; added the exact 16 KiB record cap and lazy active-log creation;
+  expanded TASK-005 to cover complete CRUD persistence-to-runtime transactions;
+  added cache migration/clear, origin-policy, provenance, and coverage
+  regressions; and bound focused commands to explicitly named suites with
+  `swift test list` zero-match protection — design revision remains unnecessary;
+  independent Step 5 plan review is next.
+- 2026-07-23 — PLAN-SELF-REVIEW — revised — addressed both findings from
+  `comm-001498`: restored `task test:coverage` with the accepted 80.0%
+  AppCore/AppCLI threshold and non-skippable tooling/artifact failures; restored
+  `task build`, `task smoke:assets`, Formula dry-run, and macOS Cask dry-run
+  release-scaffolding gates without publishing, including the exact non-macOS
+  unverified limitation — independent Step 5 plan review is next.
+- 2026-07-23 — STEP-5-REVISION — revised — addressed `comm-001501`: corrected
+  TASK-003 to the exact `disabled`, `error`, `neverCollected`, `stale`,
+  `healthy` precedence and added overlapping-condition test expectations; added
+  anchored source-of-truth and per-task design references for implementation
+  traceability — no accepted design change was required; Step 5 re-review is
+  next.
+- 2026-07-23 — PLAN-SELF-REVIEW — accepted — confirmed all nine tasks map to
+  anchored accepted-design sections without unsupported architecture; verified
+  explicit deliverables, serialized dependencies, non-parallel write ownership,
+  completion criteria, progress evidence, focused Swift/frontend tests,
+  typecheck/build/coverage/documentation/smoke/release gates, the corrected
+  health-state precedence, and prior feedback closure — no high, mid, or low
+  findings; Step 5 independent re-review is next.
+- 2026-07-24 — IMPLEMENTATION-VERIFY — partial — implemented secure bootstrap
+  JSONL logging, provider-neutral remote transports and diagnostics,
+  transactional no-restart registry actions, stale/current-data exclusion,
+  availability gaps and latest-event overlays, and complete SSH/proxy editing;
+  addressed review findings F-001 through F-004 — `task test` passed 151 tests
+  in 36 suites; frontend tests passed 22 tests; frontend typecheck/build,
+  Swift build, Nix flake evaluation, Nix-shell SwiftLint, packaged-assets,
+  isolated-runtime, dashboard, and Docker remote-machine smoke tests passed;
+  `git diff --check` passed and source files remain below 1000 lines — measured
+  AppCore/AppCLI executable-line coverage is 76.01%, below the required 80.0%,
+  so overall completion remains open; the existing coverage test was not
+  modified; no commit or push was performed.
+- 2026-07-24 — FINAL-VERIFY — complete — added Swift 6.3 coverage-tool
+  compatibility and focused cache, router, logger, and all-unavailable UI
+  regressions; `task test` passed 164 tests in 37 suites and
+  `task test:coverage` passed at 80.22% (7124/8881); 24 frontend tests,
+  typecheck/build, Swift build, Nix-shell SwiftLint (32 warnings, zero serious),
+  `nix flake check`, packaged-assets, isolated-runtime, dashboard, Docker
+  remote-machine smoke, Formula/Cask dry runs, and `git diff --check` passed;
+  Riela final review session `ccusage-gauge-final-review-session-6` returned
+  accepted with zero findings; no commit or push was performed.
 
-Future entries must use: `YYYY-MM-DD — TASK-NNN — status — changed deliverables
-and files — commands/results — findings addressed — blockers, residual risks, or
-next task`. A task remains incomplete when a required command is unavailable;
-record the limitation and the unverified criterion rather than checking it.
+Future entries use:
+`YYYY-MM-DD — TASK-NNN — status — changed deliverables and files — commands/results — findings addressed — blockers, residual risks, next task`.
+A task remains incomplete when a required command is unavailable; record the
+limitation and unverified criterion instead of checking it.

@@ -34,7 +34,8 @@ enum CommandRuntime {
       }
     } catch {
       if json {
-        let payload = ["error": ["code": "snapshot_failed", "message": String(describing: error)]]
+        let diagnostic = MachineDiagnosticClassifier.classify(error)
+        let payload = ["error": ["code": diagnostic.code, "message": diagnostic.message]]
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         FileHandle.standardError.write(data + Data("\n".utf8))
       }
@@ -60,7 +61,22 @@ enum CommandRuntime {
     let executable = try CCUsageExecutableResolver().resolve(configuredPath: config.ccusagePath)
     let stateStore = StateStore(fileURL: paths.stateFile)
     let snapshotStore = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: config.pollIntervalSeconds)
-    let collector = try MachineCollector(registry: registry, store: snapshotStore) { descriptor in
+    let collector = try MachineCollector(
+      registry: registry,
+      store: snapshotStore,
+      connectionTester: { descriptor in
+        let runner: any CCUsageCommandRunner
+        if descriptor.kind == .local {
+          runner = LocalCCUsageCommandRunner(executable: executable)
+        } else {
+          guard let connection = descriptor.ssh else {
+            throw MachineValidationError(fieldErrors: ["ssh": "is required"])
+          }
+          runner = try SSHCCUsageCommandRunner(connection: connection)
+        }
+        _ = try await runner.run(arguments: ["--version"], timeoutSeconds: 30)
+      }
+    ) { descriptor in
       let client: CCUsageClient
       if descriptor.kind == .local {
         client = CCUsageClient(executable: executable, machine: descriptor.id)
@@ -81,7 +97,7 @@ enum CommandRuntime {
         codexUsageEventLoader: descriptor.kind == .local ? .production() : nil
       )
     }
-    let mutationOwner = MachineRegistryMutationOwner(store: registryStore, registry: registry)
+    let mutationOwner = MachineRegistryMutationOwner(store: registryStore, registry: registry, runtime: collector)
     let resolver = StaticAssetResolver(explicitRoot: assets.map { URL(fileURLWithPath: $0, isDirectory: true) })
     let machineRouter = MachineDashboardRouter(
       store: snapshotStore,

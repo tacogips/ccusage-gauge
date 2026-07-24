@@ -127,6 +127,7 @@ public struct DashboardCostResponse: Codable, Equatable, Sendable, ScopedDashboa
   public let timelineEndExclusive: Date?
   public let rows: [DashboardCostRow]
   public let totalUSD: Decimal
+  public var machineLatestEvents: [MachineLatestEvent]?
   public var scope: DashboardScope?
   public init(
     range: String,
@@ -135,6 +136,7 @@ public struct DashboardCostResponse: Codable, Equatable, Sendable, ScopedDashboa
     timelineEndExclusive: Date?,
     rows: [DashboardCostRow],
     totalUSD: Decimal,
+    machineLatestEvents: [MachineLatestEvent]? = nil,
     scope: DashboardScope? = nil
   ) {
     self.range = range
@@ -143,6 +145,7 @@ public struct DashboardCostResponse: Codable, Equatable, Sendable, ScopedDashboa
     self.timelineEndExclusive = timelineEndExclusive
     self.rows = rows
     self.totalUSD = totalUSD
+    self.machineLatestEvents = machineLatestEvents
     self.scope = scope
   }
 }

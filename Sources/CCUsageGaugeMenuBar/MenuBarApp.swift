@@ -52,6 +52,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let launchAtLoginController: LaunchAtLoginControlling
   private var paths = AppPaths.production()
+  private lazy var bootstrapLogger = BootstrapLogger(paths: paths, runtime: .menuBar)
   private var configuration: AppConfiguration?
   private var defaultResetCycle: ResetCycle = .daily
   private var stateStore: StateStore?
@@ -83,6 +84,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    bootstrapLogger.activate()
     configureStatusButton()
     updateStatusTitle("$—")
     rebuildMenu()
@@ -141,7 +143,22 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       )
       snapshotService = service
       let machineStore = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: loaded.pollIntervalSeconds)
-      let collector = try MachineCollector(registry: registry, store: machineStore) { [paths, loaded, store, service] descriptor in
+      let collector = try MachineCollector(
+        registry: registry,
+        store: machineStore,
+        connectionTester: { descriptor in
+          let runner: any CCUsageCommandRunner
+          if descriptor.kind == .local {
+            runner = LocalCCUsageCommandRunner(executable: executable)
+          } else {
+            guard let connection = descriptor.ssh else {
+              throw MachineValidationError(fieldErrors: ["ssh": "is required"])
+            }
+            runner = try SSHCCUsageCommandRunner(connection: connection)
+          }
+          _ = try await runner.run(arguments: ["--version"], timeoutSeconds: 30)
+        }
+      ) { [paths, loaded, store, service] descriptor in
         if descriptor.kind == .local { return service }
         guard let connection = descriptor.ssh else { throw MachineValidationError(fieldErrors: ["ssh": "is required"]) }
         return SnapshotService(
@@ -155,7 +172,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
           )
         )
       }
-      let mutationOwner = MachineRegistryMutationOwner(store: registryStore, registry: registry)
+      let mutationOwner = MachineRegistryMutationOwner(store: registryStore, registry: registry, runtime: collector)
       machineSnapshotStore = machineStore
       machineCollector = collector
       machineRouter = MachineDashboardRouter(
@@ -179,7 +196,12 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
         refreshImmediately: false
       )
     } catch {
-      errorMessage = "ccusage unavailable. Install ccusage or correct ~/.config/ccusage-gauge/ccusage-config.json. \(error)"
+      bootstrapLogger.append(
+        phase: "bootstrap",
+        code: "bootstrap_failed",
+        message: "Menu-bar bootstrap failed: \(error)"
+      )
+      errorMessage = "ccusage unavailable. Install ccusage or verify the configured executable and connection."
       isUsageUnavailable = true
       updateStatusTitle("$!")
       rebuildMenu()
@@ -198,7 +220,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       updateStatusTitle(Self.statusTitle(snapshot))
     } catch {
       guard refreshGeneration == stateMutationGeneration else { return }
-      errorMessage = String(describing: error)
+      errorMessage = MachineDiagnosticClassifier.classify(error).message
       isUsageUnavailable = true
       updateStatusTitle(latestSnapshot.map { Self.statusTitle($0) + " !" } ?? "$!")
     }
@@ -235,7 +257,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       updateStatusTitle(latestSnapshot.map(Self.statusTitle) ?? "$—")
     } catch {
       guard refreshGeneration == stateMutationGeneration else { return }
-      errorMessage = String(describing: error)
+      errorMessage = MachineDiagnosticClassifier.classify(error).message
       isUsageUnavailable = true
       updateStatusTitle(latestSnapshot.map { Self.statusTitle($0) + " !" } ?? "$!")
     }

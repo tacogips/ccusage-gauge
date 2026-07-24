@@ -3,10 +3,14 @@ import Foundation
 public struct SanitizedCollectionError: Codable, Equatable, Sendable {
   public let code: String
   public let message: String
+  public let detail: String?
+  public let remediation: String?
 
-  public init(code: String, message: String) {
+  public init(code: String, message: String, detail: String? = nil, remediation: String? = nil) {
     self.code = code
     self.message = message
+    self.detail = detail
+    self.remediation = remediation
   }
 }
 
@@ -16,14 +20,20 @@ public struct MachineCollectionStatus: Equatable, Sendable {
   public var lastErrorAt: Date?
   public var lastError: SanitizedCollectionError?
   public var collectionInProgress: Bool
+  public var consecutiveFailureCount: Int
+  public var unavailableSince: Date?
+  public let statusTrackingStartedAt: Date
   public let refreshIntervalSeconds: Int
 
-  public init(refreshIntervalSeconds: Int) {
+  public init(refreshIntervalSeconds: Int, statusTrackingStartedAt: Date = Date()) {
     lastAttemptAt = nil
     lastSuccessAt = nil
     lastErrorAt = nil
     lastError = nil
     collectionInProgress = false
+    consecutiveFailureCount = 0
+    unavailableSince = nil
+    self.statusTrackingStartedAt = statusTrackingStartedAt
     self.refreshIntervalSeconds = max(1, refreshIntervalSeconds)
   }
 }
@@ -46,36 +56,127 @@ public enum MachineCollectionState: String, Codable, Equatable, Sendable {
   case error
 }
 
-public struct MachineStatusResponseItem: Codable, Equatable, Sendable {
-  public let id: String
-  public let displayName: String
-  public let kind: MachineKind
-  public let enabled: Bool
-  public let collectionState: MachineCollectionState
-  public let snapshotAvailable: Bool
-  public let collectionInProgress: Bool
-  public let stale: Bool
-  public let coverageStart: String?
-  public let snapshotGeneratedAt: Date?
-  public let lastAttemptAt: Date?
-  public let lastSuccessAt: Date?
-  public let lastErrorAt: Date?
-  public let lastError: SanitizedCollectionError?
-  public let refreshIntervalSeconds: Int
-}
-
 public struct MachineStatusResponse: Codable, Equatable, Sendable {
   public let requested: String
   public let generatedAt: Date
   public let machines: [MachineStatusResponseItem]
 }
 
+public enum DashboardDataDisposition: String, Codable, Equatable, Sendable {
+  case current
+  case historical
+}
+
+public enum MachineAvailabilityReason: String, Codable, Equatable, Sendable {
+  case collectionStale = "collection_stale"
+  case neverCollected = "never_collected"
+  case tunnelUnreachable = "tunnel_unreachable"
+  case authFailed = "auth_failed"
+  case hostKeyVerificationFailed = "host_key_verification_failed"
+  case timeout
+  case transportFailed = "transport_failed"
+  case remoteCommandFailed = "remote_command_failed"
+  case invalidResponse = "invalid_response"
+  case cacheFailed = "cache_failed"
+  case executableUnavailable = "executable_unavailable"
+  case insufficientCoverage = "insufficient_coverage"
+  case internalError = "internal_error"
+
+  init(diagnosticCode: String?) {
+    self = diagnosticCode.flatMap(Self.init(rawValue:)) ?? .collectionStale
+  }
+}
+
+public struct MachineAvailability: Codable, Equatable, Sendable {
+  public let machine: String
+  public let available: Bool
+  public let unavailableSince: Date
+  public let reasonCode: MachineAvailabilityReason
+}
+
+public struct MachineDataGap: Codable, Equatable, Sendable {
+  public let machine: String
+  public let startAt: Date
+  public let endAt: Date
+  public let reasonCode: MachineAvailabilityReason
+}
+
+public struct MachineStatusDataGap: Codable, Equatable, Sendable {
+  public let startAt: Date
+  public let endAt: Date
+}
+
+public struct MachineLatestEvent: Codable, Equatable, Sendable {
+  public let machine: String
+  public let latestEventAt: Date?
+  public let markerState: String
+  public let inLastHour: Bool
+  public let dataQuality: UsageDataQuality?
+}
+
 public struct DashboardScope: Codable, Equatable, Sendable {
   public let requested: String
+  public let dataDisposition: DashboardDataDisposition
   public let includedMachineIds: [String]
   public let staleMachineIds: [String]
   public let unavailableMachineIds: [String]
+  public let excludedFromCurrentTotalsMachineIds: [String]
+  public let machineAvailability: [MachineAvailability]
+  public let lastHourDataGaps: [MachineDataGap]
+  public let evaluatedAt: Date
   public let generatedAt: Date?
+
+  public init(
+    requested: String,
+    dataDisposition: DashboardDataDisposition = .historical,
+    includedMachineIds: [String],
+    staleMachineIds: [String],
+    unavailableMachineIds: [String],
+    excludedFromCurrentTotalsMachineIds: [String] = [],
+    machineAvailability: [MachineAvailability] = [],
+    lastHourDataGaps: [MachineDataGap] = [],
+    evaluatedAt: Date = Date(),
+    generatedAt: Date?
+  ) {
+    self.requested = requested
+    self.dataDisposition = dataDisposition
+    self.includedMachineIds = includedMachineIds
+    self.staleMachineIds = staleMachineIds
+    self.unavailableMachineIds = unavailableMachineIds
+    self.excludedFromCurrentTotalsMachineIds = excludedFromCurrentTotalsMachineIds
+    self.machineAvailability = machineAvailability
+    self.lastHourDataGaps = lastHourDataGaps
+    self.evaluatedAt = evaluatedAt
+    self.generatedAt = generatedAt
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case requested
+    case dataDisposition
+    case includedMachineIds
+    case staleMachineIds
+    case unavailableMachineIds
+    case excludedFromCurrentTotalsMachineIds
+    case machineAvailability
+    case lastHourDataGaps
+    case evaluatedAt
+    case generatedAt
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    requested = try container.decode(String.self, forKey: .requested)
+    dataDisposition = try container.decodeIfPresent(DashboardDataDisposition.self, forKey: .dataDisposition) ?? .historical
+    includedMachineIds = try container.decode([String].self, forKey: .includedMachineIds)
+    staleMachineIds = try container.decode([String].self, forKey: .staleMachineIds)
+    unavailableMachineIds = try container.decode([String].self, forKey: .unavailableMachineIds)
+    excludedFromCurrentTotalsMachineIds =
+      try container.decodeIfPresent([String].self, forKey: .excludedFromCurrentTotalsMachineIds) ?? []
+    machineAvailability = try container.decodeIfPresent([MachineAvailability].self, forKey: .machineAvailability) ?? []
+    lastHourDataGaps = try container.decodeIfPresent([MachineDataGap].self, forKey: .lastHourDataGaps) ?? []
+    evaluatedAt = try container.decodeIfPresent(Date.self, forKey: .evaluatedAt) ?? Date(timeIntervalSince1970: 0)
+    generatedAt = try container.decodeIfPresent(Date.self, forKey: .generatedAt)
+  }
 }
 
 public struct MachineSnapshotSelection: Sendable {
@@ -83,6 +184,7 @@ public struct MachineSnapshotSelection: Sendable {
   public let scope: DashboardScope
   public let collectionState: MachineCollectionState?
   public let refreshIntervalSeconds: Int
+  public let machineLatestEvents: [MachineLatestEvent]
 }
 
 public enum MachineSelectionError: Error, Equatable, Sendable {
@@ -91,6 +193,8 @@ public enum MachineSelectionError: Error, Equatable, Sendable {
   case disabled(String)
   case unavailable(String, MachineCollectionState, Int)
   case aggregateUnavailable(Int)
+  case currentDataUnavailable(String, MachineCollectionState, Int, DashboardScope)
+  case aggregateCurrentDataUnavailable(Int, DashboardScope)
   case rangeUnavailable(String, Date, Date?, Int)
   case aggregateRangeUnavailable(Date, Int)
 }
@@ -209,6 +313,8 @@ public actor MachineSnapshotStore {
     entry.collectionStatus.lastErrorAt = nil
     entry.collectionStatus.lastError = nil
     entry.collectionStatus.collectionInProgress = false
+    entry.collectionStatus.consecutiveFailureCount = 0
+    entry.collectionStatus.unavailableSince = nil
     entry.loadStatus = DashboardLoadStatus(phase: .ready, message: "Usage data is ready", completed: 1, total: 1, isLoading: false)
     entries[machineID] = entry
     mergeCache = nil
@@ -223,6 +329,10 @@ public actor MachineSnapshotStore {
   ) {
     guard !(error is CancellationError),
           var entry = fencedEntry(machineID: machineID, revision: revision, generation: generation) else { return }
+    if entry.collectionStatus.consecutiveFailureCount == 0 {
+      entry.collectionStatus.unavailableSince = now
+    }
+    entry.collectionStatus.consecutiveFailureCount += 1
     entry.collectionStatus.lastErrorAt = now
     entry.collectionStatus.lastError = Self.sanitizedError(error)
     entry.collectionStatus.collectionInProgress = false
@@ -244,6 +354,8 @@ public actor MachineSnapshotStore {
     entry.collectionStatus.lastSuccessAt = nil
     entry.collectionStatus.lastErrorAt = nil
     entry.collectionStatus.lastError = nil
+    entry.collectionStatus.consecutiveFailureCount = 0
+    entry.collectionStatus.unavailableSince = nil
     entries[machineID] = entry
     mergeCache = nil
   }
@@ -251,12 +363,25 @@ public actor MachineSnapshotStore {
   public func selection(
     machine requested: String,
     now: Date = Date(),
-    requiredCoverageStart: Date? = nil
+    requiredCoverageStart: Date? = nil,
+    dataDisposition: DashboardDataDisposition = .historical
   ) throws -> MachineSnapshotSelection {
-    if requested == "all" { return try aggregateSelection(now: now, requiredCoverageStart: requiredCoverageStart) }
+    if requested == "all" {
+      return try aggregateSelection(
+        now: now,
+        requiredCoverageStart: requiredCoverageStart,
+        dataDisposition: dataDisposition
+      )
+    }
     guard let entry = entries[requested] else { throw MachineSelectionError.notFound(requested) }
     let state = collectionState(entry, now: now)
-    let scope = scope(requested: requested, selected: [entry], now: now, requiredCoverageStart: requiredCoverageStart)
+    let scope = scope(
+      requested: requested,
+      selected: [entry],
+      now: now,
+      requiredCoverageStart: requiredCoverageStart,
+      dataDisposition: dataDisposition
+    )
     guard entry.descriptor.enabled else { throw MachineSelectionError.disabled(requested) }
     guard let snapshot = entry.snapshot else {
       throw MachineSelectionError.unavailable(requested, state, entry.collectionStatus.refreshIntervalSeconds)
@@ -270,12 +395,52 @@ public actor MachineSnapshotStore {
         entry.collectionStatus.refreshIntervalSeconds
       )
     }
+    if dataDisposition == .current, state != .healthy {
+      throw MachineSelectionError.currentDataUnavailable(
+        requested,
+        state,
+        entry.collectionStatus.refreshIntervalSeconds,
+        scope
+      )
+    }
     return MachineSnapshotSelection(
       snapshot: snapshot,
       scope: scope,
       collectionState: state,
-      refreshIntervalSeconds: entry.collectionStatus.refreshIntervalSeconds
+      refreshIntervalSeconds: entry.collectionStatus.refreshIntervalSeconds,
+      machineLatestEvents: latestEvents(for: [entry], now: now)
     )
+  }
+
+  public func observabilityScope(
+    machine requested: String,
+    now: Date = Date(),
+    requiredCoverageStart: Date? = nil,
+    dataDisposition: DashboardDataDisposition = .historical
+  ) throws -> DashboardScope {
+    let selected: [MachineSnapshotEntry]
+    if requested == "all" {
+      selected = orderedEntries().filter(\.descriptor.enabled)
+    } else if let entry = entries[requested] {
+      selected = [entry]
+    } else {
+      throw MachineSelectionError.notFound(requested)
+    }
+    return scope(
+      requested: requested,
+      selected: selected,
+      now: now,
+      requiredCoverageStart: requiredCoverageStart,
+      dataDisposition: dataDisposition
+    )
+  }
+
+  public func latestEvents(machine requested: String, now: Date = Date()) throws -> [MachineLatestEvent] {
+    if requested == "all" {
+      return latestEvents(for: orderedEntries().filter(\.descriptor.enabled), now: now)
+    }
+    guard let entry = entries[requested] else { throw MachineSelectionError.notFound(requested) }
+    return latestEvents(for: [entry], now: now)
   }
 
   public func status(machine requested: String, now: Date = Date()) throws -> MachineStatusResponse {
@@ -303,23 +468,43 @@ public actor MachineSnapshotStore {
     return [(entry.descriptor.id, entry.loadStatus, entry.coverageStart)]
   }
 
-  private func aggregateSelection(now: Date, requiredCoverageStart: Date?) throws -> MachineSnapshotSelection {
+  private func aggregateSelection(
+    now: Date,
+    requiredCoverageStart: Date?,
+    dataDisposition: DashboardDataDisposition
+  ) throws -> MachineSnapshotSelection {
     let enabled = orderedEntries().filter(\.descriptor.enabled)
-    let usable = enabled.filter { entry in
-      entry.snapshot != nil && (requiredCoverageStart == nil || (entry.coverageStart != nil && entry.coverageStart! <= requiredCoverageStart!))
+    let covering = enabled.filter { entry in
+      entry.snapshot != nil &&
+        (requiredCoverageStart == nil || (entry.coverageStart != nil && entry.coverageStart! <= requiredCoverageStart!))
     }
-    let scope = scope(requested: "all", selected: enabled, now: now, requiredCoverageStart: requiredCoverageStart)
+    let usable = covering.filter {
+      dataDisposition == .historical || collectionState($0, now: now) == .healthy
+    }
+    let scope = scope(
+      requested: "all",
+      selected: enabled,
+      now: now,
+      requiredCoverageStart: requiredCoverageStart,
+      dataDisposition: dataDisposition
+    )
     let refresh = enabled.map(\.collectionStatus.refreshIntervalSeconds).filter { $0 > 0 }.min()
       ?? AppConfiguration.defaultPollIntervalSeconds
     guard !usable.isEmpty else {
-      if let requiredCoverageStart { throw MachineSelectionError.aggregateRangeUnavailable(requiredCoverageStart, refresh) }
+      if let requiredCoverageStart, covering.isEmpty {
+        throw MachineSelectionError.aggregateRangeUnavailable(requiredCoverageStart, refresh)
+      }
+      if dataDisposition == .current {
+        throw MachineSelectionError.aggregateCurrentDataUnavailable(refresh, scope)
+      }
       throw MachineSelectionError.aggregateUnavailable(refresh)
     }
     return MachineSnapshotSelection(
       snapshot: merge(usable: usable, now: now),
       scope: scope,
       collectionState: nil,
-      refreshIntervalSeconds: refresh
+      refreshIntervalSeconds: refresh,
+      machineLatestEvents: latestEvents(for: enabled, now: now)
     )
   }
 
@@ -369,24 +554,62 @@ public actor MachineSnapshotStore {
     requested: String,
     selected: [MachineSnapshotEntry],
     now: Date,
-    requiredCoverageStart: Date?
+    requiredCoverageStart: Date?,
+    dataDisposition: DashboardDataDisposition
   ) -> DashboardScope {
     let included = selected.filter { entry in
       entry.descriptor.enabled && entry.snapshot != nil &&
-        (requiredCoverageStart == nil || (entry.coverageStart != nil && entry.coverageStart! <= requiredCoverageStart!))
+        (requiredCoverageStart == nil || (entry.coverageStart != nil && entry.coverageStart! <= requiredCoverageStart!)) &&
+        (dataDisposition == .historical || collectionState(entry, now: now) == .healthy)
     }
     let includedIDs = Set(included.map(\.descriptor.id))
+    let coveringIDs = Set(selected.filter { entry in
+      entry.descriptor.enabled && entry.snapshot != nil &&
+        (requiredCoverageStart == nil || (entry.coverageStart != nil && entry.coverageStart! <= requiredCoverageStart!))
+    }.map(\.descriptor.id))
+    let excluded = dataDisposition == .current
+      ? selected.filter { $0.descriptor.enabled && !includedIDs.contains($0.descriptor.id) }
+      : []
+    let availability = excluded.map { entry -> MachineAvailability in
+      let state = collectionState(entry, now: now)
+      return MachineAvailability(
+        machine: entry.descriptor.id,
+        available: false,
+        unavailableSince: unavailableSince(entry, state: state, now: now),
+        reasonCode: availabilityReason(entry, state: state)
+      )
+    }
     return DashboardScope(
       requested: requested,
+      dataDisposition: dataDisposition,
       includedMachineIds: included.map(\.descriptor.id),
-      staleMachineIds: included.filter { collectionState($0, now: now) == .stale }.map(\.descriptor.id),
-      unavailableMachineIds: selected.filter { $0.descriptor.enabled && !includedIDs.contains($0.descriptor.id) }.map(\.descriptor.id),
+      staleMachineIds: selected.filter {
+        coveringIDs.contains($0.descriptor.id) && collectionState($0, now: now) == .stale
+      }.map(\.descriptor.id),
+      unavailableMachineIds: selected.filter {
+        $0.descriptor.enabled && !coveringIDs.contains($0.descriptor.id)
+      }.map(\.descriptor.id),
+      excludedFromCurrentTotalsMachineIds: excluded.map(\.descriptor.id),
+      machineAvailability: availability,
+      lastHourDataGaps: availability.compactMap { value in
+        // A healthy machine excluded only for range coverage has
+        // unavailableSince == now; a zero-length gap is not a gap.
+        guard value.unavailableSince < now else { return nil }
+        return MachineDataGap(
+          machine: value.machine,
+          startAt: max(value.unavailableSince, now.addingTimeInterval(-3_600)),
+          endAt: now,
+          reasonCode: value.reasonCode
+        )
+      },
+      evaluatedAt: now,
       generatedAt: included.compactMap { $0.snapshot?.generatedAt }.min()
     )
   }
 
   private func statusItem(_ entry: MachineSnapshotEntry, now: Date) -> MachineStatusResponseItem {
     let state = collectionState(entry, now: now)
+    let staleSince = staleSince(entry, state: state, now: now)
     return MachineStatusResponseItem(
       id: entry.descriptor.id,
       displayName: entry.descriptor.displayName,
@@ -400,10 +623,91 @@ public actor MachineSnapshotStore {
       snapshotGeneratedAt: entry.snapshot?.generatedAt,
       lastAttemptAt: entry.collectionStatus.lastAttemptAt,
       lastSuccessAt: entry.collectionStatus.lastSuccessAt,
+      consecutiveFailureCount: entry.collectionStatus.consecutiveFailureCount,
+      unavailableSince: statusUnavailableSince(entry, state: state, now: now),
+      staleSince: staleSince,
       lastErrorAt: entry.collectionStatus.lastErrorAt,
       lastError: entry.collectionStatus.lastError,
+      lastHourDataGap: staleSince.map {
+        MachineStatusDataGap(startAt: max($0, now.addingTimeInterval(-3_600)), endAt: now)
+      },
       refreshIntervalSeconds: entry.collectionStatus.refreshIntervalSeconds
     )
+  }
+
+  private func staleSince(_ entry: MachineSnapshotEntry, state: MachineCollectionState, now: Date) -> Date? {
+    guard state == .stale, let generatedAt = entry.snapshot?.generatedAt else { return nil }
+    let ageStaleAt = generatedAt.addingTimeInterval(Double(entry.collectionStatus.refreshIntervalSeconds * 2))
+    if let failure = entry.collectionStatus.unavailableSince {
+      return min(failure, ageStaleAt)
+    }
+    return ageStaleAt <= now ? ageStaleAt : nil
+  }
+
+  private func unavailableSince(
+    _ entry: MachineSnapshotEntry,
+    state: MachineCollectionState,
+    now: Date
+  ) -> Date {
+    switch state {
+    case .stale:
+      return staleSince(entry, state: state, now: now) ?? entry.collectionStatus.statusTrackingStartedAt
+    case .error:
+      return entry.collectionStatus.unavailableSince ?? entry.collectionStatus.statusTrackingStartedAt
+    case .neverCollected:
+      return min(
+        entry.collectionStatus.unavailableSince ?? entry.collectionStatus.statusTrackingStartedAt,
+        entry.collectionStatus.statusTrackingStartedAt
+      )
+    case .disabled:
+      return entry.collectionStatus.statusTrackingStartedAt
+    case .healthy:
+      return now
+    }
+  }
+
+  private func statusUnavailableSince(
+    _ entry: MachineSnapshotEntry,
+    state: MachineCollectionState,
+    now: Date
+  ) -> Date? {
+    guard state != .healthy, state != .disabled else { return nil }
+    return unavailableSince(entry, state: state, now: now)
+  }
+
+  private func availabilityReason(
+    _ entry: MachineSnapshotEntry,
+    state: MachineCollectionState
+  ) -> MachineAvailabilityReason {
+    if state == .healthy { return .insufficientCoverage }
+    if state == .neverCollected { return .neverCollected }
+    if state == .stale, entry.collectionStatus.lastError == nil { return .collectionStale }
+    return MachineAvailabilityReason(diagnosticCode: entry.collectionStatus.lastError?.code)
+  }
+
+  private func latestEvents(
+    for values: [MachineSnapshotEntry],
+    now: Date
+  ) -> [MachineLatestEvent] {
+    values.map { entry in
+      let state = collectionState(entry, now: now)
+      let latest = entry.snapshot?.dashboardSessions.max(by: { $0.timestamp < $1.timestamp })
+      let marker: String
+      if state == .stale {
+        marker = "stale"
+      } else if [.disabled, .error, .neverCollected].contains(state) {
+        marker = "unavailable"
+      } else {
+        marker = latest == nil ? "noEvent" : "observed"
+      }
+      return MachineLatestEvent(
+        machine: entry.descriptor.id,
+        latestEventAt: latest?.timestamp,
+        markerState: marker,
+        inLastHour: latest.map { $0.timestamp >= now.addingTimeInterval(-3_600) && $0.timestamp <= now } ?? false,
+        dataQuality: latest?.dataQuality
+      )
+    }
   }
 
   private func collectionState(_ entry: MachineSnapshotEntry, now: Date) -> MachineCollectionState {
@@ -456,30 +760,13 @@ public actor MachineSnapshotStore {
   }
 
   public static func sanitizedError(_ error: Error) -> SanitizedCollectionError {
-    if let ccusage = error as? CCUsageError {
-      switch ccusage {
-      case .commandFailed(let failure):
-        switch failure.phase {
-        case .spawnFailed, .timedOut, .signalled, .transportExited:
-          return SanitizedCollectionError(code: "transport_failed", message: "Command transport failed")
-        case .commandExited:
-          return SanitizedCollectionError(code: "remote_command_failed", message: "ccusage command failed")
-        }
-      case .invalidJSON:
-        return SanitizedCollectionError(code: "invalid_response", message: "ccusage response was invalid")
-      default:
-        break
-      }
-    }
-    if error is AggregationCacheError || error is CacheLifecycleError {
-      return SanitizedCollectionError(code: "cache_failed", message: "Usage cache operation failed")
-    }
-    return SanitizedCollectionError(code: "internal_error", message: "Collection failed")
+    MachineDiagnosticClassifier.classify(error)
   }
 }
 
-public actor MachineCollector {
+public actor MachineCollector: MachineRegistryRuntimeReconciler {
   public typealias ServiceFactory = @Sendable (MachineDescriptor) throws -> SnapshotService
+  public typealias ConnectionTester = @Sendable (MachineDescriptor) async throws -> Void
 
   public let store: MachineSnapshotStore
   private var registry: MachineRegistry
@@ -491,12 +778,14 @@ public actor MachineCollector {
   private var pendingCoverage: [String: Date] = [:]
   private let calendar: Calendar
   private let now: @Sendable () -> Date
+  private let connectionTester: ConnectionTester
 
   public init(
     registry: MachineRegistry,
     store: MachineSnapshotStore,
     calendar: Calendar = .current,
     now: @escaping @Sendable () -> Date = Date.init,
+    connectionTester: ConnectionTester? = nil,
     serviceFactory: @escaping ServiceFactory
   ) throws {
     self.registry = registry
@@ -504,6 +793,13 @@ public actor MachineCollector {
     self.calendar = calendar
     self.now = now
     self.serviceFactory = serviceFactory
+    self.connectionTester = connectionTester ?? { descriptor in
+      guard let connection = descriptor.ssh else { throw MachineSelectionError.notFound(descriptor.id) }
+      _ = try await SSHCCUsageCommandRunner(connection: connection).run(
+        arguments: ["--version"],
+        timeoutSeconds: 30
+      )
+    }
     for descriptor in registry.machines where descriptor.enabled {
       services[descriptor.id] = try serviceFactory(descriptor)
       generations[descriptor.id] = 0
@@ -523,22 +819,29 @@ public actor MachineCollector {
     for task in tasks { await task.value }
   }
 
-  public func applyRegistry(_ updated: MachineRegistry) async throws {
+  public func reconcileRegistry(_ updated: MachineRegistry) async throws {
     let old = registry
-    registry = updated
     var changedIDs = Set(old.machines.map(\.id))
     changedIDs.formUnion(updated.machines.map(\.id))
     changedIDs = changedIDs.filter { old.machine(id: $0) != updated.machine(id: $0) }
+    var replacements: [String: SnapshotService] = [:]
+    for id in changedIDs {
+      if let descriptor = updated.machine(id: id), descriptor.enabled {
+        replacements[id] = try serviceFactory(descriptor)
+      }
+    }
+
+    // Runtime construction is the only throwing phase. Do not publish the
+    // registry, cancel a poller, or alter snapshot state until every changed
+    // enabled descriptor has a usable replacement service.
+    registry = updated
     for id in changedIDs {
       generations[id, default: 0] &+= 1
       pollers[id]?.cancel()
       inFlight[id]?.cancel()
       if let poller = pollers.removeValue(forKey: id) { await poller.value }
       _ = try? await inFlight.removeValue(forKey: id)?.value
-      services[id] = nil
-      if let descriptor = updated.machine(id: id), descriptor.enabled {
-        services[id] = try serviceFactory(descriptor)
-      }
+      services[id] = replacements[id]
     }
     await store.replaceRegistry(updated, generations: generations)
     for id in changedIDs {
@@ -556,6 +859,16 @@ public actor MachineCollector {
   public func resume(machineID: String) {
     guard let descriptor = registry.machine(id: machineID), descriptor.enabled else { return }
     startPoller(descriptor)
+  }
+
+  public func testConnection(machineID: String) async throws {
+    guard let descriptor = registry.machine(id: machineID) else {
+      throw MachineSelectionError.notFound(machineID)
+    }
+    guard descriptor.enabled else {
+      throw MachineSelectionError.disabled(machineID)
+    }
+    try await connectionTester(descriptor)
   }
 
   public func refresh(machine requested: String) async -> (succeeded: [String], failed: [String]) {

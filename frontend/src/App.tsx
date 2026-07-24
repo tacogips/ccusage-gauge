@@ -1,11 +1,17 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
-import { type BudgetResponse, type ChartColorsResponse, type CostRow, type CostSeriesResponse, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type Machine, type MachinesResponse, type MachineStatusResponse, type MetricRow, type MetricsResponse, getJSON, mutationJSON, requestJSON } from "./api";
+import { type BudgetResponse, type ChartColorsResponse, type CostRow, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type Machine, type MachineConnectionTestResponse, type MachineDataGap, type MachineLatestEvent, type MachineRefreshResponse, type MachinesResponse, type MachineStatusResponse, type MetricRow, type MetricsResponse, getJSON, mutationJSON, requestJSON } from "./api";
+import { runMachineRefreshLifecycle } from "./machineActions";
+import { actionRefetchTargets } from "./machineObservability";
+import { availabilityErrorCode, dashboardErrorMessage, getCostSeriesState } from "./costSeriesState";
+import { changingProxyKind, draftFromMachine, emptyMachineDraft, machineDraftErrors, machineRequestBody, type MachineDraft, type MachineProxyKind } from "./machineForm";
+import { BreakdownBars, LoadingState, MachineHealthPanel, type MetricKey } from "./DashboardComponents";
+import { MachineAdminPanel } from "./MachineAdminPanel";
 import { initialMachineLimit, matchesMachineSelection, toggledMachineSelection, visibleMachineItems } from "./machineScope";
 import { type ColorScheme, seriesColor } from "./seriesColors";
+import { alignedBucketStart, axisCurrency, bucketMilliseconds, chartDateLabel, clippedInterval, nextBucket, niceChartMaximum } from "./usageChartGeometry";
 
 type QuickRange = "recent12h" | "today" | "yesterday" | "week" | "month";
 type Range = QuickRange | "custom";
-type MetricKey = "costUSD" | "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens";
 type Granularity = "15min" | "hourly" | "6hour" | "daily";
 
 const quickRanges: Array<[QuickRange, string]> = [
@@ -14,6 +20,7 @@ const quickRanges: Array<[QuickRange, string]> = [
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const integer = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 const percentage = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
+const timestampLabel = (value?: string) => value == null ? "not recorded" : new Date(value).toLocaleString();
 const dateText = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const localDate = () => dateText(new Date());
 const daysAgo = (days: number) => { const date = new Date(); date.setDate(date.getDate() - days); return dateText(date); };
@@ -32,56 +39,6 @@ const chartMargin = { top: 16, right: 78, bottom: 54, left: 78 };
 const yTickCount = 4;
 const lazyRenderWindowMilliseconds = 12 * 60 * 60 * 1_000;
 const chartSlotWidths: Record<Granularity, number> = { "15min": 32, hourly: 96, "6hour": 112, daily: 72 };
-function bucketMilliseconds(granularity: Granularity) {
-  switch (granularity) {
-  case "15min": return 15 * 60 * 1_000;
-  case "hourly": return 60 * 60 * 1_000;
-  case "6hour": return 6 * 60 * 60 * 1_000;
-  case "daily": return 24 * 60 * 60 * 1_000;
-  }
-}
-
-function alignedBucketStart(timestamp: string, granularity: Granularity) {
-  const date = new Date(timestamp);
-  if (granularity === "15min") date.setMinutes(Math.floor(date.getMinutes() / 15) * 15, 0, 0);
-  else if (granularity === "hourly") date.setMinutes(0, 0, 0);
-  else if (granularity === "6hour") date.setHours(Math.floor(date.getHours() / 6) * 6, 0, 0, 0);
-  else date.setHours(0, 0, 0, 0);
-  return date;
-}
-
-function nextBucket(date: Date, granularity: Granularity) {
-  const next = new Date(date);
-  if (granularity === "daily") next.setDate(next.getDate() + 1);
-  else next.setTime(next.getTime() + bucketMilliseconds(granularity));
-  return next;
-}
-
-function chartDateLabel(timestamp: string, granularity: Granularity) {
-  const date = new Date(timestamp);
-  return {
-    date: date.toLocaleDateString([], { month: "short", day: "numeric" }),
-    time: granularity === "daily" ? undefined : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-  };
-}
-
-function niceChartMaximum(value: number) {
-  if (value <= 0) return 1;
-  const magnitude = 10 ** Math.floor(Math.log10(value));
-  const normalized = value / magnitude;
-  const rounded = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
-  return rounded * magnitude;
-}
-
-function axisCurrency(value: number, step: number) {
-  const fractionDigits = step >= 1 ? 2 : Math.min(6, Math.max(2, Math.ceil(-Math.log10(step)) + 1));
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: fractionDigits,
-  }).format(value);
-}
-
 function Bars(props: {
   rows: CostRow[];
   granularity: Granularity;
@@ -93,6 +50,9 @@ function Bars(props: {
   stackBy: "model" | "machine";
   colorScheme: ColorScheme;
   colorOverrides?: Readonly<Record<string, string>>;
+  markers: MachineLatestEvent[];
+  gaps: MachineDataGap[];
+  evaluatedAt?: string;
 }) {
   const [hoveredSegment, setHoveredSegment] = createSignal<{ bucketIndex: number; model: string } | null>(null);
   const [loadedAfter, setLoadedAfter] = createSignal(Number.NEGATIVE_INFINITY);
@@ -160,6 +120,40 @@ function Bars(props: {
   const plotWidth = () => chartWidth() - chartMargin.left - chartMargin.right;
   const barSlotWidth = () => plotWidth() / Math.max(bucketCount(), 1);
   const barWidth = () => Math.min(28, barSlotWidth() * 0.65);
+  const overlayDomainEnd = createMemo(() => {
+    const explicit = props.timelineEndExclusive == null ? Number.NaN : new Date(props.timelineEndExclusive).getTime();
+    if (Number.isFinite(explicit)) return explicit;
+    const evaluated = props.evaluatedAt == null ? Number.NaN : new Date(props.evaluatedAt).getTime();
+    if (Number.isFinite(evaluated)) return evaluated;
+    const candidates = [
+      lastTimestamp() > 0 ? lastTimestamp() + bucketMilliseconds(props.granularity) : Number.NaN,
+      ...props.markers.map((marker) => marker.latestEventAt == null ? Number.NaN : new Date(marker.latestEventAt).getTime()),
+      ...props.gaps.map((gap) => new Date(gap.endAt).getTime()),
+    ].filter(Number.isFinite);
+    return candidates.length > 0 ? Math.max(...candidates) : Date.now();
+  });
+  const overlayDomainStart = createMemo(() => {
+    const explicit = props.timelineStart == null ? Number.NaN : new Date(props.timelineStart).getTime();
+    if (Number.isFinite(explicit)) return explicit;
+    if (firstTimestamp() > 0) return firstTimestamp();
+    return overlayDomainEnd() - 60 * 60 * 1_000;
+  });
+  const overlayX = (timestamp: string) => {
+    const start = overlayDomainStart();
+    const duration = Math.max(overlayDomainEnd() - start, 1);
+    const offset = Math.max(0, Math.min(1, (new Date(timestamp).getTime() - start) / duration));
+    return chartMargin.left + offset * plotWidth();
+  };
+  const visibleGaps = createMemo(() => props.granularity === "daily" ? [] : props.gaps.flatMap((gap) => {
+    const clipped = clippedInterval(gap.startAt, gap.endAt, overlayDomainStart(), overlayDomainEnd());
+    return clipped == null ? [] : [{ ...gap, clippedStart: clipped.startAt, clippedEnd: clipped.endAt }];
+  }));
+  const visibleMarkers = createMemo(() => props.granularity === "daily" ? [] : props.markers.filter((marker) => {
+    if (marker.latestEventAt == null) return false;
+    const time = new Date(marker.latestEventAt).getTime();
+    return time >= overlayDomainStart() && time <= overlayDomainEnd();
+  }));
+  const hasChartContent = createMemo(() => points().length > 0 || visibleGaps().length > 0 || visibleMarkers().length > 0);
   const bucketIndex = (timestamp: string) => pointIndexByTimestamp().get(timestamp)
     ?? Math.round((new Date(timestamp).getTime() - firstTimestamp()) / bucketMilliseconds(props.granularity));
   const loadEarlier = () => {
@@ -227,7 +221,7 @@ function Bars(props: {
   });
   return (
     <div class="chart-wrap" role="img" aria-label={`${props.label} ${props.metric} by ${props.granularity} and model`}>
-      <Show when={points().length > 0} fallback={<div class="chart"><p class="empty">No usage matches this period and model filter.</p></div>}>
+      <Show when={hasChartContent()} fallback={<div class="chart"><p class="empty">No usage matches this period and model filter.</p></div>}>
         <div class="chart-legend" aria-hidden="true">
           <For each={models()}>{(model) => <span title={model}><i style={{ background: colorForSeries(model) }} />{model}</span>}</For>
         </div>
@@ -263,6 +257,28 @@ function Bars(props: {
               </Show>
             </>;
           }}</For>
+          <g class="chart-observability-overlay" pointer-events="none">
+            <For each={visibleGaps()}>{(gap) => (
+              <rect
+                class="chart-gap-overlay"
+                x={overlayX(gap.clippedStart)}
+                y={chartMargin.top}
+                width={Math.max(1, overlayX(gap.clippedEnd) - overlayX(gap.clippedStart))}
+                height={plotHeight}
+              />
+            )}</For>
+            <For each={visibleMarkers()}>{(marker) => (
+              <g class={`chart-latest-marker ${marker.markerState}`}>
+                <line
+                  x1={overlayX(marker.latestEventAt!)}
+                  x2={overlayX(marker.latestEventAt!)}
+                  y1={chartMargin.top}
+                  y2={chartMargin.top + plotHeight}
+                />
+                <circle cx={overlayX(marker.latestEventAt!)} cy={chartMargin.top + 8} r="5" />
+              </g>
+            )}</For>
+          </g>
           <Show when={hoveredPoint()} keyed>{(point) => (
             <g class="chart-tooltip" transform={`translate(${point.x} ${point.y})`} pointer-events="none">
               <rect width="300" height="54" rx="7" />
@@ -294,57 +310,6 @@ function Bars(props: {
   );
 }
 
-function LoadingState(props: { status?: LoadStatusResponse }) {
-  const completed = () => props.status?.completed ?? 0;
-  const total = () => Math.max(props.status?.total ?? 3, 1);
-  return (
-    <section class="loading-state" role="status" aria-live="polite">
-      <div class="loading-spinner" aria-hidden="true" />
-      <div>
-        <strong>{props.status?.message ?? "Loading this week"}…</strong>
-        <p>Reading ccusage metrics and preparing the dashboard. {completed()}/{total()}</p>
-        <progress class="load-progress" value={completed()} max={total()} aria-label="Usage loading progress" />
-      </div>
-    </section>
-  );
-}
-
-function BreakdownBars(props: {
-  rows: MetricRow[];
-  metric: MetricKey;
-  keyOf: (row: MetricRow) => string;
-  colorFor: (key: string) => string;
-  label: string;
-}) {
-  const totals = createMemo(() => {
-    const map = new Map<string, number>();
-    for (const row of props.rows) map.set(props.keyOf(row), (map.get(props.keyOf(row)) ?? 0) + metricValue(row, props.metric));
-    return [...map].map(([key, value]) => ({ key, value })).sort((left, right) => right.value - left.value);
-  });
-  const maximum = createMemo(() => Math.max(...totals().map((entry) => entry.value), 0) || 1);
-  const grandTotal = createMemo(() => totals().reduce((sum, entry) => sum + entry.value, 0));
-  const format = (value: number) => props.metric === "costUSD" ? currency.format(value) : integer.format(value);
-  const share = (value: number) => grandTotal() > 0 ? percentage.format((value / grandTotal()) * 100) : "0";
-  return (
-    <Show when={totals().length > 0} fallback={<p class="empty compact">No usage matches this period and filter.</p>}>
-      <div class="breakdown-bars" role="img" aria-label={`${props.metric} total ${props.label} for the selected period`}>
-        <For each={totals()}>{(entry) => (
-          <div class="breakdown-bar-row">
-            <span class="breakdown-name">
-              <i class="breakdown-swatch" style={{ background: props.colorFor(entry.key) }} aria-hidden="true" />
-              <span class="breakdown-label" title={entry.key}>{entry.key}</span>
-            </span>
-            <div class="breakdown-track">
-              <div class="breakdown-fill" style={{ width: `${(entry.value / maximum()) * 100}%`, background: props.colorFor(entry.key) }} title={`${entry.key}: ${format(entry.value)} · ${share(entry.value)}%`} />
-            </div>
-            <span class="breakdown-value">{format(entry.value)}<small> · {share(entry.value)}%</small></span>
-          </div>
-        )}</For>
-      </div>
-    </Show>
-  );
-}
-
 export default function App() {
   let configMenu: HTMLDetailsElement | undefined;
   const initialCustomStart = daysAgo(6);
@@ -370,13 +335,11 @@ export default function App() {
   const [areAllMachinesVisible, setAreAllMachinesVisible] = createSignal(false);
   const [isMachineGraphRendering, setIsMachineGraphRendering] = createSignal(false);
   const [machineFormOpen, setMachineFormOpen] = createSignal(false);
-  const [machineID, setMachineID] = createSignal("");
-  const [machineName, setMachineName] = createSignal("");
-  const [machineHost, setMachineHost] = createSignal("127.0.0.1");
-  const [machinePort, setMachinePort] = createSignal("22");
-  const [machineUser, setMachineUser] = createSignal("");
-  const [machineIdentity, setMachineIdentity] = createSignal("");
+  const [machineDraft, setMachineDraft] = createSignal<MachineDraft>(emptyMachineDraft());
+  const [editingMachineID, setEditingMachineID] = createSignal<string>();
   const [machineError, setMachineError] = createSignal<string>();
+  const [machineActions, setMachineActions] = createSignal<Record<string, { message: string; failed: boolean }>>({});
+  const [machineActionInFlight, setMachineActionInFlight] = createSignal<Record<string, boolean>>({});
   const storedColorScheme = window.localStorage.getItem("ccusage-gauge-color-scheme");
   const initialColorScheme: ColorScheme = storedColorScheme === "light" || storedColorScheme === "dark"
     ? storedColorScheme
@@ -395,7 +358,7 @@ export default function App() {
   const costPath = createMemo(() => range() === "custom"
     ? `/api/cost-series?granularity=${granularity()}&range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}&${machineSuffix}`
     : `/api/cost-series?granularity=${granularity()}&range=${range()}&${machineSuffix}`);
-  const [costSeries, { refetch: refreshCostSeries }] = createResource(costPath, (path) => getJSON<CostSeriesResponse>(path));
+  const [costSeries, { refetch: refreshCostSeries }] = createResource(costPath, getCostSeriesState);
   const [budget, { refetch: refreshBudget }] = createResource(() => getJSON<BudgetResponse>("/api/budget?machine=all"));
   const [loadStatus, { refetch: refreshLoadStatus }] = createResource(() => getJSON<LoadStatusResponse>("/api/load-status?machine=all"));
 
@@ -469,8 +432,33 @@ export default function App() {
     ? `${appliedCustomRange().start} – ${appliedCustomRange().end}`
     : quickRanges.find(([value]) => value === range())?.[1] ?? "Selected period");
   const filterLabel = createMemo(() => selectedModels().length === 0 ? "All models" : `${selectedModels().length} selected`);
-  const errorMessage = createMemo(() => period.error?.message ?? costSeries.error?.message ?? budget.error?.message);
-  const isInitialLoading = createMemo(() => period() == null || costSeries() == null || budget() == null);
+  const periodAvailabilityError = createMemo(() => availabilityErrorCode(period.error) != null);
+  const budgetAvailabilityError = createMemo(() => availabilityErrorCode(budget.error) != null);
+  const errorMessage = createMemo(() => dashboardErrorMessage(period.error, costSeries.error, budget.error));
+  const selectedMachineIDs = createMemo(() => selectedMachines().length === 0
+    ? new Set(selectableMachines().map((machine) => machine.id))
+    : new Set(selectedMachines()));
+  const visibleStatuses = createMemo(() => (machineStatuses()?.machines ?? [])
+    .filter((status) => selectedMachineIDs().has(status.id) && status.collectionState !== "healthy"));
+  const latestEventMarkers = createMemo<MachineLatestEvent[]>(() => (costSeries()?.machineLatestEvents ?? [])
+    .filter((marker) => selectedMachineIDs().has(marker.machine)));
+  const visibleDataGaps = createMemo(() => (costSeries()?.scope.lastHourDataGaps ?? [])
+    .filter((gap) => selectedMachineIDs().has(gap.machine)));
+  const markerStatusLabel = (marker: MachineLatestEvent) => {
+    const unavailableSince = costSeries()?.scope.machineAvailability
+      .find((availability) => availability.machine === marker.machine)?.unavailableSince;
+    if (marker.markerState === "noEvent") return "No event";
+    if (marker.markerState === "stale") return `Stale since ${timestampLabel(unavailableSince ?? marker.latestEventAt)}`;
+    if (marker.markerState === "unavailable") return `Unavailable since ${timestampLabel(unavailableSince)}`;
+    return `Latest ${timestampLabel(marker.latestEventAt)}`;
+  };
+  const currentScope = createMemo(() => period()?.scope ?? costSeries()?.scope);
+  const visibleExcludedMachineIDs = createMemo(() => (currentScope()?.excludedFromCurrentTotalsMachineIds ?? [])
+    .filter((id) => selectedMachineIDs().has(id)));
+  const isInitialLoading = createMemo(() =>
+    (period() == null && !periodAvailabilityError())
+    || costSeries() == null
+    || (budget() == null && !budgetAvailabilityError()));
   const isBlockingLoading = createMemo(() => isInitialLoading() || isRangeLoading());
   const isBackgroundLoading = createMemo(() => !isBlockingLoading() &&
     (loadStatus()?.isLoading || isRefreshing() || period.loading || costSeries.loading || budget.loading));
@@ -550,28 +538,53 @@ export default function App() {
       setIsClearingCache(false);
     }
   };
-  const createMachine = async () => {
+  const currentMachineDraft = machineDraft;
+  const applyMachineDraft = setMachineDraft;
+  const closeMachineForm = () => {
+    applyMachineDraft(emptyMachineDraft());
+    setEditingMachineID(undefined);
     setMachineError(undefined);
+    setMachineFormOpen(false);
+  };
+  const beginCreateMachine = () => {
+    applyMachineDraft(emptyMachineDraft());
+    setEditingMachineID(undefined);
+    setMachineError(undefined);
+    setMachineFormOpen(true);
+  };
+  const beginEditMachine = (machine: Machine) => {
+    applyMachineDraft(draftFromMachine(machine));
+    setEditingMachineID(machine.id);
+    setMachineActions((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine.id)));
+    setMachineError(undefined);
+    setMachineFormOpen(true);
+  };
+  const changeMachineProxyKind = (proxyKind: MachineProxyKind) => {
+    applyMachineDraft(changingProxyKind(currentMachineDraft(), proxyKind));
+  };
+  const saveMachine = async () => {
+    setMachineError(undefined);
+    const draft = currentMachineDraft();
+    const validation = machineDraftErrors(draft);
+    if (Object.keys(validation).length > 0) {
+      const [field, message] = Object.entries(validation)[0];
+      setMachineError(`${field}: ${message}`);
+      return;
+    }
     try {
-      await mutationJSON<Machine>("/api/machines", {
-        method: "POST",
-        body: JSON.stringify({
-          id: machineID(), displayName: machineName(), kind: "ssh", enabled: true,
-          ssh: {
-            host: machineHost(), port: Number(machinePort()), user: machineUser(),
-            ...(machineIdentity() ? { identityFile: machineIdentity() } : {}),
-            extraOptions: [], remoteCcusagePath: "ccusage",
-          },
-        }),
+      const editingID = editingMachineID();
+      await mutationJSON<Machine>(editingID == null ? "/api/machines" : `/api/machines/${editingID}`, {
+        method: editingID == null ? "POST" : "PUT",
+        body: JSON.stringify(machineRequestBody(draft, editingID == null)),
       });
-      setMachineID(""); setMachineName(""); setMachineUser(""); setMachineIdentity("");
-      setMachineFormOpen(false);
+      closeMachineForm();
       await Promise.all([refreshMachines(), refreshMachineStatuses()]);
     } catch (error) {
-      setMachineError(error instanceof Error ? error.message : "Machine registration failed.");
+      setMachineError(error instanceof Error ? error.message : "Machine save failed.");
     }
   };
   const toggleMachine = async (machine: Machine) => {
+    setMachineActions((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine.id)));
     await mutationJSON<Machine>(`/api/machines/${machine.id}`, {
       method: "PATCH", body: JSON.stringify({ enabled: !machine.enabled }),
     });
@@ -582,6 +595,49 @@ export default function App() {
     await mutationJSON<void>(`/api/machines/${machine.id}`, { method: "DELETE" });
     setSelectedMachines((current) => current.filter((id) => id !== machine.id));
     await Promise.all([refreshMachines(), refreshMachineStatuses()]);
+  };
+  const testMachineConnection = async (machine: Machine) => {
+    if (machineActionInFlight()[machine.id]) return;
+    setMachineActionInFlight((current) => ({ ...current, [machine.id]: true }));
+    setMachineActions((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine.id)));
+    try {
+      const result = await mutationJSON<MachineConnectionTestResponse>(
+        `/api/machines/${machine.id}/test-connection`,
+        { method: "POST", body: "{}" },
+      );
+      const message = result.status === "reachable"
+        ? "Connection is reachable."
+        : `${result.diagnostic?.message ?? "Connection failed."} ${result.diagnostic?.remediation ?? ""}`.trim();
+      setMachineActions((current) => ({ ...current, [machine.id]: { message, failed: result.status === "failed" } }));
+      if (actionRefetchTargets("test-connection", result.status === "failed").includes("status")) {
+        await refreshMachineStatuses();
+      }
+    } catch (error) {
+      setMachineActions((current) => ({
+        ...current,
+        [machine.id]: { message: error instanceof Error ? error.message : "Connection test failed.", failed: true },
+      }));
+    } finally {
+      setMachineActionInFlight((current) => ({ ...current, [machine.id]: false }));
+    }
+  };
+  const refreshMachine = async (machine: Machine) => {
+    if (machineActionInFlight()[machine.id]) return;
+    setMachineActionInFlight((current) => ({ ...current, [machine.id]: true }));
+    setMachineActions((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine.id)));
+    await runMachineRefreshLifecycle({
+      request: () => mutationJSON<MachineRefreshResponse>(
+        `/api/machines/${machine.id}/refresh`,
+        { method: "POST", body: "{}" },
+      ),
+      refetch: () => Promise.all([refreshMachineStatuses(), refreshPeriod(), refreshCostSeries(), refreshBudget()]),
+      setDiagnostic: (diagnostic) => {
+        setMachineActions((current) => ({ ...current, [machine.id]: diagnostic }));
+      },
+      settled: () => {
+        setMachineActionInFlight((current) => ({ ...current, [machine.id]: false }));
+      },
+    });
   };
   const beginRangeLoad = () => {
     setRangeLoadStarted(false);
@@ -747,28 +803,25 @@ export default function App() {
                 <button disabled={isClearingCache()} onClick={clearCache}>{isClearingCache() ? "Clearing…" : "Clear cache"}</button>
                 <Show when={cacheStatus()}>{(message) => <small role="status">{message()}</small>}</Show>
                 <hr />
-                <strong>Machines</strong>
-                <div class="machine-admin-list">
-                  <For each={(machines()?.machines ?? []).filter((machine) => machine.kind === "ssh")} fallback={<small>No SSH machines registered.</small>}>{(machine) => {
-                    const status = () => machineStatuses()?.machines.find((item) => item.id === machine.id);
-                    return <div class="machine-admin-row">
-                      <div><b>{machine.displayName}</b><small>{machine.id} · {status()?.collectionState ?? "unknown"}</small></div>
-                      <button class="secondary" onClick={() => toggleMachine(machine)}>{machine.enabled ? "Disable" : "Enable"}</button>
-                      <button class="danger" onClick={() => removeMachine(machine)}>Remove</button>
-                    </div>;
-                  }}</For>
-                </div>
-                <button class="secondary" onClick={() => setMachineFormOpen(!machineFormOpen())}>{machineFormOpen() ? "Cancel" : "Add SSH machine"}</button>
-                <Show when={machineFormOpen()}><div class="machine-form">
-                  <input aria-label="Machine id" placeholder="machine-id" value={machineID()} onInput={(event) => setMachineID(event.currentTarget.value)} />
-                  <input aria-label="Display name" placeholder="Display name" value={machineName()} onInput={(event) => setMachineName(event.currentTarget.value)} />
-                  <input aria-label="SSH host" placeholder="Host" value={machineHost()} onInput={(event) => setMachineHost(event.currentTarget.value)} />
-                  <input aria-label="SSH port" type="number" min="1" max="65535" value={machinePort()} onInput={(event) => setMachinePort(event.currentTarget.value)} />
-                  <input aria-label="SSH user" placeholder="User" value={machineUser()} onInput={(event) => setMachineUser(event.currentTarget.value)} />
-                  <input aria-label="Identity file" placeholder="/absolute/path/to/key (optional)" value={machineIdentity()} onInput={(event) => setMachineIdentity(event.currentTarget.value)} />
-                  <button onClick={createMachine}>Register machine</button>
-                  <Show when={machineError()}>{(message) => <small class="machine-warning" role="alert">{message()}</small>}</Show>
-                </div></Show>
+                <MachineAdminPanel
+                  machines={machines()?.machines ?? []}
+                  statuses={machineStatuses()?.machines ?? []}
+                  actions={machineActions()}
+                  inFlight={machineActionInFlight()}
+                  formOpen={machineFormOpen()}
+                  editingID={editingMachineID()}
+                  draft={currentMachineDraft()}
+                  error={machineError()}
+                  onTest={testMachineConnection}
+                  onRefresh={refreshMachine}
+                  onEdit={beginEditMachine}
+                  onToggle={toggleMachine}
+                  onRemove={removeMachine}
+                  onToggleForm={() => machineFormOpen() ? closeMachineForm() : beginCreateMachine()}
+                  onDraft={applyMachineDraft}
+                  onProxyKind={changeMachineProxyKind}
+                  onSave={saveMachine}
+                />
               </div>
             </details>
           </div>
@@ -798,6 +851,12 @@ export default function App() {
 
         <Show when={!errorMessage()} fallback={<section class="error"><span>{errorMessage()}</span><button onClick={refresh}>Retry</button></section>}>
           <Show when={!isBlockingLoading()} fallback={<LoadingState status={loadStatus()} />}>
+            <Show when={visibleStatuses().length > 0 || visibleExcludedMachineIDs().length > 0}>
+              <MachineHealthPanel
+                statuses={visibleStatuses()}
+                excludedMachineIDs={visibleExcludedMachineIDs()}
+              />
+            </Show>
             <section class="stats metric-stats">
             <article><span>Cost for current view</span><strong>{currency.format(total("costUSD"))}</strong><small>{rangeLabel()} · {filterLabel()}</small></article>
             <article><span>Total tokens</span><strong>{integer.format(total("totalTokens"))}</strong><small>All token categories</small></article>
@@ -862,7 +921,23 @@ export default function App() {
               stackBy={stackBy()}
               colorScheme={colorScheme()}
               colorOverrides={stackBy() === "machine" ? activeChartColors()?.machines : activeChartColors()?.models}
+              markers={latestEventMarkers()}
+              gaps={visibleDataGaps()}
+              evaluatedAt={costSeries()?.scope.evaluatedAt}
             />
+            <Show when={latestEventMarkers().length > 0 || visibleDataGaps().length > 0}>
+              <div class="machine-event-markers" aria-label="Per-machine latest-event markers and last-hour gaps">
+                <For each={latestEventMarkers()}>{(marker) => (
+                  <span classList={{ "machine-event-marker": true, [marker.markerState]: true }}>
+                    <b>{marker.machine}</b>: {markerStatusLabel(marker)}
+                    {marker.inLastHour || marker.latestEventAt == null ? "" : " · outside last hour"}
+                  </span>
+                )}</For>
+                <For each={visibleDataGaps()}>{(gap) => (
+                  <span class="machine-gap-marker"><b>{gap.machine}</b>: data gap {timestampLabel(gap.startAt)} – {timestampLabel(gap.endAt)}</span>
+                )}</For>
+              </div>
+            </Show>
             </section>
 
             <section class="panel breakdown-panel">
