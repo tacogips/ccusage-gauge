@@ -18,6 +18,18 @@ export function LoadingState(props: { status?: LoadStatusResponse }) {
         <strong>{props.status?.message ?? "Loading this week"}…</strong>
         <p>Reading ccusage metrics and preparing the dashboard. {completed()}/{total()}</p>
         <progress class="load-progress" value={completed()} max={total()} aria-label="Usage loading progress" />
+        <Show when={(props.status?.machines.length ?? 0) > 0}>
+          <ul class="machine-load-progress" aria-label="Per-machine loading progress">
+            <For each={props.status?.machines ?? []}>{(machine) => (
+              <li>
+                <span>{machine.id}</span>
+                <span>{machine.message}</span>
+                <strong>{machine.completed}/{Math.max(machine.total, 1)}</strong>
+                <progress value={machine.completed} max={Math.max(machine.total, 1)} aria-label={`${machine.id} loading progress`} />
+              </li>
+            )}</For>
+          </ul>
+        </Show>
       </div>
     </section>
   );
@@ -36,7 +48,13 @@ export function MachineHealthPanel(props: {
           const diagnostic = machineHealthDiagnosticContent(status);
           return <article classList={{ "machine-health-item": true, [status.collectionState]: true }}>
             <div>
-              <strong>{status.displayName}: {machineHealthSummary(status)}</strong>
+              <strong class="machine-health-heading">
+                <svg class="machine-warning-icon" viewBox="0 0 24 24" role="img" aria-label="Machine collection warning">
+                  <path d="M12 3 2.7 20h18.6L12 3Z" />
+                  <path d="M12 9v5M12 17.5v.5" />
+                </svg>
+                {status.displayName}: {machineHealthSummary(status)}
+              </strong>
               <span>{diagnostic.message}</span>
               <Show when={diagnostic.detail}>{(detail) => (
                 <p class="machine-health-detail">{detail()}</p>

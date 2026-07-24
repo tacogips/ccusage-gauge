@@ -5,9 +5,9 @@ project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 version="$(tr -d '[:space:]' < "$project_root/VERSION")"
 mode="${1:-fixture}"
 case "$mode" in
-  fixture | missing) ;;
+  fixture | missing | unreachable) ;;
   *)
-    printf 'usage: %s [fixture|missing]\n' "$0" >&2
+    printf 'usage: %s [fixture|missing|unreachable]\n' "$0" >&2
     exit 2
     ;;
 esac
@@ -18,10 +18,16 @@ home="$output_root/home"
 mock_bin="$output_root/bin/ccusage"
 config="$home/config/ccusage-gauge/ccusage-config.json"
 state="$home/state/ccusage-gauge/state.json"
+cache="$home/cache"
+claude_home="$home/claude"
+codex_home="$home/codex"
+machines="$(dirname "$config")/machines.json"
 
 rm -rf "$output_root"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/Web" "$output_root/bin" "$(dirname "$config")" "$(dirname "$state")"
-chmod 0700 "$output_root" "$home" "$home/config" "$(dirname "$config")" "$home/state" "$(dirname "$state")"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/Web" "$output_root/bin" \
+  "$(dirname "$config")" "$(dirname "$state")" "$cache" "$claude_home" "$codex_home"
+chmod 0700 "$output_root" "$home" "$home/config" "$(dirname "$config")" \
+  "$home/state" "$(dirname "$state")" "$cache" "$claude_home" "$codex_home"
 
 swift build --package-path "$project_root" --product ccusage-gauge-menubar >/dev/null
 bin_dir="$(swift build --package-path "$project_root" --show-bin-path)"
@@ -58,6 +64,10 @@ configured_ccusage="$mock_bin"
 if [[ "$mode" == missing ]]; then
   configured_ccusage="$output_root/bin/ccusage-missing"
 fi
+remote_settings=""
+if [[ "$mode" == unreachable ]]; then
+  remote_settings=$',\n  "remoteRetryCount": 0,\n  "remoteTimeoutSeconds": 1'
+fi
 
 cat >"$config" <<JSON
 {
@@ -65,10 +75,34 @@ cat >"$config" <<JSON
   "defaultResetTerm": "daily",
   "dashboardPort": 18081,
   "dashboardAutostart": true,
-  "pollIntervalSeconds": 20
+  "pollIntervalSeconds": 20$remote_settings
 }
 JSON
 chmod 0600 "$config"
+
+if [[ "$mode" == unreachable ]]; then
+  cat >"$machines" <<'JSON'
+{
+  "schemaVersion": 2,
+  "machines": [
+    {
+      "id": "unreachable",
+      "displayName": "Unreachable test machine",
+      "kind": "ssh",
+      "enabled": true,
+      "ssh": {
+        "host": "192.0.2.1",
+        "port": 22,
+        "user": "missing",
+        "extraOptions": [],
+        "remoteCcusagePath": "ccusage"
+      }
+    }
+  ]
+}
+JSON
+  chmod 0600 "$machines"
+fi
 
 cat >"$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -101,6 +135,12 @@ cat >"$app/Contents/Info.plist" <<PLIST
     <string>$home/config</string>
     <key>CCUSAGE_GAUGE_STATE_HOME</key>
     <string>$home/state</string>
+    <key>CCUSAGE_GAUGE_CACHE_HOME</key>
+    <string>$cache</string>
+    <key>CLAUDE_CONFIG_DIR</key>
+    <string>$claude_home</string>
+    <key>CODEX_HOME</key>
+    <string>$codex_home</string>
     <key>CCUSAGE_GAUGE_E2E_OPEN_MENU</key>
     <string>1</string>
   </dict>
@@ -115,6 +155,7 @@ cat >"$output_root/paths.env" <<PATHS
 CCUSAGE_GAUGE_E2E_APP=$app
 CCUSAGE_GAUGE_E2E_CONFIG=$config
 CCUSAGE_GAUGE_E2E_STATE=$state
+CCUSAGE_GAUGE_E2E_CACHE=$cache
 CCUSAGE_GAUGE_E2E_MODE=$mode
 PATHS
 

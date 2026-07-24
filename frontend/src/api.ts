@@ -130,21 +130,45 @@ export interface MachinesResponse { machines: Machine[] }
 export interface ChartColorScheme { machines: Record<string, string>; models: Record<string, string> }
 export interface ChartColorsResponse { light: ChartColorScheme; dark: ChartColorScheme }
 export interface MachineStatusResponse { requested: string; generatedAt: string; machines: MachineStatus[] }
+export const dashboardRequestTimeoutMilliseconds = 120_000;
+
 export async function getJSON<T>(path: string): Promise<T> {
   return requestJSON<T>(path);
 }
 
-export async function requestJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    const message = typeof payload?.error === "string"
-      ? payload.error
-      : payload?.error?.message ?? `Request failed (${response.status})`;
-    throw new DashboardRequestError(response.status, message, payload);
+export async function requestJSON<T>(
+  path: string,
+  init: RequestInit = {},
+  timeoutMilliseconds = dashboardRequestTimeoutMilliseconds,
+): Promise<T> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort(init.signal?.reason);
+  if (init.signal?.aborted) abortFromCaller();
+  else init.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timer = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, Math.max(1, timeoutMilliseconds));
+
+  try {
+    const response = await fetch(path, { ...init, signal: controller.signal });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const message = typeof payload?.error === "string"
+        ? payload.error
+        : payload?.error?.message ?? `Request failed (${response.status})`;
+      throw new DashboardRequestError(response.status, message, payload);
+    }
+    if (response.status === 204) return undefined as T;
+    return await response.json() as T;
+  } catch (error) {
+    if (timedOut) throw new DashboardRequestTimeoutError(timeoutMilliseconds);
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timer);
+    init.signal?.removeEventListener("abort", abortFromCaller);
   }
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
 }
 
 export class DashboardRequestError<T = unknown> extends Error {
@@ -155,6 +179,13 @@ export class DashboardRequestError<T = unknown> extends Error {
   ) {
     super(message);
     this.name = "DashboardRequestError";
+  }
+}
+
+export class DashboardRequestTimeoutError extends Error {
+  constructor(public readonly timeoutMilliseconds: number) {
+    super(`Dashboard request timed out after ${Math.ceil(timeoutMilliseconds / 1_000)} seconds.`);
+    this.name = "DashboardRequestTimeoutError";
   }
 }
 

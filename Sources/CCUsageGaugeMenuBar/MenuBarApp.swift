@@ -66,6 +66,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   private var currentState: AppState?
   private var errorMessage: String?
   private var isUsageUnavailable = false
+  private var collectionWarnings: [MachineStatusResponseItem] = []
   private var launchAtLoginError: String?
   private var stateMutationGeneration = 0
   private var e2eWindow: NSWindow?
@@ -188,6 +189,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       )
       errorMessage = nil
       isUsageUnavailable = false
+      collectionWarnings = []
       if loaded.dashboardAutostart { startDashboard() }
       if effectiveBudgetMachineIDs(state: currentState, descriptors: registry.machines) == ["local"] {
         await loadInitialMenuBarSnapshot(using: service)
@@ -209,6 +211,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       )
       errorMessage = "ccusage unavailable. Install ccusage or verify the configured executable and connection."
       isUsageUnavailable = true
+      collectionWarnings = []
       updateStatusTitle("$!")
       rebuildMenu()
     }
@@ -252,20 +255,24 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       rebuildMenu()
       return
     }
+    var selectedMachineIDs: [String] = []
     do {
       let state = try await stateStore?.load(defaultCycle: defaultResetCycle)
       let descriptors = await machineSnapshotStore.descriptors()
       let machineIDs = effectiveBudgetMachineIDs(state: state, descriptors: descriptors)
+      selectedMachineIDs = machineIDs
       guard let snapshot = try await machineSnapshotStore.selection(machineIDs: machineIDs).snapshot else { return }
       guard refreshGeneration == stateMutationGeneration else { return }
       latestSnapshot = snapshot
       currentState = state
-      errorMessage = nil
       isUsageUnavailable = false
+      collectionWarnings = await selectedCollectionWarnings(machineIDs)
+      errorMessage = collectionWarningMessage
       updateStatusTitle(latestSnapshot.map(Self.statusTitle) ?? "$—")
     } catch {
       guard refreshGeneration == stateMutationGeneration else { return }
-      errorMessage = MachineDiagnosticClassifier.classify(error).message
+      collectionWarnings = await selectedCollectionWarnings(selectedMachineIDs)
+      errorMessage = collectionWarningMessage ?? MachineDiagnosticClassifier.classify(error).message
       isUsageUnavailable = true
       updateStatusTitle(latestSnapshot.map { Self.statusTitle($0) + " !" } ?? "$!")
     }
@@ -309,7 +316,9 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func errorDetailsItem(message: String) -> NSMenuItem {
-    let title = isUsageUnavailable ? "Warning: ccusage unavailable" : "Error Details"
+    let title = collectionWarnings.isEmpty
+      ? (isUsageUnavailable ? "Warning: ccusage unavailable" : "Error Details")
+      : "Warning: \(collectionWarnings.count) machine collection failure\(collectionWarnings.count == 1 ? "" : "s")"
     let root = NSMenuItem(title: title, action: nil, keyEquivalent: "")
     root.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Warning")
     let submenu = NSMenu()
@@ -586,6 +595,23 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     return []
   }
 
+  private func selectedCollectionWarnings(_ machineIDs: [String]) async -> [MachineStatusResponseItem] {
+    guard !machineIDs.isEmpty, let machineSnapshotStore,
+          let response = try? await machineSnapshotStore.status(machine: machineIDs.joined(separator: ",")) else {
+      return []
+    }
+    return response.machines.filter {
+      !$0.collectionInProgress && [.neverCollected, .stale, .error].contains($0.collectionState)
+    }
+  }
+
+  private var collectionWarningMessage: String? {
+    guard !collectionWarnings.isEmpty else { return nil }
+    return collectionWarnings.map { status in
+      "\(status.displayName): \(status.lastError?.message ?? "Usage data is unavailable")"
+    }.joined(separator: "\n")
+  }
+
   nonisolated private static func remoteRunner(
     connection: SSHConnection,
     configuration: AppConfiguration
@@ -619,14 +645,15 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func updateStatusIcon() {
+    let hasWarning = isUsageUnavailable || !collectionWarnings.isEmpty
     statusItem.button?.image = MenuBarPieIcon.image(
       fraction: latestSnapshot?.budget.visualFraction,
       hasBudget: currentState?.budgetUSD != nil,
-      warning: isUsageUnavailable
+      warning: hasWarning
     )
-    let label = isUsageUnavailable ? "Warning: ccusage unavailable" : "ccusage-gauge cost in selected period"
+    let label = hasWarning ? "Warning: machine usage collection failed" : "ccusage-gauge cost in selected period"
     statusItem.button?.setAccessibilityLabel(label)
-    statusItem.button?.toolTip = isUsageUnavailable ? errorMessage : "ccusage-gauge — cost in selected period"
+    statusItem.button?.toolTip = hasWarning ? errorMessage : "ccusage-gauge — cost in selected period"
     e2eIconView?.image = statusItem.button?.image
   }
 
@@ -735,7 +762,11 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   private func refreshE2EWindow() {
     guard e2eWindow != nil else { return }
     e2eIconView?.image = statusItem.button?.image
-    e2eIconView?.setAccessibilityLabel(isUsageUnavailable ? "Warning: ccusage unavailable" : "Budget usage pie chart")
+    e2eIconView?.setAccessibilityLabel(
+      isUsageUnavailable || !collectionWarnings.isEmpty
+        ? "Warning: machine usage collection failed"
+        : "Budget usage pie chart"
+    )
     e2eStatusLabel?.stringValue = statusItem.button?.title ?? "$—"
     if let snapshot = latestSnapshot {
       let budget = snapshot.budget.budgetUSD.map { formatUSDCurrency($0) } ?? "not set"

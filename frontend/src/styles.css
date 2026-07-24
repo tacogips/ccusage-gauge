@@ -24,6 +24,8 @@ button.model-choice { grid-template-columns: minmax(0, 1fr); }
 .model-choice.active { background: #d9eddf; color: #174c33; }
 .model-choice input { accent-color: #22734b; }
 .model-choice span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .82rem; font-weight: 650; }
+.machine-filter label.model-choice { grid-template-columns: auto minmax(0, 1fr) auto; }
+.machine-warning-icon { width: 17px; height: 17px; flex: 0 0 auto; fill: #f6c453; stroke: #8d4b16; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .model-choice.unavailable, .model-choice.estimated { position: relative; cursor: help; }
 .model-choice.unavailable { opacity: .56; }
 .model-choice.unavailable span { text-decoration: line-through; text-decoration-thickness: 1px; }
@@ -97,6 +99,7 @@ input[type="date"] { border: 1px solid #bfd0c4; background: white; color: #17312
 .machine-health-item.error { border-color: #df9a91; border-left-color: #a83b2d; background: #fff1ee; }
 .machine-health-item.disabled { border-color: #bdc9c1; border-left-color: #74877b; background: #f2f5f2; }
 .machine-health-item > div { display: grid; align-content: start; gap: 4px; }
+.machine-health-heading { display: flex; align-items: center; gap: 7px; }
 .machine-health-item span, .machine-health-item dt, .machine-health-item dd, .excluded-machines { color: #688076; font-size: .72rem; }
 .machine-health-detail, .machine-health-remediation, .machine-health-exclusion { margin: 2px 0 0; color: #536b61; font-size: .72rem; line-height: 1.45; }
 .machine-health-remediation { padding: 7px 9px; border-radius: 8px; background: rgba(191,104,30,.09); color: #7f4218; }
@@ -189,6 +192,10 @@ input[type="date"] { border: 1px solid #bfd0c4; background: white; color: #17312
 .load-progress::-webkit-progress-bar { background: #d8e7dc; }
 .load-progress::-webkit-progress-value { background: #238855; transition: width .2s ease; }
 .load-progress::-moz-progress-bar { background: #238855; }
+.machine-load-progress { width: min(520px, 70vw); margin: 14px 0 0; padding: 0; display: grid; gap: 7px; list-style: none; }
+.machine-load-progress li { display: grid; grid-template-columns: minmax(80px, .7fr) minmax(150px, 1.5fr) auto; align-items: center; gap: 8px; color: #60776d; font-size: .72rem; }
+.machine-load-progress li > span:first-child { color: #315f49; font-weight: 800; }
+.machine-load-progress li progress { grid-column: 1 / -1; width: 100%; height: 5px; }
 .loading-spinner { width: 32px; height: 32px; flex: 0 0 auto; border: 3px solid #cce1d2; border-top-color: #238855; border-radius: 50%; animation: loading-spin .8s linear infinite; }
 @keyframes loading-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .loading-spinner, .graph-loading-spinner, .refresh-icon.refreshing svg { animation: none; } }

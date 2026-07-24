@@ -99,6 +99,24 @@ public actor MachineSnapshotStore {
     entries[machineID] = entry
   }
 
+  public func updateCollectionProgress(
+    machineID: String,
+    revision: UInt64,
+    generation: UInt64,
+    progress: SnapshotLoadProgress
+  ) {
+    guard var entry = fencedEntry(machineID: machineID, revision: revision, generation: generation),
+          entry.collectionStatus.collectionInProgress else { return }
+    entry.loadStatus = DashboardLoadStatus(
+      phase: entry.loadStatus.phase,
+      message: entry.loadStatus.message,
+      completed: min(max(0, progress.completed), max(progress.total, 1)),
+      total: max(progress.total, 1),
+      isLoading: true
+    )
+    entries[machineID] = entry
+  }
+
   public func publish(
     machineID: String,
     snapshot: CostSnapshot,
@@ -116,7 +134,14 @@ public actor MachineSnapshotStore {
     entry.collectionStatus.collectionInProgress = false
     entry.collectionStatus.consecutiveFailureCount = 0
     entry.collectionStatus.unavailableSince = nil
-    entry.loadStatus = DashboardLoadStatus(phase: .ready, message: "Usage data is ready", completed: 1, total: 1, isLoading: false)
+    let total = max(entry.loadStatus.total, 1)
+    entry.loadStatus = DashboardLoadStatus(
+      phase: .ready,
+      message: "Usage data is ready",
+      completed: total,
+      total: total,
+      isLoading: false
+    )
     entries[machineID] = entry
     mergeCache = nil
   }
@@ -137,13 +162,28 @@ public actor MachineSnapshotStore {
     entry.collectionStatus.lastErrorAt = now
     entry.collectionStatus.lastError = Self.sanitizedError(error)
     entry.collectionStatus.collectionInProgress = false
-    entry.loadStatus = DashboardLoadStatus(phase: .failed, message: "Usage data loading failed", completed: 0, total: 1, isLoading: false)
+    let total = max(entry.loadStatus.total, 1)
+    entry.loadStatus = DashboardLoadStatus(
+      phase: .failed,
+      message: "Usage data loading failed",
+      completed: total,
+      total: total,
+      isLoading: false
+    )
     entries[machineID] = entry
   }
 
   public func finishCancellation(machineID: String, revision: UInt64, generation: UInt64) {
     guard var entry = fencedEntry(machineID: machineID, revision: revision, generation: generation) else { return }
     entry.collectionStatus.collectionInProgress = false
+    let total = max(entry.loadStatus.total, 1)
+    entry.loadStatus = DashboardLoadStatus(
+      phase: .idle,
+      message: "Usage data loading was cancelled",
+      completed: total,
+      total: total,
+      isLoading: false
+    )
     entries[machineID] = entry
   }
 
@@ -167,6 +207,14 @@ public actor MachineSnapshotStore {
     requiredCoverageStart: Date? = nil,
     dataDisposition: DashboardDataDisposition = .historical
   ) throws -> MachineSnapshotSelection {
+    if requested.contains(",") {
+      return try selection(
+        machineIDs: try requestedMachineIDs(requested),
+        now: now,
+        requiredCoverageStart: requiredCoverageStart,
+        dataDisposition: dataDisposition
+      )
+    }
     if requested == "all" {
       return try aggregateSelection(
         now: now,
@@ -244,6 +292,13 @@ public actor MachineSnapshotStore {
     let selected: [MachineSnapshotEntry]
     if requested == "all" {
       selected = orderedEntries().filter(\.descriptor.enabled)
+    } else if requested.contains(",") {
+      let ids = try requestedMachineIDs(requested)
+      let requestedIDs = Set(ids)
+      selected = orderedEntries().filter { requestedIDs.contains($0.descriptor.id) }
+      guard selected.count == ids.count else {
+        throw MachineSelectionError.notFound(ids.first { entries[$0] == nil } ?? requested)
+      }
     } else if let entry = entries[requested] {
       selected = [entry]
     } else {
@@ -262,6 +317,15 @@ public actor MachineSnapshotStore {
     if requested == "all" {
       return latestEvents(for: orderedEntries().filter(\.descriptor.enabled), now: now)
     }
+    if requested.contains(",") {
+      let ids = try requestedMachineIDs(requested)
+      let requestedIDs = Set(ids)
+      let selected = orderedEntries().filter { requestedIDs.contains($0.descriptor.id) }
+      guard selected.count == ids.count else {
+        throw MachineSelectionError.notFound(ids.first { entries[$0] == nil } ?? requested)
+      }
+      return latestEvents(for: selected, now: now)
+    }
     guard let entry = entries[requested] else { throw MachineSelectionError.notFound(requested) }
     return latestEvents(for: [entry], now: now)
   }
@@ -270,6 +334,13 @@ public actor MachineSnapshotStore {
     let selected: [MachineSnapshotEntry]
     if requested == "all" {
       selected = orderedEntries()
+    } else if requested.contains(",") {
+      let ids = try requestedMachineIDs(requested)
+      let requestedIDs = Set(ids)
+      selected = orderedEntries().filter { requestedIDs.contains($0.descriptor.id) }
+      guard selected.count == ids.count else {
+        throw MachineSelectionError.notFound(ids.first { entries[$0] == nil } ?? requested)
+      }
     } else if let entry = entries[requested] {
       selected = [entry]
     } else {
@@ -285,6 +356,18 @@ public actor MachineSnapshotStore {
   public func loadStatuses(machine requested: String) throws -> [(String, DashboardLoadStatus, Date?)] {
     if requested == "all" {
       return orderedEntries().filter(\.descriptor.enabled).map { ($0.descriptor.id, $0.loadStatus, $0.coverageStart) }
+    }
+    if requested.contains(",") {
+      let ids = try requestedMachineIDs(requested)
+      let requestedIDs = Set(ids)
+      let selected = orderedEntries().filter { requestedIDs.contains($0.descriptor.id) }
+      guard selected.count == ids.count else {
+        throw MachineSelectionError.notFound(ids.first { entries[$0] == nil } ?? requested)
+      }
+      guard selected.allSatisfy(\.descriptor.enabled) else {
+        throw MachineSelectionError.disabled(selected.first { !$0.descriptor.enabled }?.descriptor.id ?? requested)
+      }
+      return selected.map { ($0.descriptor.id, $0.loadStatus, $0.coverageStart) }
     }
     guard let entry = entries[requested] else { throw MachineSelectionError.notFound(requested) }
     guard entry.descriptor.enabled else { throw MachineSelectionError.disabled(requested) }
@@ -565,6 +648,15 @@ public actor MachineSnapshotStore {
     }
   }
 
+  private func requestedMachineIDs(_ requested: String) throws -> [String] {
+    let ids = requested.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+    guard !ids.isEmpty, ids.allSatisfy(MachineValidation.isCanonicalMachineID),
+          Set(ids).count == ids.count else {
+      throw MachineSelectionError.invalid
+    }
+    return ids
+  }
+
   private func fencedEntry(machineID: String, revision: UInt64, generation: UInt64) -> MachineSnapshotEntry? {
     guard revision == registryRevision, let entry = entries[machineID],
           entry.revision == revision, entry.generation == generation else { return nil }
@@ -720,9 +812,10 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
   }
 
   public func refresh(machine requested: String) async -> (succeeded: [String], failed: [String]) {
+    let requestedIDs = Set(requested.split(separator: ",").map(String.init))
     let targets = requested == "all"
       ? activeDescriptors()
-      : registry.machines.filter { $0.id == requested && $0.enabled }
+      : registry.machines.filter { requestedIDs.contains($0.id) && $0.enabled }
     return await refresh(targets: targets)
   }
 
@@ -748,9 +841,10 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
   }
 
   public func expand(machine requested: String, earliestDate: Date) async {
+    let requestedIDs = Set(requested.split(separator: ",").map(String.init))
     let targets = requested == "all"
       ? activeDescriptors()
-      : registry.machines.filter { $0.id == requested && $0.enabled }
+      : registry.machines.filter { requestedIDs.contains($0.id) && $0.enabled }
     await withTaskGroup(of: Void.self) { group in
       for descriptor in targets {
         group.addTask { [weak self] in
@@ -834,7 +928,20 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
       requestedCoverageStart: requested,
       now: started
     )
-    let task = Task { try await service.snapshot(now: started, earliestDate: requested) }
+    let task = Task {
+      try await service.snapshot(
+        now: started,
+        earliestDate: requested,
+        progress: { [store] progress in
+          await store.updateCollectionProgress(
+            machineID: machineID,
+            revision: revision,
+            generation: generation,
+            progress: progress
+          )
+        }
+      )
+    }
     inFlight[machineID] = task
     do {
       let snapshot = try await task.value

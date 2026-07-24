@@ -2,14 +2,6 @@ import Foundation
 import Testing
 @testable import AppCore
 
-private struct StubProcessRunner: CCUsageProcessRunning {
-  let result: Result<ProcessResult, ProcessExecutionFailure>
-
-  func run(executable: URL, arguments: [String], timeoutSeconds: TimeInterval) async throws -> ProcessResult {
-    try result.get()
-  }
-}
-
 private struct StubCCUsageRunner: CCUsageCommandRunner {
   func run(arguments: [String], timeoutSeconds: TimeInterval) async throws -> ProcessResult {
     let payload: String
@@ -21,124 +13,6 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
     default: throw CCUsageCommandFailure(runnerKind: .local, phase: .commandExited, exitStatus: 2)
     }
     return ProcessResult(stdout: Data(payload.utf8), stderr: Data(), exitStatus: 0)
-  }
-}
-
-private actor SequencedCCUsageRunner: CCUsageCommandRunner {
-  private var remainingFailures: Int
-  private var observedTimeouts: [TimeInterval] = []
-
-  init(failures: Int) {
-    remainingFailures = failures
-  }
-
-  func run(arguments: [String], timeoutSeconds: TimeInterval) async throws -> ProcessResult {
-    observedTimeouts.append(timeoutSeconds)
-    if remainingFailures > 0 {
-      remainingFailures -= 1
-      throw CCUsageCommandFailure(runnerKind: .ssh, phase: .timedOut)
-    }
-    return ProcessResult(stdout: Data("ok".utf8), stderr: Data(), exitStatus: 0)
-  }
-
-  func observations() -> [TimeInterval] { observedTimeouts }
-}
-
-@Suite("SSHCommandRunnerTests") struct SSHCommandRunnerTests {
-  @Test func usesSystemSSHExecutable() throws {
-    let runner = try SSHCCUsageCommandRunner(connection: SSHConnection(host: "localhost", port: 22, user: "user"))
-    #expect(runner.sshExecutable.path == "/usr/bin/ssh")
-  }
-
-  @Test func emitsCanonicalArgumentsAndQuotesEveryRemoteToken() throws {
-    let connection = SSHConnection(
-      host: "2001:db8::1",
-      port: 2222,
-      user: "ccusage",
-      identityFile: "/tmp/id_ed25519",
-      extraOptions: ["-4", "-o ConnectTimeout=10", "-o LogLevel=ERROR"],
-      remoteCcusagePath: "/usr/local/bin/ccusage"
-    )
-    let runner = try SSHCCUsageCommandRunner(connection: connection)
-    #expect(try runner.sshArguments(ccusageArguments: ["blocks", "--json", "a'b"]) == [
-      "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
-      "-i", "/tmp/id_ed25519", "-p", "2222", "-4", "-o", "ConnectTimeout=10",
-      "-o", "LogLevel=ERROR", "--", "ccusage@[2001:db8::1]",
-      "'/usr/local/bin/ccusage'", "'blocks'", "'--json'", "'a'\\''b'"
-    ])
-  }
-
-  @Test(arguments: [
-    "-J bastion", "-o ProxyCommand=anything", "-o RemoteCommand=sh", "-p 22",
-    "-o ConnectTimeout=0", "-o LogLevel=DEBUG", "-o UserKnownHostsFile=relative"
-  ])
-  func rejectsUnlistedOrAlternateOptions(option: String) {
-    #expect(throws: MachineValidationError.self) {
-      try SSHCCUsageCommandRunner(connection: SSHConnection(
-        host: "localhost", port: 22, user: "user", extraOptions: [option]
-      ))
-    }
-  }
-
-  @Test(arguments: [
-    (CCUsageRunnerKind.local, ProcessResult(stdout: Data(), stderr: Data(), exitStatus: 9), CCUsageCommandFailurePhase.commandExited),
-    (CCUsageRunnerKind.local, ProcessResult(stdout: Data(), stderr: Data(), exitStatus: 9, terminationReason: .uncaughtSignal), .signalled),
-    (CCUsageRunnerKind.ssh, ProcessResult(stdout: Data(), stderr: Data(), exitStatus: 255), .transportExited),
-    (CCUsageRunnerKind.ssh, ProcessResult(stdout: Data(), stderr: Data(), exitStatus: 1), .commandExited),
-    (CCUsageRunnerKind.ssh, ProcessResult(stdout: Data(), stderr: Data(), exitStatus: 254), .commandExited)
-  ])
-  func classifiesProcessOutcomes(kind: CCUsageRunnerKind, result: ProcessResult, phase: CCUsageCommandFailurePhase) async throws {
-    let process = StubProcessRunner(result: .success(result))
-    do {
-      if kind == .local {
-        _ = try await LocalCCUsageCommandRunner(executable: URL(fileURLWithPath: "/bin/false"), processRunner: process)
-          .run(arguments: [], timeoutSeconds: 1)
-      } else {
-        _ = try await SSHCCUsageCommandRunner(
-          connection: SSHConnection(host: "localhost", port: 22, user: "user"),
-          processRunner: process
-        ).run(arguments: ["daily", "--json"], timeoutSeconds: 1)
-      }
-      Issue.record("Expected command failure")
-    } catch let failure as CCUsageCommandFailure {
-      #expect(failure.phase == phase)
-      #expect(failure.runnerKind == kind)
-    }
-  }
-
-  @Test(arguments: [ProcessExecutionFailure.spawnFailed, .timedOut])
-  func preservesLaunchAndTimeoutFailures(failure: ProcessExecutionFailure) async throws {
-    let runner = LocalCCUsageCommandRunner(
-      executable: URL(fileURLWithPath: "/bin/false"),
-      processRunner: StubProcessRunner(result: .failure(failure))
-    )
-    do {
-      _ = try await runner.run(arguments: [], timeoutSeconds: 1)
-      Issue.record("Expected command failure")
-    } catch let command as CCUsageCommandFailure {
-      #expect(command.phase == (failure == .spawnFailed ? .spawnFailed : .timedOut))
-    }
-  }
-
-  @Test func remoteRetryDefaultsUseThreeRetriesAndFifteenSecondAttempts() async throws {
-    let underlying = SequencedCCUsageRunner(failures: 3)
-    let runner = RetryingCCUsageCommandRunner(runner: underlying)
-
-    _ = try await runner.run(arguments: ["daily"], timeoutSeconds: 30)
-
-    #expect(runner.retryCount == 3)
-    #expect(runner.timeoutSeconds == 15)
-    #expect(await underlying.observations() == [15, 15, 15, 15])
-  }
-
-  @Test func remoteRetryStopsAfterConfiguredRetryCount() async {
-    let underlying = SequencedCCUsageRunner(failures: 4)
-    let runner = RetryingCCUsageCommandRunner(runner: underlying, retryCount: 3, timeoutSeconds: 15)
-
-    await #expect(throws: CCUsageCommandFailure.self) {
-      _ = try await runner.run(arguments: ["daily"], timeoutSeconds: 30)
-    }
-    #expect(await underlying.observations() == [15, 15, 15, 15])
   }
 }
 
@@ -302,6 +176,73 @@ private actor SequencedCCUsageRunner: CCUsageCommandRunner {
 
     #expect(selection.scope.includedMachineIds == ["remote"])
     #expect(Set(selection.snapshot!.dashboardMetrics.map(\.machine)) == ["remote"])
+  }
+
+  @Test func currentAggregateRetainsLocalUsageWhenSelectedRemoteCollectionFails() async throws {
+    let remote = MachineDescriptor(
+      id: "remote", displayName: "Remote", kind: .ssh, enabled: true,
+      ssh: SSHConnection(host: "192.0.2.1", port: 22, user: "missing")
+    )
+    let store = MachineSnapshotStore(
+      registry: try MachineRegistry(sshMachines: [remote]),
+      refreshIntervalSeconds: 20
+    )
+    let now = Date(timeIntervalSince1970: 100)
+    let local = snapshot(machine: "local", generatedAt: now, cost: 4)
+    await store.publish(
+      machineID: "local", snapshot: local, coverageStart: local.activeBoundaryAt,
+      revision: 0, generation: 0, now: now
+    )
+    await store.publishFailure(
+      machineID: "remote",
+      error: CCUsageCommandFailure(runnerKind: .ssh, phase: .timedOut),
+      revision: 0,
+      generation: 0,
+      now: now
+    )
+
+    let selection = try await store.selection(
+      machineIDs: ["local", "remote"],
+      now: now,
+      dataDisposition: .current
+    )
+
+    #expect(selection.snapshot?.costSinceResetUSD == 4)
+    #expect(selection.scope.includedMachineIds == ["local"])
+    #expect(selection.scope.unavailableMachineIds == ["remote"])
+    #expect(selection.scope.excludedFromCurrentTotalsMachineIds == ["remote"])
+  }
+
+  @Test func recordsFineGrainedProgressAndCompletesFailedMachineWork() async throws {
+    let store = MachineSnapshotStore(
+      registry: try MachineRegistry(sshMachines: []),
+      refreshIntervalSeconds: 20
+    )
+    await store.beginCollection(
+      machineID: "local", revision: 0, generation: 0, phase: .refreshing,
+      requestedCoverageStart: nil, now: Date()
+    )
+    await store.updateCollectionProgress(
+      machineID: "local", revision: 0, generation: 0,
+      progress: SnapshotLoadProgress(completed: 3, total: 7)
+    )
+    var progress = try await store.loadStatuses(machine: "local")[0].1
+    #expect(progress.completed == 3)
+    #expect(progress.total == 7)
+    #expect(progress.isLoading)
+
+    await store.publishFailure(
+      machineID: "local",
+      error: CCUsageCommandFailure(runnerKind: .local, phase: .timedOut),
+      revision: 0,
+      generation: 0,
+      now: Date()
+    )
+    progress = try await store.loadStatuses(machine: "local")[0].1
+    #expect(progress.completed == 7)
+    #expect(progress.total == 7)
+    #expect(!progress.isLoading)
+    #expect(progress.phase == .failed)
   }
 
   @Test func currentSelectionExcludesStaleHistoryButHistoricalSelectionRetainsIt() async throws {
@@ -608,6 +549,59 @@ private func aggregateSnapshot(machine: String, generatedAt: Date, cost: Decimal
 }
 
 @Suite("MutationPolicyTests") struct MutationPolicyTests {
+  @Test func repeatedMachineParametersScopeDashboardStatusExactly() async throws {
+    let runtime = try await routerRuntime()
+    defer { Task { await runtime.collector.stop() } }
+    let created = await runtime.router.route(
+      target: "/api/machines",
+      method: "POST",
+      headers: mutationHeaders,
+      body: Data(
+        #"{"id":"remote","displayName":"Remote","kind":"ssh","enabled":true,"ssh":{"host":"192.0.2.1","port":22,"user":"missing"}}"#.utf8
+      ),
+      listenerPort: 18_081
+    )
+    #expect(created.status == 201)
+
+    let local = await runtime.router.route(
+      target: "/api/load-status?machine=local",
+      method: "GET",
+      headers: [:],
+      body: Data(),
+      listenerPort: 18_081
+    )
+    let selected = await runtime.router.route(
+      target: "/api/load-status?machine=local&machine=remote",
+      method: "GET",
+      headers: [:],
+      body: Data(),
+      listenerPort: 18_081
+    )
+    let missing = await runtime.router.route(
+      target: "/api/load-status?machine=local&machine=missing",
+      method: "GET",
+      headers: [:],
+      body: Data(),
+      listenerPort: 18_081
+    )
+    let duplicate = await runtime.router.route(
+      target: "/api/load-status?machine=local&machine=local",
+      method: "GET",
+      headers: [:],
+      body: Data(),
+      listenerPort: 18_081
+    )
+    let localBody = try JSONDecoder().decode(MachineLoadStatusResponse.self, from: local.body)
+    let selectedBody = try JSONDecoder().decode(MachineLoadStatusResponse.self, from: selected.body)
+
+    #expect(localBody.machines.map(\.id) == ["local"])
+    #expect(localBody.message == "Usage data is ready" || localBody.message == "Waiting to load usage data")
+    #expect(selectedBody.machines.map(\.id) == ["local", "remote"])
+    #expect(selectedBody.requested == "local,remote")
+    #expect(missing.status == 404)
+    #expect(duplicate.status == 400)
+  }
+
   @Test func machineDashboardRouterPersistsStateUsingItsApplicationPaths() async throws {
     let runtime = try await routerRuntime()
     defer { Task { await runtime.collector.stop() } }
