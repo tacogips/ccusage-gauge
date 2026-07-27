@@ -34,8 +34,12 @@ public actor MachineRegistryMutationOwner {
     defer { releaseTransaction() }
     try requireCoherentRuntime()
     let loaded = try store.load()
-    guard loaded.sshMachines != registry.sshMachines else { return (registry, false) }
-    let candidate = try MachineRegistry(sshMachines: loaded.sshMachines, revision: registry.revision + 1)
+    guard loaded.machines != registry.machines else { return (registry, false) }
+    let candidate = try MachineRegistry(
+      sshMachines: loaded.sshMachines,
+      localMachine: loaded.localMachine,
+      revision: registry.revision + 1
+    )
     do {
       try await runtime.reconcileRegistry(candidate)
       registry = candidate
@@ -73,7 +77,11 @@ public actor MachineRegistryMutationOwner {
       displayName: descriptor.displayName,
       kind: descriptor.kind,
       enabled: descriptor.enabled,
-      ssh: descriptor.ssh
+      ssh: descriptor.ssh,
+      codexSessionDirs: descriptor.codexSessionDirs,
+      claudeConfigDirs: descriptor.claudeConfigDirs,
+      includeDefaultCodexDir: descriptor.includeDefaultCodexDir,
+      includeDefaultClaudeDir: descriptor.includeDefaultClaudeDir
     ))
     let machines = registry.sshMachines.map { $0.id == id ? normalized : $0 }
     return (try await commit(machines), normalized)
@@ -83,7 +91,11 @@ public actor MachineRegistryMutationOwner {
     id: String,
     displayName: String?,
     enabled: Bool?,
-    ssh: SSHConnection?
+    ssh: SSHConnection?,
+    codexSessionDirs: MachinePatchField<[String]> = .omitted,
+    claudeConfigDirs: MachinePatchField<[String]> = .omitted,
+    includeDefaultCodexDir: MachinePatchField<Bool> = .omitted,
+    includeDefaultClaudeDir: MachinePatchField<Bool> = .omitted
   ) async throws -> (MachineRegistry, MachineDescriptor) {
     await acquireTransaction()
     defer { releaseTransaction() }
@@ -95,10 +107,38 @@ public actor MachineRegistryMutationOwner {
       displayName: displayName ?? existing.displayName,
       kind: .ssh,
       enabled: enabled ?? existing.enabled,
-      ssh: ssh ?? existing.ssh
+      ssh: ssh ?? existing.ssh,
+      codexSessionDirs: codexSessionDirs.value(or: existing.codexSessionDirs),
+      claudeConfigDirs: claudeConfigDirs.value(or: existing.claudeConfigDirs),
+      includeDefaultCodexDir: includeDefaultCodexDir.value(or: existing.includeDefaultCodexDir),
+      includeDefaultClaudeDir: includeDefaultClaudeDir.value(or: existing.includeDefaultClaudeDir)
     ))
     let machines = registry.sshMachines.map { $0.id == id ? normalized : $0 }
     return (try await commit(machines), normalized)
+  }
+
+  public func patchLocalSources(
+    codexSessionDirs: MachinePatchField<[String]>,
+    claudeConfigDirs: MachinePatchField<[String]>,
+    includeDefaultCodexDir: MachinePatchField<Bool>,
+    includeDefaultClaudeDir: MachinePatchField<Bool>
+  ) async throws -> (MachineRegistry, MachineDescriptor) {
+    await acquireTransaction()
+    defer { releaseTransaction() }
+    try requireCoherentRuntime()
+    let existing = registry.localMachine
+    let local = MachineDescriptor(
+      id: "local",
+      displayName: "Local",
+      kind: .local,
+      enabled: true,
+      codexSessionDirs: codexSessionDirs.value(or: existing.codexSessionDirs),
+      claudeConfigDirs: claudeConfigDirs.value(or: existing.claudeConfigDirs),
+      includeDefaultCodexDir: includeDefaultCodexDir.value(or: existing.includeDefaultCodexDir),
+      includeDefaultClaudeDir: includeDefaultClaudeDir.value(or: existing.includeDefaultClaudeDir)
+    )
+    try MachineValidation.validate(descriptor: local, allowSyntheticLocal: true)
+    return (try await commit(registry.sshMachines, localMachine: local), local)
   }
 
   public func delete(id: String) async throws -> MachineRegistry {
@@ -117,10 +157,17 @@ public actor MachineRegistryMutationOwner {
     return try await commit(machines)
   }
 
-  private func commit(_ machines: [MachineDescriptor]) async throws -> MachineRegistry {
+  private func commit(
+    _ machines: [MachineDescriptor],
+    localMachine: MachineDescriptor? = nil
+  ) async throws -> MachineRegistry {
     try requireCoherentRuntime()
     let previous = registry
-    let candidate = try MachineRegistry(sshMachines: machines, revision: previous.revision + 1)
+    let candidate = try MachineRegistry(
+      sshMachines: machines,
+      localMachine: localMachine ?? previous.localMachine,
+      revision: previous.revision + 1
+    )
     try store.save(candidate)
     do {
       try await runtime.reconcileRegistry(candidate)
@@ -173,7 +220,11 @@ public actor MachineRegistryMutationOwner {
       displayName: try MachineValidation.normalizedDisplayName(descriptor.displayName),
       kind: descriptor.kind,
       enabled: descriptor.enabled,
-      ssh: descriptor.ssh
+      ssh: descriptor.ssh,
+      codexSessionDirs: descriptor.codexSessionDirs,
+      claudeConfigDirs: descriptor.claudeConfigDirs,
+      includeDefaultCodexDir: descriptor.includeDefaultCodexDir,
+      includeDefaultClaudeDir: descriptor.includeDefaultClaudeDir
     )
     try MachineValidation.validate(descriptor: normalized)
     if let connection = normalized.ssh {

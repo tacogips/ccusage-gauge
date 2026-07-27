@@ -3,7 +3,7 @@ import Foundation
 public struct MachineDashboardRouter: Sendable {
   private let store: MachineSnapshotStore
   private let collector: MachineCollector
-  private let mutationOwner: MachineRegistryMutationOwner
+  let mutationOwner: MachineRegistryMutationOwner
   private let cacheCoordinator: MachineCacheClearCoordinator
   private let paths: AppPaths
   private let queryService: DashboardQueryService
@@ -483,34 +483,61 @@ public struct MachineDashboardRouter: Sendable {
       let result: (MachineRegistry, MachineDescriptor?)
       switch method {
       case "POST":
-        let request: MachineCreateRequest = try decodeBody(body, keys: ["id", "displayName", "kind", "enabled", "ssh"])
+        let request: MachineCreateRequest = try MachineRequestDecoder.decode(
+          body,
+          allowedKeys: Self.machineCreateKeys,
+          requiredKeys: ["id", "displayName", "kind", "enabled", "ssh"]
+        )
         let created = try await mutationOwner.create(MachineDescriptor(
           id: request.id,
           displayName: request.displayName,
           kind: request.kind,
           enabled: request.enabled,
-          ssh: request.ssh.connection
+          ssh: request.ssh.connection,
+          codexSessionDirs: request.codexSessionDirs,
+          claudeConfigDirs: request.claudeConfigDirs,
+          includeDefaultCodexDir: request.includeDefaultCodexDir,
+          includeDefaultClaudeDir: request.includeDefaultClaudeDir
         ))
         result = (created.0, created.1)
       case "PUT":
-        let request: MachineReplaceRequest = try decodeBody(body, keys: ["displayName", "kind", "enabled", "ssh"])
+        let request: MachineReplaceRequest = try MachineRequestDecoder.decode(
+          body,
+          allowedKeys: Self.machineReplaceKeys,
+          requiredKeys: ["displayName", "kind", "enabled", "ssh"]
+        )
         let replaced = try await mutationOwner.replace(id: id!, with: MachineDescriptor(
           id: id!,
           displayName: request.displayName,
           kind: request.kind,
           enabled: request.enabled,
-          ssh: request.ssh.connection
+          ssh: request.ssh.connection,
+          codexSessionDirs: request.codexSessionDirs,
+          claudeConfigDirs: request.claudeConfigDirs,
+          includeDefaultCodexDir: request.includeDefaultCodexDir,
+          includeDefaultClaudeDir: request.includeDefaultClaudeDir
         ))
         result = (replaced.0, replaced.1)
       case "PATCH":
-        let request: MachinePatchRequest = try decodeBody(body, keys: ["displayName", "enabled", "ssh"], exact: false)
-        guard !request.isEmpty else { throw MachineBodyError.invalid }
-        let patched = try await mutationOwner.patch(
-          id: id!,
-          displayName: request.displayName,
-          enabled: request.enabled,
-          ssh: request.ssh?.connection
+        let request: MachinePatchRequest = try MachineRequestDecoder.decode(
+          body,
+          allowedKeys: Self.machinePatchKeys
         )
+        guard !request.isEmpty else { throw MachineBodyError.invalid }
+        let patched = if id == "local" {
+          try await patchLocal(request)
+        } else {
+          try await mutationOwner.patch(
+            id: id!,
+            displayName: request.displayName,
+            enabled: request.enabled,
+            ssh: request.ssh?.connection,
+            codexSessionDirs: request.codexSessionDirs,
+            claudeConfigDirs: request.claudeConfigDirs,
+            includeDefaultCodexDir: request.includeDefaultCodexDir,
+            includeDefaultClaudeDir: request.includeDefaultClaudeDir
+          )
+        }
         result = (patched.0, patched.1)
       case "DELETE":
         result = (try await mutationOwner.delete(id: id!), nil)
@@ -841,50 +868,6 @@ public struct MachineDashboardRouter: Sendable {
     components.queryItems?.first(where: { $0.name == name })?.value
   }
 
-  private func decodeBody<T: Decodable>(
-    _ body: Data,
-    keys: Set<String>,
-    exact: Bool = true
-  ) throws -> T {
-    guard body.count <= 65_536,
-          let object = try JSONSerialization.jsonObject(with: body) as? [String: Any],
-          Set(object.keys).isSubset(of: keys), !exact || Set(object.keys) == keys else {
-      throw MachineBodyError.invalid
-    }
-    if let ssh = object["ssh"] as? [String: Any] {
-      let allowed = Set(["host", "port", "user", "identityFile", "extraOptions", "proxy", "remoteCcusagePath"])
-      let required = Set(["host", "port", "user"])
-      guard Set(ssh.keys).isSubset(of: allowed), required.isSubset(of: Set(ssh.keys)),
-            ssh["identityFile"] is NSNull == false,
-            ssh["proxy"] is NSNull == false else {
-        throw MachineBodyError.invalid
-      }
-      if let proxy = ssh["proxy"] as? [String: Any] {
-        guard let kind = proxy["kind"] as? String else { throw MachineBodyError.invalid }
-        let proxyKeys = Set(proxy.keys)
-        switch kind {
-        case "direct":
-          guard proxyKeys == ["kind"] else { throw MachineBodyError.invalid }
-        case "jump":
-          let required = Set(["kind", "host", "port", "user"])
-          guard required.isSubset(of: proxyKeys),
-                proxyKeys.isSubset(of: required.union(["identityFile", "knownHostsFile"])),
-                proxy["identityFile"] is NSNull == false,
-                proxy["knownHostsFile"] is NSNull == false else {
-            throw MachineBodyError.invalid
-          }
-        case "command":
-          guard proxyKeys == ["kind", "executable"] else { throw MachineBodyError.invalid }
-        default:
-          throw MachineBodyError.invalid
-        }
-      } else if ssh.keys.contains("proxy") {
-        throw MachineBodyError.invalid
-      }
-    }
-    return try JSONDecoder().decode(T.self, from: body)
-  }
-
   private func jsonWithScope<T: Encodable & ScopedDashboardResponse>(_ value: T, scope: DashboardScope) -> HTTPResponse {
     // Single-pass encoding: attach `scope` to the DTO and let `JSONEncoder` emit it as a sibling
     // key, avoiding the earlier encode -> JSONSerialization -> re-serialize round-trip.
@@ -993,5 +976,3 @@ public struct MachineDashboardRouter: Sendable {
     return formatter.string(from: date)
   }
 }
-
-private enum MachineBodyError: Error { case invalid }

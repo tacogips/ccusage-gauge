@@ -69,12 +69,13 @@ unusable persistence path fail startup before the listener or pollers start;
 there is no entry quarantine or synthetic-local fallback for a present invalid
 file. Recovery is to stop the service, repair or intentionally remove the file,
 and restart.
-The persisted document is the closed version-2 `schemaVersion`/`machines`
-envelope from the remote-machine design. An exact valid version-1 document is
+The persisted document is the closed version-3
+`schemaVersion`/`localSessionSources`/`machines` envelope from the
+session-source design. Exact valid version-1 and version-2 documents are
 atomically migrated before listener or poller startup; migration failure keeps
 the original bytes and fails startup. Missing or unsupported versions and
-duplicate or unknown fields fail closed; API defaults are normalized before the
-canonical SSH-only version-2 document is written.
+duplicate or unknown fields fail closed; API defaults are normalized before
+the canonical version-3 document is written.
 
 One serialized registry owner validates and stages the complete candidate,
 synchronizes an atomic mode-`0600` save, reconciles the affected poller

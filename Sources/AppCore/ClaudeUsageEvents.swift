@@ -62,18 +62,27 @@ actor TimestampedUsageEventLoadCoordinator {
 }
 
 public struct ClaudeUsageEventLoader: Sendable {
-  public let roots: [URL]
+  private let rootProvider: @Sendable () -> [URL]
+  public var roots: [URL] { rootProvider() }
 
-  public init(roots: [URL]) { self.roots = roots }
+  public init(roots: [URL]) {
+    rootProvider = { roots }
+  }
+
+  public init(rootProvider: @escaping @Sendable () -> [URL]) {
+    self.rootProvider = rootProvider
+  }
 
   public static func production(
+    descriptor: MachineDescriptor = .local,
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) -> ClaudeUsageEventLoader {
-    let home = URL(fileURLWithPath: environment["HOME"] ?? NSHomeDirectory(), isDirectory: true)
-    let claudeRoot = environment["CLAUDE_CONFIG_DIR"].map {
-      URL(fileURLWithPath: $0, isDirectory: true)
-    } ?? home.appendingPathComponent(".claude", isDirectory: true)
-    return ClaudeUsageEventLoader(roots: [claudeRoot.appendingPathComponent("projects", isDirectory: true)])
+    ClaudeUsageEventLoader {
+      (MachineSessionSourceAttempt.plan ?? MachineSessionSourcePlan(
+        descriptor: descriptor,
+        environment: environment
+      )).eventRoots(for: .claude)
+    }
   }
 
   public func events(
@@ -81,7 +90,7 @@ public struct ClaudeUsageEventLoader: Sendable {
     until: String?,
     calendar: Calendar
   ) async throws -> [TimestampedUsageEvent] {
-    let roots = roots
+    let roots = rootProvider()
     return try await Task.detached(priority: .utility) {
       try Self.loadEvents(roots: roots, since: since, until: until, calendar: calendar)
     }.value

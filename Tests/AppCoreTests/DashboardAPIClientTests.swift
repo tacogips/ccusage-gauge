@@ -86,11 +86,47 @@ struct DashboardAPIClientTests {
     #expect(request.headers["X-CCUsage-Gauge-Mutation"] == "1")
     let body = try #require(request.body)
     let object = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+    // Default-valued session-source fields are omitted so the request keeps
+    // the exact key set accepted by pre-session-source servers.
     #expect(Set(object.keys) == ["id", "displayName", "kind", "enabled", "ssh"])
     #expect(object["kind"] as? String == "ssh")
     let ssh = try #require(object["ssh"] as? [String: Any])
     // identityFile is omitted (never null) when no identity file is provided.
     #expect(Set(ssh.keys) == ["host", "port", "user", "extraOptions", "remoteCcusagePath"])
+  }
+
+  @Test func machineAddEncodesNonDefaultSessionSourceFields() async throws {
+    let recorder = RequestRecorder()
+    let responseBody = #"""
+    {"id":"remote","displayName":"Remote","kind":"ssh","enabled":true,
+     "ssh":{"host":"example.com","port":22,"user":"ccusage","extraOptions":[],"remoteCcusagePath":"ccusage"}}
+    """#
+    let api = client(recorder: recorder, status: 201, body: responseBody)
+    let payload = MachineCreatePayload(
+      id: "remote",
+      displayName: "Remote",
+      enabled: true,
+      ssh: MachineCreatePayload.SSHPayload(
+        host: "example.com",
+        port: 22,
+        user: "ccusage",
+        identityFile: nil,
+        extraOptions: [],
+        remoteCcusagePath: "ccusage"
+      ),
+      codexSessionDirs: ["/srv/codex-a", "/srv/codex-b"],
+      includeDefaultCodexDir: false
+    )
+    _ = try await api.machineAdd(payload)
+    let request = try #require(recorder.requests.first)
+    let body = try #require(request.body)
+    let object = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+    #expect(Set(object.keys) == [
+      "id", "displayName", "kind", "enabled", "ssh",
+      "codexSessionDirs", "includeDefaultCodexDir"
+    ])
+    #expect(object["codexSessionDirs"] as? [String] == ["/srv/codex-a", "/srv/codex-b"])
+    #expect(object["includeDefaultCodexDir"] as? Bool == false)
   }
 
   @Test func machineAddEncodesIdentityFilePathWhenPresent() async throws {
@@ -121,6 +157,32 @@ struct DashboardAPIClientTests {
     let ssh = object?["ssh"] as? [String: Any]
     #expect(ssh?["identityFile"] as? String == "/tmp/ccusage-gauge-test-id")
     #expect(ssh?["port"] as? Int == 2200)
+  }
+
+  @Test func machineUpdateSendsTriStateSourcePatchAndMutationHeaders() async throws {
+    let recorder = RequestRecorder()
+    let response = #"""
+      {"id":"local","displayName":"Local","kind":"local","enabled":true,
+       "codexSessionDirs":[],"claudeConfigDirs":["/srv/claude"],
+       "includeDefaultCodexDir":false,"includeDefaultClaudeDir":true}
+      """#
+    let api = client(recorder: recorder, status: 200, body: response)
+    _ = try await api.machineUpdate(
+      id: "local",
+      payload: MachineSourcePatchPayload(
+        codexSessionDirs: [],
+        claudeConfigDirs: ["/srv/claude"],
+        includeDefaultCodexDir: false
+      )
+    )
+    let request = try #require(recorder.requests.first)
+    #expect(request.method == "PATCH")
+    #expect(request.url.path == "/api/machines/local")
+    #expect(request.headers["X-CCUsage-Gauge-Mutation"] == "1")
+    let body = try #require(request.body)
+    let object = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+    #expect(Set(object.keys) == ["codexSessionDirs", "claudeConfigDirs", "includeDefaultCodexDir"])
+    #expect(object["includeDefaultClaudeDir"] == nil)
   }
 
   @Test func preservesRawBodyAndDecodesScope() async throws {

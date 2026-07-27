@@ -102,6 +102,21 @@ public struct DashboardAPIClient: Sendable {
   }
 
   public func machineAdd(_ payload: MachineCreatePayload) async throws -> DashboardAPIResponse<MachineDescriptor> {
+    try await machineMutation(method: "POST", path: "/api/machines", payload: payload)
+  }
+
+  public func machineUpdate(
+    id: String,
+    payload: MachineSourcePatchPayload
+  ) async throws -> DashboardAPIResponse<MachineDescriptor> {
+    try await machineMutation(method: "PATCH", path: "/api/machines/\(id)", payload: payload)
+  }
+
+  private func machineMutation<Payload: Encodable>(
+    method: String,
+    path: String,
+    payload: Payload
+  ) async throws -> DashboardAPIResponse<MachineDescriptor> {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     let body: Data
@@ -110,7 +125,7 @@ public struct DashboardAPIClient: Sendable {
     } catch {
       throw DashboardClientError.decoding(String(describing: error))
     }
-    let response = try await perform(method: "POST", path: "/api/machines", query: [], body: body, mutation: true)
+    let response = try await perform(method: method, path: path, query: [], body: body, mutation: true)
     return try decode(response)
   }
 

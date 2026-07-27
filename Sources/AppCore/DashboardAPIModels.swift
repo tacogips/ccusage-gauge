@@ -80,18 +80,69 @@ public struct MachineCreatePayload: Encodable, Sendable {
   public let kind: MachineKind
   public let enabled: Bool
   public let ssh: MachineCreateSSHPayload
+  public let codexSessionDirs: [String]
+  public let claudeConfigDirs: [String]
+  public let includeDefaultCodexDir: Bool
+  public let includeDefaultClaudeDir: Bool
 
   public init(
     id: String,
     displayName: String,
     enabled: Bool,
-    ssh: MachineCreateSSHPayload
+    ssh: MachineCreateSSHPayload,
+    codexSessionDirs: [String] = [],
+    claudeConfigDirs: [String] = [],
+    includeDefaultCodexDir: Bool = true,
+    includeDefaultClaudeDir: Bool = true
   ) {
     self.id = id
     self.displayName = displayName
     kind = .ssh
     self.enabled = enabled
     self.ssh = ssh
+    self.codexSessionDirs = codexSessionDirs
+    self.claudeConfigDirs = claudeConfigDirs
+    self.includeDefaultCodexDir = includeDefaultCodexDir
+    self.includeDefaultClaudeDir = includeDefaultClaudeDir
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, displayName, kind, enabled, ssh
+    case codexSessionDirs, claudeConfigDirs, includeDefaultCodexDir, includeDefaultClaudeDir
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(displayName, forKey: .displayName)
+    try container.encode(kind, forKey: .kind)
+    try container.encode(enabled, forKey: .enabled)
+    try container.encode(ssh, forKey: .ssh)
+    // Default-valued session-source fields are omitted so requests keep the
+    // exact key set accepted by pre-session-source servers.
+    if !codexSessionDirs.isEmpty { try container.encode(codexSessionDirs, forKey: .codexSessionDirs) }
+    if !claudeConfigDirs.isEmpty { try container.encode(claudeConfigDirs, forKey: .claudeConfigDirs) }
+    if !includeDefaultCodexDir { try container.encode(includeDefaultCodexDir, forKey: .includeDefaultCodexDir) }
+    if !includeDefaultClaudeDir { try container.encode(includeDefaultClaudeDir, forKey: .includeDefaultClaudeDir) }
+  }
+}
+
+public struct MachineSourcePatchPayload: Encodable, Sendable {
+  public let codexSessionDirs: [String]?
+  public let claudeConfigDirs: [String]?
+  public let includeDefaultCodexDir: Bool?
+  public let includeDefaultClaudeDir: Bool?
+
+  public init(
+    codexSessionDirs: [String]? = nil,
+    claudeConfigDirs: [String]? = nil,
+    includeDefaultCodexDir: Bool? = nil,
+    includeDefaultClaudeDir: Bool? = nil
+  ) {
+    self.codexSessionDirs = codexSessionDirs
+    self.claudeConfigDirs = claudeConfigDirs
+    self.includeDefaultCodexDir = includeDefaultCodexDir
+    self.includeDefaultClaudeDir = includeDefaultClaudeDir
   }
 }
 

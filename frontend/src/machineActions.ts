@@ -1,4 +1,4 @@
-import type { MachineRefreshResponse } from "./api";
+import { DashboardRequestError, type MachineRefreshResponse } from "./api";
 
 export interface MachineActionDiagnostic {
   message: string;
@@ -40,5 +40,24 @@ export function refreshDiagnostic(result: MachineRefreshResponse): MachineAction
   return {
     message: `${result.diagnostic?.message ?? "Refresh failed."} ${result.diagnostic?.remediation ?? ""}`.trim(),
     failed: true,
+  };
+}
+
+export function machineSaveErrors(error: unknown): {
+  fieldErrors: Record<string, string>;
+  message: string;
+} {
+  if (error instanceof DashboardRequestError) {
+    const payload = error.payload as { error?: { fieldErrors?: Record<string, string> } };
+    const fieldErrors = payload.error?.fieldErrors ?? {};
+    const details = Object.entries(fieldErrors).map(([field, message]) => `${field}: ${message}`).join(" ");
+    return {
+      fieldErrors,
+      message: details.length === 0 ? error.message : `Correct the highlighted fields. ${details}`,
+    };
+  }
+  return {
+    fieldErrors: {},
+    message: error instanceof Error ? error.message : "Machine save failed.",
   };
 }

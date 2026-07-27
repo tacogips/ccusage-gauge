@@ -8,6 +8,7 @@ private struct CacheMetadata {
   let updatedAt: Date
   let cachedFrom: String?
   let cachedThrough: String
+  let sourceConfigurationFingerprint: String?
 }
 
 public struct AggregationCachePayload: Equatable, Sendable {
@@ -18,6 +19,7 @@ public struct AggregationCachePayload: Equatable, Sendable {
   public let metrics: [CCUsageMetricRecord]
   public let sessions: [CCUsageSessionMetricRecord]
   public let coveredRanges: [AggregationCacheRange]
+  public let sourceConfigurationFingerprint: String?
 
   public init(
     createdAt: Date,
@@ -26,7 +28,8 @@ public struct AggregationCachePayload: Equatable, Sendable {
     cachedThrough: String,
     metrics: [CCUsageMetricRecord],
     sessions: [CCUsageSessionMetricRecord],
-    coveredRanges: [AggregationCacheRange]? = nil
+    coveredRanges: [AggregationCacheRange]? = nil,
+    sourceConfigurationFingerprint: String? = nil
   ) {
     self.createdAt = createdAt
     self.updatedAt = updatedAt
@@ -35,6 +38,7 @@ public struct AggregationCachePayload: Equatable, Sendable {
     self.metrics = metrics
     self.sessions = sessions
     self.coveredRanges = coveredRanges ?? [AggregationCacheRange(since: cachedFrom, through: cachedThrough)]
+    self.sourceConfigurationFingerprint = sourceConfigurationFingerprint
   }
 }
 
@@ -58,12 +62,18 @@ public struct AggregationCacheJob: Equatable, Hashable, Sendable {
   }
 }
 
+public enum AggregationCacheSourcePlanError: Error, Equatable, Sendable {
+  case staleGeneration
+}
+
 public actor UsageAggregationCache {
   public let fileURL: URL
   public let retentionDays: Int
   public let machineID: String
   private let fileManager: FileManager
   private var memoryPayload: AggregationCachePayload?
+  private var expectedSourceConfigurationFingerprint: String?
+  private var sourceGeneration: UInt64 = 0
 
   public init(
     fileURL: URL,
@@ -77,24 +87,47 @@ public actor UsageAggregationCache {
     self.fileManager = fileManager
   }
 
-  public func load(now: Date = Date()) -> AggregationCachePayload? {
+  public func beginSourceAttempt(sourceConfigurationFingerprint: String) -> UInt64 {
+    if expectedSourceConfigurationFingerprint != sourceConfigurationFingerprint {
+      sourceGeneration &+= 1
+      expectedSourceConfigurationFingerprint = sourceConfigurationFingerprint
+    }
+    return sourceGeneration
+  }
+
+  public func load(
+    now: Date = Date(),
+    sourceConfigurationFingerprint: String? = nil
+  ) -> AggregationCachePayload? {
+    if let sourceConfigurationFingerprint {
+      _ = beginSourceAttempt(sourceConfigurationFingerprint: sourceConfigurationFingerprint)
+    }
     guard retentionDays > 0 else { return nil }
     if let memoryPayload {
+      guard fingerprintMatches(memoryPayload, expected: sourceConfigurationFingerprint) else {
+        purge()
+        return nil
+      }
       guard isRetained(memoryPayload, now: now) else {
         purge()
         return nil
       }
-      return memoryPayload
+      return adoptLegacyFingerprintIfNeeded(memoryPayload, expected: sourceConfigurationFingerprint)
     }
     guard fileManager.fileExists(atPath: fileURL.path) else { return nil }
     do {
       let payload = try readDatabase()
+      guard fingerprintMatches(payload, expected: sourceConfigurationFingerprint) else {
+        purge()
+        return nil
+      }
       guard isRetained(payload, now: now) else {
         purge()
         return nil
       }
-      memoryPayload = payload
-      return payload
+      let adopted = adoptLegacyFingerprintIfNeeded(payload, expected: sourceConfigurationFingerprint)
+      memoryPayload = adopted
+      return adopted
     } catch {
       purge()
       return nil
@@ -108,7 +141,8 @@ public actor UsageAggregationCache {
     cachedThrough: String,
     createdAt: Date? = nil,
     now: Date = Date(),
-    coveredRanges: [AggregationCacheRange]? = nil
+    coveredRanges: [AggregationCacheRange]? = nil,
+    sourceConfigurationFingerprint: String? = nil
   ) throws {
     let payload = AggregationCachePayload(
       createdAt: createdAt ?? now,
@@ -117,7 +151,8 @@ public actor UsageAggregationCache {
       cachedThrough: cachedThrough,
       metrics: metrics,
       sessions: sessions,
-      coveredRanges: coveredRanges
+      coveredRanges: coveredRanges,
+      sourceConfigurationFingerprint: sourceConfigurationFingerprint ?? expectedSourceConfigurationFingerprint
     )
     try fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
     try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fileURL.deletingLastPathComponent().path)
@@ -131,9 +166,17 @@ public actor UsageAggregationCache {
     sessions: [CCUsageSessionMetricRecord],
     coveredRange: AggregationCacheRange,
     calendar: Calendar = .current,
-    now: Date = Date()
+    now: Date = Date(),
+    sourceConfigurationFingerprint: String? = nil,
+    sourceGeneration: UInt64? = nil
   ) throws {
-    let current = load(now: now)
+    if let sourceConfigurationFingerprint {
+      guard expectedSourceConfigurationFingerprint == sourceConfigurationFingerprint,
+            sourceGeneration == nil || sourceGeneration == self.sourceGeneration else {
+        throw AggregationCacheSourcePlanError.staleGeneration
+      }
+    }
+    let current = load(now: now, sourceConfigurationFingerprint: expectedSourceConfigurationFingerprint)
     let retainedMetrics = (current?.metrics ?? []).filter {
       $0.date < coveredRange.since || $0.date > coveredRange.through
     }
@@ -151,7 +194,8 @@ public actor UsageAggregationCache {
       cachedThrough: cachedThrough,
       createdAt: current?.createdAt,
       now: now,
-      coveredRanges: ranges
+      coveredRanges: ranges,
+      sourceConfigurationFingerprint: expectedSourceConfigurationFingerprint
     )
   }
 
@@ -227,7 +271,8 @@ public actor UsageAggregationCache {
       cachedThrough: metadata.cachedThrough,
       metrics: metrics,
       sessions: sessions,
-      coveredRanges: try readCoveredRanges(from: database, fallback: metadata)
+      coveredRanges: try readCoveredRanges(from: database, fallback: metadata),
+      sourceConfigurationFingerprint: metadata.sourceConfigurationFingerprint
     )
   }
 
@@ -271,7 +316,8 @@ public actor UsageAggregationCache {
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL,
         cached_from TEXT,
-        cached_through TEXT NOT NULL
+        cached_through TEXT NOT NULL,
+        source_configuration_fingerprint TEXT
       );
       CREATE TABLE IF NOT EXISTS daily_metrics (
         date TEXT NOT NULL,
@@ -310,6 +356,9 @@ public actor UsageAggregationCache {
     if try !hasColumn("cached_from", in: "cache_metadata", database: database) {
       try execute("ALTER TABLE cache_metadata ADD COLUMN cached_from TEXT", in: database)
     }
+    if try !hasColumn("source_configuration_fingerprint", in: "cache_metadata", database: database) {
+      try execute("ALTER TABLE cache_metadata ADD COLUMN source_configuration_fingerprint TEXT", in: database)
+    }
   }
 
   private func readCoveredRanges(
@@ -336,7 +385,7 @@ public actor UsageAggregationCache {
 
   private func readMetadata(from database: OpaquePointer) throws -> CacheMetadata {
     let statement = try prepare(
-      "SELECT created_at, updated_at, cached_from, cached_through FROM cache_metadata LIMIT 1",
+      "SELECT created_at, updated_at, cached_from, cached_through, source_configuration_fingerprint FROM cache_metadata LIMIT 1",
       in: database
     )
     defer { sqlite3_finalize(statement) }
@@ -345,7 +394,8 @@ public actor UsageAggregationCache {
       createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 0)),
       updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
       cachedFrom: optionalText(statement, column: 2),
-      cachedThrough: try text(statement, column: 3)
+      cachedThrough: try text(statement, column: 3),
+      sourceConfigurationFingerprint: optionalText(statement, column: 4)
     )
   }
 
@@ -409,7 +459,11 @@ public actor UsageAggregationCache {
 
   private func insertMetadata(_ payload: AggregationCachePayload, into database: OpaquePointer) throws {
     let statement = try prepare(
-      "INSERT INTO cache_metadata(created_at, updated_at, cached_from, cached_through) VALUES (?, ?, ?, ?)",
+      """
+      INSERT INTO cache_metadata(
+        created_at, updated_at, cached_from, cached_through, source_configuration_fingerprint
+      ) VALUES (?, ?, ?, ?, ?)
+      """,
       in: database
     )
     defer { sqlite3_finalize(statement) }
@@ -417,6 +471,11 @@ public actor UsageAggregationCache {
     sqlite3_bind_double(statement, 2, payload.updatedAt.timeIntervalSince1970)
     try bind(payload.cachedFrom, to: 3, in: statement)
     try bind(payload.cachedThrough, to: 4, in: statement)
+    if let fingerprint = payload.sourceConfigurationFingerprint {
+      try bind(fingerprint, to: 5, in: statement)
+    } else {
+      sqlite3_bind_null(statement, 5)
+    }
     try stepDone(statement)
   }
 
@@ -533,6 +592,36 @@ public actor UsageAggregationCache {
 
   private func isRetained(_ payload: AggregationCachePayload, now: Date) -> Bool {
     now.timeIntervalSince(payload.createdAt) < TimeInterval(retentionDays) * 86_400
+  }
+
+  private func fingerprintMatches(
+    _ payload: AggregationCachePayload,
+    expected: String?
+  ) -> Bool {
+    guard let expected else { return true }
+    // Pre-upgrade caches carry no fingerprint; they are adopted, not purged.
+    guard let stored = payload.sourceConfigurationFingerprint else { return true }
+    return stored == expected
+  }
+
+  private func adoptLegacyFingerprintIfNeeded(
+    _ payload: AggregationCachePayload,
+    expected: String?
+  ) -> AggregationCachePayload {
+    guard let expected, payload.sourceConfigurationFingerprint == nil else { return payload }
+    let adopted = AggregationCachePayload(
+      createdAt: payload.createdAt,
+      updatedAt: payload.updatedAt,
+      cachedFrom: payload.cachedFrom,
+      cachedThrough: payload.cachedThrough,
+      metrics: payload.metrics,
+      sessions: payload.sessions,
+      coveredRanges: payload.coveredRanges,
+      sourceConfigurationFingerprint: expected
+    )
+    memoryPayload = adopted
+    try? writeDatabase(adopted)
+    return adopted
   }
 
   private static func normalizedRanges(_ ranges: [AggregationCacheRange]) -> [AggregationCacheRange] {

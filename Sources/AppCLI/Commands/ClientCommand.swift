@@ -13,11 +13,12 @@ struct ClientCommand: ParsableCommand {
 struct MachinesCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "machines",
-    abstract: "List, show, add, test, and refresh machines.",
+    abstract: "List, show, add, update, test, and refresh machines.",
     subcommands: [
       MachinesListCommand.self,
       MachinesShowCommand.self,
       MachinesAddCommand.self,
+      MachinesUpdateCommand.self,
       MachinesTestConnectionCommand.self,
       MachinesRefreshCommand.self
     ]

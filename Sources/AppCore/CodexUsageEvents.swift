@@ -1,18 +1,27 @@
 import Foundation
 
 public struct CodexUsageEventLoader: Sendable {
-  public let roots: [URL]
+  private let rootProvider: @Sendable () -> [URL]
+  public var roots: [URL] { rootProvider() }
 
-  public init(roots: [URL]) { self.roots = roots }
+  public init(roots: [URL]) {
+    rootProvider = { roots }
+  }
+
+  public init(rootProvider: @escaping @Sendable () -> [URL]) {
+    self.rootProvider = rootProvider
+  }
 
   public static func production(
+    descriptor: MachineDescriptor = .local,
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) -> CodexUsageEventLoader {
-    let home = URL(fileURLWithPath: environment["HOME"] ?? NSHomeDirectory(), isDirectory: true)
-    let codexRoot = environment["CODEX_HOME"].map {
-      URL(fileURLWithPath: $0, isDirectory: true)
-    } ?? home.appendingPathComponent(".codex", isDirectory: true)
-    return CodexUsageEventLoader(roots: [codexRoot.appendingPathComponent("sessions", isDirectory: true)])
+    CodexUsageEventLoader {
+      (MachineSessionSourceAttempt.plan ?? MachineSessionSourcePlan(
+        descriptor: descriptor,
+        environment: environment
+      )).eventRoots(for: .codex)
+    }
   }
 
   public func events(
@@ -20,7 +29,7 @@ public struct CodexUsageEventLoader: Sendable {
     until: String?,
     calendar: Calendar
   ) async throws -> [TimestampedUsageEvent] {
-    let roots = roots
+    let roots = rootProvider()
     return try await Task.detached(priority: .utility) {
       try Self.loadEvents(roots: roots, since: since, until: until, calendar: calendar)
     }.value

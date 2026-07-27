@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { runMachineRefreshLifecycle, type MachineActionDiagnostic } from "../src/machineActions";
-import type { MachineRefreshResponse } from "../src/api";
+import { machineSaveErrors, runMachineRefreshLifecycle, type MachineActionDiagnostic } from "../src/machineActions";
+import { DashboardRequestError, type MachineRefreshResponse } from "../src/api";
 
 const response = (status: "ok" | "failed"): MachineRefreshResponse => ({
   status,
@@ -63,5 +63,26 @@ describe("machine refresh lifecycle", () => {
 
     expect(diagnostic).toEqual({ message: "Refresh completed.", failed: false });
     expect(settled).toBe(true);
+  });
+});
+
+describe("machine save errors", () => {
+  test("preserves indexed server field errors", () => {
+    const result = machineSaveErrors(new DashboardRequestError(
+      422,
+      "Machine validation failed",
+      { error: { fieldErrors: { "codexSessionDirs[1]": "invalid path" } } },
+    ));
+    expect(result.fieldErrors).toEqual({ "codexSessionDirs[1]": "invalid path" });
+    expect(result.message).toBe("Correct the highlighted fields. codexSessionDirs[1]: invalid path");
+  });
+
+  test("keeps unmapped server field errors visible in the form alert", () => {
+    const result = machineSaveErrors(new DashboardRequestError(
+      422,
+      "Machine validation failed",
+      { error: { fieldErrors: { unexpectedSourceField: "invalid value" } } },
+    ));
+    expect(result.message).toContain("unexpectedSourceField: invalid value");
   });
 });

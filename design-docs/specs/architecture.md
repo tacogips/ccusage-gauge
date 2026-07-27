@@ -11,8 +11,11 @@ Swift domain services. It periodically invokes the installed `ccusage` CLI,
 shows cost since the active reset boundary, and optionally serves a dashboard
 from `127.0.0.1`.
 
-`ccusage` v20.0.17-compatible JSON output is the sole usage source. The product
-must not read or interpret Claude usage JSONL directly. Static configuration and
+`ccusage` v20.0.17-compatible aggregate JSON remains the historical usage
+source. Host-local Codex and Claude JSONL event readers may supply recent
+timestamped session detail for reconciliation, but do not replace the aggregate
+source. Per-machine source-root selection follows
+`design-machine-session-source-directories.md`. Static configuration and
 mutable user state have separate ownership and storage locations.
 
 ## Target Boundaries
@@ -228,6 +231,13 @@ are passed to `Process`; no shell command interpolation is used. A nonzero exit,
 timeout, invalid JSON, or unsupported payload is a typed error suitable for UI
 guidance and HTTP error mapping.
 
+Each machine owns a validated Codex/Claude source plan. Local event loading
+merges selected scan roots by stable event identity. SSH collection uses the
+fixed positional adapter and per-agent environment isolation defined in
+`design-machine-session-source-directories.md`; configured paths can select
+data roots but can never add executables, arguments, environment names, or
+shell fragments.
+
 Decoders follow the ccusage 20.0.17+ `blocks --json`, `daily --json`, and
 `session --json` shapes. Detailed daily loading first accepts the flag-free
 ccusage 20.1+ shape, then falls back to and caches the 20.0.17
@@ -442,14 +452,14 @@ fail-closed: only an absent file means an empty SSH registry; unsafe
 ownership/type/permissions, malformed JSON, invalid descriptors, or an unsafe
 persistence path fail service startup without quarantine or local-only fallback.
 Recovery requires an offline correction or intentional removal of the file.
-The current persisted representation is the dedicated design's closed
-version-2 `schemaVersion` plus `machines` envelope. The exact existing
-version-1 representation is accepted only as a migration source and is
-atomically rewritten to version 2 with direct-by-omission proxy semantics before
-registry publication or poller startup. Migration failure preserves the
-version-1 bytes and fails startup. Both versions store SSH descriptors only and
-reject unknown or duplicate fields; there is no implicit unversioned or
-unknown-field compatibility.
+The current persisted representation is the session-source design's closed
+version-3 `schemaVersion`, `localSessionSources`, and `machines` envelope.
+Exact version-1 and version-2 representations are accepted only as migration
+sources and are atomically rewritten to version 3 before registry publication
+or poller startup. Migration failure preserves the source bytes and fails
+startup. Persisted `machines` remain SSH-only; local source settings live in
+the dedicated top-level object. Every version rejects unknown or duplicate
+fields; there is no implicit unversioned or unknown-field compatibility.
 Machine ids are immutable, unique safe slugs; `local` cannot be disabled,
 replaced, or deleted. SSH host, user, port, identity path reference, extra
 options, and remote executable are validated before use. Process arguments are
@@ -609,10 +619,10 @@ fallback.
 - Aggregate tests must prove block/timeline, metric, session, and serialized
   response-row provenance and totals without double counting across machine
   snapshots.
-- Registry tests must prove exact version-1 source and version-2 current
-  envelopes, atomic one-way migration, migration-failure preservation,
-  normalized persisted defaults, deterministic ordering, and fail-closed
-  unknown/version behavior.
+- Registry tests must prove exact version-1/version-2 migration sources and the
+  version-3 current envelope, atomic one-way migration, migration-failure
+  preservation, normalized persisted defaults, deterministic ordering, and
+  fail-closed unknown/version behavior.
 - Cache-clear tests must prove per-machine atomicity, cross-machine partial
   results, rollback/store/poller rules, and recovery before and after logical
   publication of an empty cache.

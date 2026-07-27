@@ -1,9 +1,10 @@
 import Foundation
 
 public actor MachineSnapshotStore {
-  private var entries: [String: MachineSnapshotEntry] = [:]
+  var entries: [String: MachineSnapshotEntry] = [:]
+  var sourceIdentities: [String: MachineCollectionSourceIdentity] = [:]
   private var registryRevision: UInt64
-  private let calendar: Calendar
+  let calendar: Calendar
 
   /// Identity of one included snapshot in a merge: republishing, clearing, or replacing the
   /// registry mutates `generatedAt` or the entry set, so the composite key naturally changes.
@@ -52,8 +53,11 @@ public actor MachineSnapshotStore {
 
   public func replaceRegistry(_ registry: MachineRegistry, generations: [String: UInt64]) {
     var next: [String: MachineSnapshotEntry] = [:]
+    var nextSourceIdentities: [String: MachineCollectionSourceIdentity] = [:]
     for descriptor in registry.machines {
       if var existing = entries[descriptor.id] {
+        let previousGeneration = existing.generation
+        let nextGeneration = generations[descriptor.id] ?? existing.generation
         existing = MachineSnapshotEntry(
           descriptor: descriptor,
           snapshot: existing.snapshot,
@@ -61,9 +65,12 @@ public actor MachineSnapshotStore {
           loadStatus: existing.loadStatus,
           collectionStatus: existing.collectionStatus,
           revision: registry.revision,
-          generation: generations[descriptor.id] ?? existing.generation
+          generation: nextGeneration
         )
         next[descriptor.id] = existing
+        if nextGeneration == previousGeneration {
+          nextSourceIdentities[descriptor.id] = sourceIdentities[descriptor.id]
+        }
       } else {
         next[descriptor.id] = Self.emptyEntry(
           descriptor: descriptor,
@@ -75,117 +82,10 @@ public actor MachineSnapshotStore {
     }
     registryRevision = registry.revision
     entries = next
+    sourceIdentities = nextSourceIdentities
     mergeCache = nil
   }
 
-  public func beginCollection(
-    machineID: String,
-    revision: UInt64,
-    generation: UInt64,
-    phase: DashboardLoadPhase,
-    requestedCoverageStart: Date?,
-    now: Date
-  ) {
-    guard var entry = fencedEntry(machineID: machineID, revision: revision, generation: generation) else { return }
-    entry.collectionStatus.lastAttemptAt = now
-    entry.collectionStatus.collectionInProgress = true
-    entry.loadStatus = DashboardLoadStatus(
-      phase: phase,
-      message: phase == .loadingHistory ? "Loading usage history" : phase == .refreshing ? "Refreshing usage data" : "Loading this week",
-      completed: 0,
-      total: 1,
-      isLoading: true
-    )
-    entries[machineID] = entry
-  }
-
-  public func updateCollectionProgress(
-    machineID: String,
-    revision: UInt64,
-    generation: UInt64,
-    progress: SnapshotLoadProgress
-  ) {
-    guard var entry = fencedEntry(machineID: machineID, revision: revision, generation: generation),
-          entry.collectionStatus.collectionInProgress else { return }
-    entry.loadStatus = DashboardLoadStatus(
-      phase: entry.loadStatus.phase,
-      message: entry.loadStatus.message,
-      completed: min(max(0, progress.completed), max(progress.total, 1)),
-      total: max(progress.total, 1),
-      isLoading: true
-    )
-    entries[machineID] = entry
-  }
-
-  public func publish(
-    machineID: String,
-    snapshot: CostSnapshot,
-    coverageStart: Date,
-    revision: UInt64,
-    generation: UInt64,
-    now: Date
-  ) {
-    guard var entry = fencedEntry(machineID: machineID, revision: revision, generation: generation) else { return }
-    entry.snapshot = mergingSnapshots(existing: entry.snapshot, fresh: snapshot, calendar: calendar)
-    entry.coverageStart = min(entry.coverageStart ?? coverageStart, coverageStart)
-    entry.collectionStatus.lastSuccessAt = now
-    entry.collectionStatus.lastErrorAt = nil
-    entry.collectionStatus.lastError = nil
-    entry.collectionStatus.collectionInProgress = false
-    entry.collectionStatus.consecutiveFailureCount = 0
-    entry.collectionStatus.unavailableSince = nil
-    let total = max(entry.loadStatus.total, 1)
-    entry.loadStatus = DashboardLoadStatus(
-      phase: .ready,
-      message: "Usage data is ready",
-      completed: total,
-      total: total,
-      isLoading: false
-    )
-    entries[machineID] = entry
-    mergeCache = nil
-  }
-
-  public func publishFailure(
-    machineID: String,
-    error: Error,
-    revision: UInt64,
-    generation: UInt64,
-    now: Date
-  ) {
-    guard !(error is CancellationError),
-          var entry = fencedEntry(machineID: machineID, revision: revision, generation: generation) else { return }
-    if entry.collectionStatus.consecutiveFailureCount == 0 {
-      entry.collectionStatus.unavailableSince = now
-    }
-    entry.collectionStatus.consecutiveFailureCount += 1
-    entry.collectionStatus.lastErrorAt = now
-    entry.collectionStatus.lastError = Self.sanitizedError(error)
-    entry.collectionStatus.collectionInProgress = false
-    let total = max(entry.loadStatus.total, 1)
-    entry.loadStatus = DashboardLoadStatus(
-      phase: .failed,
-      message: "Usage data loading failed",
-      completed: total,
-      total: total,
-      isLoading: false
-    )
-    entries[machineID] = entry
-  }
-
-  public func finishCancellation(machineID: String, revision: UInt64, generation: UInt64) {
-    guard var entry = fencedEntry(machineID: machineID, revision: revision, generation: generation) else { return }
-    entry.collectionStatus.collectionInProgress = false
-    let total = max(entry.loadStatus.total, 1)
-    entry.loadStatus = DashboardLoadStatus(
-      phase: .idle,
-      message: "Usage data loading was cancelled",
-      completed: total,
-      total: total,
-      isLoading: false
-    )
-    entries[machineID] = entry
-  }
   @discardableResult
   public func extendPublishedCoverage(
     machineID: String,
@@ -671,10 +571,22 @@ public actor MachineSnapshotStore {
     return ids
   }
 
-  private func fencedEntry(machineID: String, revision: UInt64, generation: UInt64) -> MachineSnapshotEntry? {
+  func fencedEntry(machineID: String, revision: UInt64, generation: UInt64) -> MachineSnapshotEntry? {
     guard revision == registryRevision, let entry = entries[machineID],
           entry.revision == revision, entry.generation == generation else { return nil }
     return entry
+  }
+
+  func sourceIdentityMatches(
+    machineID: String,
+    identity: MachineCollectionSourceIdentity?
+  ) -> Bool {
+    guard let identity else { return true }
+    return sourceIdentities[machineID] == identity
+  }
+
+  func invalidateMergeCache() {
+    mergeCache = nil
   }
 
   private func formatDay(_ date: Date) -> String {
@@ -718,7 +630,7 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
   var services: [String: SnapshotService] = [:]
   var generations: [String: UInt64] = [:]
   private var pollers: [String: Task<Void, Never>] = [:]
-  var inFlight: [MachineRangeLoadKey: Task<CostSnapshot, Error>] = [:]
+  var inFlight: [MachineRangeLoadKey: Task<MachineCollectionSnapshotResult, Error>] = [:]
   var rangeLoads: [MachineRangeLoadKey: MachineRangeLoadState] = [:]
   private var activeMachineIDs: Set<String>?
   let calendar: Calendar
