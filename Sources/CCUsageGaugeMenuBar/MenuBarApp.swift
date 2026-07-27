@@ -130,17 +130,28 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
           cacheURL: paths.aggregationCacheFile(forMachine: descriptor.id)
         )
       }
+      let localDescriptor = registry.localMachine
       let service = SnapshotService(
         stateStore: store,
-        client: CCUsageClient(executable: executable),
+        client: CCUsageClient(
+          commandRunner: try Self.sourceRunner(
+            descriptor: localDescriptor,
+            executable: executable,
+            configuration: loaded
+          ),
+          machine: localDescriptor.id
+        ),
         defaultRefreshIntervalSeconds: loaded.pollIntervalSeconds,
         aggregationCache: UsageAggregationCache(
           fileURL: paths.aggregationCacheFile(forMachine: "local"),
           retentionDays: loaded.cacheRetentionDays,
           machineID: "local"
         ),
-        claudeUsageEventLoader: .production(),
-        codexUsageEventLoader: .production()
+        claudeUsageEventLoader: .production(descriptor: localDescriptor),
+        codexUsageEventLoader: .production(descriptor: localDescriptor),
+        sourcePlanProvider: {
+          MachineSessionSourcePlan(descriptor: localDescriptor)
+        }
       )
       snapshotService = service
       let machineStore = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: loaded.pollIntervalSeconds)
@@ -159,13 +170,41 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
           }
           _ = try await runner.run(arguments: ["--version"], timeoutSeconds: 30)
         }
-      ) { [paths, loaded, store, service] descriptor in
-        if descriptor.kind == .local { return service }
-        guard let connection = descriptor.ssh else { throw MachineValidationError(fieldErrors: ["ssh": "is required"]) }
+      ) { [paths, loaded, store] descriptor in
+        if descriptor.kind == .local {
+          // Rebuild from the fresh descriptor so registry edits to the local
+          // machine's session sources take effect without an app restart.
+          return SnapshotService(
+            stateStore: store,
+            client: CCUsageClient(
+              commandRunner: try Self.sourceRunner(
+                descriptor: descriptor,
+                executable: executable,
+                configuration: loaded
+              ),
+              machine: descriptor.id
+            ),
+            defaultRefreshIntervalSeconds: loaded.pollIntervalSeconds,
+            aggregationCache: UsageAggregationCache(
+              fileURL: paths.aggregationCacheFile(forMachine: "local"),
+              retentionDays: loaded.cacheRetentionDays,
+              machineID: "local"
+            ),
+            claudeUsageEventLoader: .production(descriptor: descriptor),
+            codexUsageEventLoader: .production(descriptor: descriptor),
+            sourcePlanProvider: {
+              MachineSessionSourcePlan(descriptor: descriptor)
+            }
+          )
+        }
         return SnapshotService(
           stateStore: store,
           client: CCUsageClient(
-            commandRunner: try Self.remoteRunner(connection: connection, configuration: loaded),
+            commandRunner: try Self.sourceRunner(
+              descriptor: descriptor,
+              executable: executable,
+              configuration: loaded
+            ),
             machine: descriptor.id
           ),
           defaultRefreshIntervalSeconds: loaded.pollIntervalSeconds,
@@ -173,7 +212,16 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
             fileURL: paths.aggregationCacheFile(forMachine: descriptor.id),
             retentionDays: loaded.cacheRetentionDays,
             machineID: descriptor.id
-          )
+          ),
+          sourcePlanProvider: {
+            guard let connection = descriptor.ssh else {
+              throw MachineValidationError(fieldErrors: ["ssh": "is required"])
+            }
+            return try await Self.remoteRunner(
+              connection: connection,
+              configuration: loaded
+            ).resolveSessionSourcePlan(descriptor: descriptor, timeoutSeconds: 30)
+          }
         )
       }
       let mutationOwner = MachineRegistryMutationOwner(store: registryStore, registry: registry, runtime: collector)
@@ -621,6 +669,31 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       retryCount: configuration.remoteRetryCount,
       timeoutSeconds: TimeInterval(configuration.remoteTimeoutSeconds)
     )
+  }
+
+  nonisolated private static func sourceRunner(
+    descriptor: MachineDescriptor,
+    executable: URL,
+    configuration: AppConfiguration
+  ) throws -> MultiSourceCCUsageCommandRunner {
+    let runner: any CCUsageSourceCommandRunner
+    if descriptor.kind == .local {
+      runner = LocalCCUsageCommandRunner(executable: executable)
+    } else {
+      guard let connection = descriptor.ssh else {
+        throw MachineValidationError(fieldErrors: ["ssh": "is required"])
+      }
+      runner = try remoteRunner(connection: connection, configuration: configuration)
+    }
+    return MultiSourceCCUsageCommandRunner(runner: runner) {
+      if descriptor.kind == .local {
+        return MachineSessionSourcePlan(descriptor: descriptor)
+      }
+      guard let resolver = runner as? any MachineSessionSourcePlanResolving else {
+        throw CCUsageCommandFailure(runnerKind: .ssh, phase: .spawnFailed)
+      }
+      return try await resolver.resolveSessionSourcePlan(descriptor: descriptor, timeoutSeconds: 30)
+    }
   }
 
   private static func statusTitle(_ snapshot: CostSnapshot) -> String {

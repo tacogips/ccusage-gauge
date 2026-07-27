@@ -61,7 +61,7 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
     #expect(permissions?.intValue == 0o755)
   }
 
-  @Test func migratesVersionOneToCanonicalVersionTwoWithoutChangingMachines() throws {
+  @Test func migratesVersionOneToCanonicalVersionThreeWithoutChangingMachines() throws {
     let root = try machineTemporaryDirectory()
     let directory = root.appendingPathComponent("config/ccusage-gauge", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -80,7 +80,8 @@ private struct StubCCUsageRunner: CCUsageCommandRunner {
     let migrated = String(decoding: try Data(contentsOf: file), as: UTF8.self)
 
     #expect(registry.machines.map(\.id) == ["local", "remote"])
-    #expect(migrated.contains(#""schemaVersion" : 2"#))
+    #expect(migrated.contains(#""schemaVersion" : 3"#))
+    #expect(migrated.contains(#""localSessionSources""#))
     #expect(try MachineRegistryStore(fileURL: file).load() == registry)
   }
 

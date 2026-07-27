@@ -77,16 +77,14 @@ enum CommandRuntime {
         _ = try await runner.run(arguments: ["--version"], timeoutSeconds: 30)
       }
     ) { descriptor in
-      let client: CCUsageClient
-      if descriptor.kind == .local {
-        client = CCUsageClient(executable: executable, machine: descriptor.id)
-      } else {
-        guard let connection = descriptor.ssh else { throw MachineValidationError(fieldErrors: ["ssh": "is required"]) }
-        client = CCUsageClient(
-          commandRunner: try remoteRunner(connection: connection, configuration: config),
-          machine: descriptor.id
-        )
-      }
+      let client = CCUsageClient(
+        commandRunner: try sourceRunner(
+          descriptor: descriptor,
+          executable: executable,
+          configuration: config
+        ),
+        machine: descriptor.id
+      )
       return SnapshotService(
         stateStore: stateStore,
         client: client,
@@ -96,8 +94,20 @@ enum CommandRuntime {
           retentionDays: config.cacheRetentionDays,
           machineID: descriptor.id
         ),
-        claudeUsageEventLoader: descriptor.kind == .local ? .production() : nil,
-        codexUsageEventLoader: descriptor.kind == .local ? .production() : nil
+        claudeUsageEventLoader: descriptor.kind == .local ? .production(descriptor: descriptor) : nil,
+        codexUsageEventLoader: descriptor.kind == .local ? .production(descriptor: descriptor) : nil,
+        sourcePlanProvider: {
+          if descriptor.kind == .local {
+            return MachineSessionSourcePlan(descriptor: descriptor)
+          }
+          guard let connection = descriptor.ssh else {
+            throw MachineValidationError(fieldErrors: ["ssh": "is required"])
+          }
+          return try await remoteRunner(
+            connection: connection,
+            configuration: config
+          ).resolveSessionSourcePlan(descriptor: descriptor, timeoutSeconds: 30)
+        }
       )
     }
     let mutationOwner = MachineRegistryMutationOwner(store: registryStore, registry: registry, runtime: collector)
@@ -129,17 +139,31 @@ enum CommandRuntime {
       legacyURL: resolvedPaths.aggregationCacheFile,
       destinationURL: resolvedPaths.aggregationCacheFile(forMachine: "local")
     ).migrateIfNeeded()
+    // The registry's local machine carries configured session-source dirs;
+    // fall back to the synthetic default only when no registry is readable.
+    let descriptor = (try? MachineRegistryStore(fileURL: resolvedPaths.machinesFile).load().localMachine)
+      ?? MachineDescriptor.local
     return SnapshotService(
       stateStore: StateStore(fileURL: resolvedPaths.stateFile),
-      client: CCUsageClient(executable: executable),
+      client: CCUsageClient(
+        commandRunner: try sourceRunner(
+          descriptor: descriptor,
+          executable: executable,
+          configuration: config
+        ),
+        machine: descriptor.id
+      ),
       defaultRefreshIntervalSeconds: config.pollIntervalSeconds,
       aggregationCache: UsageAggregationCache(
         fileURL: resolvedPaths.aggregationCacheFile(forMachine: "local"),
         retentionDays: config.cacheRetentionDays,
         machineID: "local"
       ),
-      claudeUsageEventLoader: .production(),
-      codexUsageEventLoader: .production()
+      claudeUsageEventLoader: .production(descriptor: descriptor),
+      codexUsageEventLoader: .production(descriptor: descriptor),
+      sourcePlanProvider: {
+        MachineSessionSourcePlan(descriptor: descriptor)
+      }
     )
   }
 
@@ -152,6 +176,31 @@ enum CommandRuntime {
       retryCount: configuration.remoteRetryCount,
       timeoutSeconds: TimeInterval(configuration.remoteTimeoutSeconds)
     )
+  }
+
+  private static func sourceRunner(
+    descriptor: MachineDescriptor,
+    executable: URL,
+    configuration: AppConfiguration
+  ) throws -> MultiSourceCCUsageCommandRunner {
+    let runner: any CCUsageSourceCommandRunner
+    if descriptor.kind == .local {
+      runner = LocalCCUsageCommandRunner(executable: executable)
+    } else {
+      guard let connection = descriptor.ssh else {
+        throw MachineValidationError(fieldErrors: ["ssh": "is required"])
+      }
+      runner = try remoteRunner(connection: connection, configuration: configuration)
+    }
+    return MultiSourceCCUsageCommandRunner(runner: runner) {
+      if descriptor.kind == .local {
+        return MachineSessionSourcePlan(descriptor: descriptor)
+      }
+      guard let resolver = runner as? any MachineSessionSourcePlanResolving else {
+        throw CCUsageCommandFailure(runnerKind: .ssh, phase: .spawnFailed)
+      }
+      return try await resolver.resolveSessionSourcePlan(descriptor: descriptor, timeoutSeconds: 30)
+    }
   }
 
   static func waitForTerminationSignal() async {

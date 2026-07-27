@@ -198,6 +198,17 @@ order:
   '<remoteCcusagePath>' '<ccusage-arg-1>' ... '<ccusage-arg-n>'
 ```
 
+The session-source extension in
+`design-machine-session-source-directories.md` supersedes only the remote
+command suffix for sourced collection. That suffix invokes one
+application-owned fixed adapter and passes the agent, source execution value,
+validated executable, and fixed ccusage arguments as separately quoted
+positional values. The adapter keeps the resolved source identity used for
+deduplication and fencing separate from the execution value, preserving raw
+environment-derived defaults. No configured value is inserted into adapter
+source. Connection tests and other unsourced diagnostics retain the direct
+suffix above.
+
 Each remote command token is encoded with POSIX single-quote escaping before it
 is handed to `ssh`; no token is interpolated into an unquoted command string.
 The ccusage argument list comes only from the client's fixed subcommands and
@@ -321,6 +332,13 @@ even with an empty registry.
 
 #### Persisted registry schema
 
+The session-source-directory extension in
+`design-machine-session-source-directories.md` advances the live registry to
+schema version 3. The version-2 contract below remains the required migration
+source and is otherwise unchanged. The extension is authoritative for the new
+descriptor fields, persisted local source configuration, version-2-to-version-3
+migration, and local-source PATCH behavior.
+
 `machines.json` is a closed, versioned JSON document. Version 2 has exactly this
 top-level representation:
 
@@ -378,26 +396,24 @@ omit `proxy` for direct-by-omission descriptors.
 
 The existing closed version-1 representation remains a recognized migration
 source. It must satisfy the exact currently implemented version-1 key sets and
-validation rules; version-1 SSH objects cannot contain `proxy`. On load, the
-registry owner validates and decodes the complete version-1 document, constructs
-the equivalent version-2 document with every proxy omitted, writes and
-synchronizes a mode-`0600` same-directory temporary file, and atomically replaces
-`machines.json` before publishing a registry revision or starting any poller.
-Migration failure leaves the original version-1 bytes and runtime state
-unchanged and fails startup as sanitized `registry_migration_failed`. A
-successful migration is one-way; all later API mutations persist version 2.
-The same transaction applies when a machine action reload encounters a valid
-version-1 file: migration commits before the new revision is published and the
-test or refresh begins.
+validation rules; version-1 SSH objects cannot contain `proxy`. The registry
+owner validates and decodes the complete version-1 document and constructs the
+equivalent version-2 document with every proxy omitted. Under the live
+session-source design, it then applies the version-2-to-version-3 transform and
+performs one synchronized same-directory atomic replacement before publishing a
+registry revision or starting a poller. Migration failure leaves the original
+version-1 bytes and runtime state unchanged and fails startup as sanitized
+`registry_migration_failed`. The same transaction applies when a machine action
+reload encounters a valid version-1 file.
 
-The loader applies no other defaults or migration. A present unversioned
-document, missing key, `null`, scalar top level, malformed version-1 or
-version-2 object, version below 1 or above 2, or unknown field fails closed as
-`registry_load_failed`; it is never interpreted as an empty registry or
-partially rewritten. Later representation changes require a new version plus an
-explicit, tested, atomic migration. Additive unknown-field compatibility is
-deliberately not provided. The absent-file behavior remains the sole way to
-start with an empty persisted SSH set.
+The version-2 contract applies no other defaults. Under the live extension, a
+present unversioned document, missing key, `null`, scalar top level, malformed
+version-1/version-2/version-3 object, version below 1 or above 3, or unknown
+field fails closed as `registry_load_failed`; it is never interpreted as an
+empty registry or partially rewritten. Later representation changes require a
+new version plus an explicit, tested, atomic migration. Additive unknown-field
+compatibility is deliberately not provided. The absent-file behavior remains
+the sole way to start with an empty persisted SSH set.
 
 Registry validation is performed before persistence and again when loading:
 

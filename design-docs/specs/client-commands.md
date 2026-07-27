@@ -34,10 +34,18 @@ ccusage-gauge client machines show <id> [client options]
 ccusage-gauge client machines add <id> --host <host> --user <user>
   [--display-name <name>] [--ssh-port <port>] [--identity-file <path>]
   [--ssh-option <option>]... [--remote-ccusage-path <path>] [--disabled]
+  [--codex-session-dir <path>]... [--claude-config-dir <path>]...
+  [--exclude-default-codex-dir] [--exclude-default-claude-dir]
   [--proxy-jump-host <host> --proxy-jump-user <user>
     [--proxy-jump-port <port>] [--proxy-jump-identity-file <path>]
     [--proxy-jump-known-hosts-file <path>]]
   [--proxy-command-executable <path>]
+  [client options]
+ccusage-gauge client machines update <id>
+  [--codex-session-dir <path>]... [--clear-codex-session-dirs]
+  [--claude-config-dir <path>]... [--clear-claude-config-dirs]
+  [--include-default-codex-dir|--exclude-default-codex-dir]
+  [--include-default-claude-dir|--exclude-default-claude-dir]
   [client options]
 
 ccusage-gauge client dashboard budget [--machine <id|all>] [client options]
@@ -95,6 +103,7 @@ paths and host-key policy.
 | `machines list` | `GET /api/machines` |
 | `machines show` | `GET /api/machines/{id}` |
 | `machines add` | `POST /api/machines` |
+| `machines update` | `PATCH /api/machines/{id}` |
 | `dashboard budget` | `GET /api/budget?machine=...` |
 | `dashboard recent` | `GET /api/recent?machine=...&limit=...` |
 | `dashboard day` | `GET /api/day?machine=...&date=...` |
@@ -104,13 +113,15 @@ paths and host-key policy.
 | `dashboard machine-status` | `GET /api/machine-status?machine=...` |
 | `dashboard load-status` | `GET /api/load-status?machine=...` |
 
-Machine creation sends the exact closed request shape already accepted by the
-server, including the optional structured proxy adapter, plus
+Machine creation sends the closed request shape accepted by the server,
+including the optional structured proxy adapter and session-source fields, plus
 `Content-Type: application/json` and
-`X-CCUsage-Gauge-Mutation: 1`. Reads do not send the mutation header.
+`X-CCUsage-Gauge-Mutation: 1`. Machine update sends a non-empty source-field
+patch and uses the same mutation header. Reads do not send the mutation header.
 
-No new server endpoint is required. Machine replace, patch, delete, manual
-refresh, and cache clearing are deferred from the initial client surface.
+No new server endpoint is required. The update command uses the existing patch
+route and supports `local` under the constraints in
+`design-machine-session-source-directories.md`.
 
 ## Boundaries and Types
 
@@ -142,8 +153,9 @@ fields remain available to scripts.
 
 Text output provides compact summaries:
 
-- machine list/show: id, display name, kind, enabled state, SSH connection
-  fields, and structured proxy kind/metadata when configured;
+- machine list/show: id, display name, kind, enabled state, configured
+  Codex/Claude source directories, include-default state, SSH connection fields,
+  and structured proxy kind/metadata when configured;
 - add: the created descriptor;
 - budget: spent, configured budget, remaining/overage, reset cycle, and active
   boundary;
@@ -157,11 +169,12 @@ unavailable machines.
 
 ## Connection Metadata and Security
 
-Machine list/show returns exactly the existing `MachineDescriptor` contract:
-SSH host, port, user, identity-file path, extra SSH options, and remote ccusage
-path. These are operationally sensitive topology metadata but are not secret
-key contents. The client must never open, copy, print, or transmit the contents
-of an identity file.
+Machine list/show returns the additive `MachineDescriptor` contract: configured
+session-source strings plus SSH host, port, user, identity-file path, extra SSH
+options, and remote ccusage path. These are operationally sensitive topology
+and filesystem metadata but are not secret contents. The client must never
+resolve or print remote home paths, nor open, copy, print, or transmit the
+contents of an identity file.
 
 The API is unauthenticated loopback. Any local process able to connect to the
 dashboard port can already retrieve this metadata. Documentation warns users
@@ -192,8 +205,11 @@ custom entry point maps parse/validation failures to the established exit code
 
 - parsing and validation tests for every existing and new command;
 - transport tests for URL/query construction, exact machine-create JSON,
-  direct/jump/command adapter bodies, mutation headers, raw-body preservation,
-  date decoding, and API errors;
-- server/client round trip for add, list, and representative dashboard reads;
+  source-update JSON, direct/jump/command adapter bodies, mutation headers,
+  raw-body preservation, date decoding, and API errors;
+- server/client round trip for add, update, list, and representative dashboard
+  reads;
 - renderer tests for machine and dashboard text output;
-- `swiftlint`, `swift test`, `swift build`, and executable help/smoke commands.
+- `task lint`, `swift test`, `swift build`, `task frontend:check`,
+  `task frontend:test`, `task frontend:build`, and executable help/smoke
+  commands.

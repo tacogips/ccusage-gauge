@@ -118,13 +118,31 @@ public struct MachineDescriptor: Codable, Equatable, Sendable {
   public let kind: MachineKind
   public let enabled: Bool
   public let ssh: SSHConnection?
+  public let codexSessionDirs: [String]
+  public let claudeConfigDirs: [String]
+  public let includeDefaultCodexDir: Bool
+  public let includeDefaultClaudeDir: Bool
 
-  public init(id: String, displayName: String, kind: MachineKind, enabled: Bool, ssh: SSHConnection? = nil) {
+  public init(
+    id: String,
+    displayName: String,
+    kind: MachineKind,
+    enabled: Bool,
+    ssh: SSHConnection? = nil,
+    codexSessionDirs: [String] = [],
+    claudeConfigDirs: [String] = [],
+    includeDefaultCodexDir: Bool = true,
+    includeDefaultClaudeDir: Bool = true
+  ) {
     self.id = id
     self.displayName = displayName
     self.kind = kind
     self.enabled = enabled
     self.ssh = ssh
+    self.codexSessionDirs = codexSessionDirs
+    self.claudeConfigDirs = claudeConfigDirs
+    self.includeDefaultCodexDir = includeDefaultCodexDir
+    self.includeDefaultClaudeDir = includeDefaultClaudeDir
   }
 
   public static let local = MachineDescriptor(
@@ -134,7 +152,11 @@ public struct MachineDescriptor: Codable, Equatable, Sendable {
     enabled: true
   )
 
-  private enum CodingKeys: String, CodingKey { case id, displayName, kind, enabled, ssh }
+  private enum CodingKeys: String, CodingKey {
+    case id, displayName, kind, enabled, ssh
+    case codexSessionDirs, claudeConfigDirs
+    case includeDefaultCodexDir, includeDefaultClaudeDir
+  }
 
   public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -143,6 +165,10 @@ public struct MachineDescriptor: Codable, Equatable, Sendable {
     kind = try values.decode(MachineKind.self, forKey: .kind)
     enabled = try values.decode(Bool.self, forKey: .enabled)
     ssh = try values.decodeIfPresent(SSHConnection.self, forKey: .ssh)
+    codexSessionDirs = try values.decodeIfPresent([String].self, forKey: .codexSessionDirs) ?? []
+    claudeConfigDirs = try values.decodeIfPresent([String].self, forKey: .claudeConfigDirs) ?? []
+    includeDefaultCodexDir = try values.decodeIfPresent(Bool.self, forKey: .includeDefaultCodexDir) ?? true
+    includeDefaultClaudeDir = try values.decodeIfPresent(Bool.self, forKey: .includeDefaultClaudeDir) ?? true
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -152,6 +178,38 @@ public struct MachineDescriptor: Codable, Equatable, Sendable {
     try values.encode(kind, forKey: .kind)
     try values.encode(enabled, forKey: .enabled)
     try values.encodeIfPresent(ssh, forKey: .ssh)
+    try values.encode(codexSessionDirs, forKey: .codexSessionDirs)
+    try values.encode(claudeConfigDirs, forKey: .claudeConfigDirs)
+    try values.encode(includeDefaultCodexDir, forKey: .includeDefaultCodexDir)
+    try values.encode(includeDefaultClaudeDir, forKey: .includeDefaultClaudeDir)
+  }
+}
+
+public struct MachineSessionSources: Codable, Equatable, Sendable {
+  public let codexSessionDirs: [String]
+  public let claudeConfigDirs: [String]
+  public let includeDefaultCodexDir: Bool
+  public let includeDefaultClaudeDir: Bool
+
+  public init(
+    codexSessionDirs: [String] = [],
+    claudeConfigDirs: [String] = [],
+    includeDefaultCodexDir: Bool = true,
+    includeDefaultClaudeDir: Bool = true
+  ) {
+    self.codexSessionDirs = codexSessionDirs
+    self.claudeConfigDirs = claudeConfigDirs
+    self.includeDefaultCodexDir = includeDefaultCodexDir
+    self.includeDefaultClaudeDir = includeDefaultClaudeDir
+  }
+
+  public init(descriptor: MachineDescriptor) {
+    self.init(
+      codexSessionDirs: descriptor.codexSessionDirs,
+      claudeConfigDirs: descriptor.claudeConfigDirs,
+      includeDefaultCodexDir: descriptor.includeDefaultCodexDir,
+      includeDefaultClaudeDir: descriptor.includeDefaultClaudeDir
+    )
   }
 }
 
@@ -171,7 +229,14 @@ public enum MachineValidation {
   public static func validate(descriptor: MachineDescriptor, allowSyntheticLocal: Bool = false) throws {
     var errors: [String: String] = [:]
     if descriptor.kind == .local {
-      if !allowSyntheticLocal || descriptor != .local { errors["kind"] = "must be ssh" }
+      if !allowSyntheticLocal {
+        errors["kind"] = "must be ssh"
+      } else {
+        if descriptor.id != "local" { errors["id"] = "must be local" }
+        if descriptor.displayName != "Local" { errors["displayName"] = "must be Local" }
+        if !descriptor.enabled { errors["enabled"] = "must be true" }
+        if descriptor.ssh != nil { errors["ssh"] = "must be omitted" }
+      }
     } else {
       if !isCanonicalMachineID(descriptor.id) {
         errors["id"] = "must be 1...63 lowercase ASCII letters, digits, or interior hyphens"
@@ -186,6 +251,8 @@ public enum MachineValidation {
       do { try validate(connection: connection, requireReadableIdentity: false) }
       catch let error as MachineValidationError { errors.merge(error.fieldErrors) { current, _ in current } }
     }
+    validateSessionPaths(descriptor.codexSessionDirs, field: "codexSessionDirs", errors: &errors)
+    validateSessionPaths(descriptor.claudeConfigDirs, field: "claudeConfigDirs", errors: &errors)
     if !errors.isEmpty { throw MachineValidationError(fieldErrors: errors) }
   }
 
@@ -258,6 +325,25 @@ public enum MachineValidation {
 
   public static func destination(_ connection: SSHConnection) -> String {
     connection.host.contains(":") ? "\(connection.user)@[\(connection.host)]" : "\(connection.user)@\(connection.host)"
+  }
+
+  private static func validateSessionPaths(
+    _ paths: [String],
+    field: String,
+    errors: inout [String: String]
+  ) {
+    for (index, path) in paths.enumerated() where !isValidSessionSourcePath(path) {
+      errors["\(field)[\(index)]"] = "must be an absolute or ~-prefixed path containing 1...4096 UTF-8 bytes and no control characters"
+    }
+  }
+
+  public static func isValidSessionSourcePath(_ path: String) -> Bool {
+    guard (1...4_096).contains(path.utf8.count),
+          path == "~" || path.hasPrefix("~/") || path.hasPrefix("/"),
+          !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) else {
+      return false
+    }
+    return true
   }
 
   private static func displayNameError(_ value: String) -> String? {
@@ -365,7 +451,12 @@ public struct MachineRegistry: Equatable, Sendable {
   public let revision: UInt64
   public let machines: [MachineDescriptor]
 
-  public init(sshMachines: [MachineDescriptor] = [], revision: UInt64 = 0) throws {
+  public init(
+    sshMachines: [MachineDescriptor] = [],
+    localMachine: MachineDescriptor = .local,
+    revision: UInt64 = 0
+  ) throws {
+    try MachineValidation.validate(descriptor: localMachine, allowSyntheticLocal: true)
     var ids: Set<String> = []
     for descriptor in sshMachines {
       try MachineValidation.validate(descriptor: descriptor)
@@ -374,21 +465,24 @@ public struct MachineRegistry: Equatable, Sendable {
       }
     }
     self.revision = revision
-    machines = [.local] + sshMachines.sorted { $0.id < $1.id }
+    machines = [localMachine] + sshMachines.sorted { $0.id < $1.id }
   }
 
+  public var localMachine: MachineDescriptor { machines[0] }
   public var sshMachines: [MachineDescriptor] { machines.filter { $0.kind == .ssh } }
   public func machine(id: String) -> MachineDescriptor? { machines.first { $0.id == id } }
 }
 
 public enum MachineRegistryStoreError: Error, Equatable, CustomStringConvertible, Sendable {
   case registryLoadFailed
+  case registryMigrationFailed
   case registryPermissionsInvalid
   case registryPersistenceFailed
 
   public var description: String {
     switch self {
     case .registryLoadFailed: "Machine registry could not be loaded"
+    case .registryMigrationFailed: "Machine registry could not be migrated"
     case .registryPermissionsInvalid:
       "Machine registry permissions are invalid. Set the configuration directory mode to 0700 and machines.json to 0600."
     case .registryPersistenceFailed: "Machine registry could not be persisted"
@@ -398,6 +492,7 @@ public enum MachineRegistryStoreError: Error, Equatable, CustomStringConvertible
 
 private struct PersistedMachineRegistry: Codable {
   let schemaVersion: Int
+  let localSessionSources: MachineSessionSources?
   let machines: [MachineDescriptor]
 }
 
@@ -433,11 +528,21 @@ public struct MachineRegistryStore: MachineRegistryPersistence, @unchecked Senda
       for descriptor in persisted.machines {
         if let connection = descriptor.ssh { try MachineValidation.validate(connection: connection, requireReadableIdentity: true) }
       }
-      let registry = try MachineRegistry(sshMachines: persisted.machines)
-      if schemaVersion == 1 {
-        // Best-effort migration: a readable, valid v1 file must keep loading
-        // even when the rewrite cannot be persisted (read-only file or
-        // filesystem); the next successful save writes the v2 shape.
+      let localSources = persisted.localSessionSources ?? MachineSessionSources()
+      let localMachine = MachineDescriptor(
+        id: "local",
+        displayName: "Local",
+        kind: .local,
+        enabled: true,
+        codexSessionDirs: localSources.codexSessionDirs,
+        claudeConfigDirs: localSources.claudeConfigDirs,
+        includeDefaultCodexDir: localSources.includeDefaultCodexDir,
+        includeDefaultClaudeDir: localSources.includeDefaultClaudeDir
+      )
+      let registry = try MachineRegistry(sshMachines: persisted.machines, localMachine: localMachine)
+      if schemaVersion < 3 {
+        // Best-effort schema rewrite: a readable pre-v3 registry must keep
+        // loading even when the file is not writable (read-only deployments).
         try? save(registry)
       }
       return registry
@@ -455,7 +560,12 @@ public struct MachineRegistryStore: MachineRegistryPersistence, @unchecked Senda
         try MachineValidation.validate(descriptor: descriptor)
         if let connection = descriptor.ssh { try MachineValidation.validate(connection: connection, requireReadableIdentity: true) }
       }
-      let payload = PersistedMachineRegistry(schemaVersion: 2, machines: registry.sshMachines.sorted { $0.id < $1.id })
+      try MachineValidation.validate(descriptor: registry.localMachine, allowSyntheticLocal: true)
+      let payload = PersistedMachineRegistry(
+        schemaVersion: 3,
+        localSessionSources: MachineSessionSources(descriptor: registry.localMachine),
+        machines: registry.sshMachines.sorted { $0.id < $1.id }
+      )
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
       var data = try encoder.encode(payload)
@@ -528,7 +638,6 @@ public struct MachineRegistryStore: MachineRegistryPersistence, @unchecked Senda
       throw MachineRegistryStoreError.registryLoadFailed
     }
     guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-          Set(object.keys) == ["schemaVersion", "machines"],
           object["schemaVersion"] != nil,
           let machines = object["machines"] as? [[String: Any]] else {
       throw MachineRegistryStoreError.registryLoadFailed
@@ -539,9 +648,30 @@ public struct MachineRegistryStore: MachineRegistryPersistence, @unchecked Senda
     // an NSNumber type check, which cannot reliably tell 0/1 from a boolean.
     let text = String(decoding: data, as: UTF8.self)
     let versionTokens = capturedNumberTokens(named: "schemaVersion", in: text)
-    guard versionTokens.count == 1, let version = Int(versionTokens[0]), [1, 2].contains(version),
+    guard versionTokens.count == 1, let version = Int(versionTokens[0]), [1, 2, 3].contains(version),
           String(version) == versionTokens[0] else {
       throw MachineRegistryStoreError.registryLoadFailed
+    }
+    let topLevelKeys = Set(object.keys)
+    if version == 3 {
+      guard topLevelKeys == ["schemaVersion", "localSessionSources", "machines"],
+            let local = object["localSessionSources"] as? [String: Any],
+            Set(local.keys) == [
+              "codexSessionDirs",
+              "claudeConfigDirs",
+              "includeDefaultCodexDir",
+              "includeDefaultClaudeDir"
+            ],
+            local["codexSessionDirs"] is [String],
+            local["claudeConfigDirs"] is [String],
+            local["includeDefaultCodexDir"] is Bool,
+            local["includeDefaultClaudeDir"] is Bool else {
+        throw MachineRegistryStoreError.registryLoadFailed
+      }
+    } else {
+      guard topLevelKeys == ["schemaVersion", "machines"] else {
+        throw MachineRegistryStoreError.registryLoadFailed
+      }
     }
     let portTokens = capturedNumberTokens(named: "port", in: text)
     guard portTokens.count >= machines.count,
@@ -549,10 +679,25 @@ public struct MachineRegistryStore: MachineRegistryPersistence, @unchecked Senda
       throw MachineRegistryStoreError.registryLoadFailed
     }
     for machine in machines {
-      guard Set(machine.keys) == ["id", "displayName", "kind", "enabled", "ssh"],
+      let descriptorKeys = Set(["id", "displayName", "kind", "enabled", "ssh"])
+      let sourceKeys = Set([
+        "codexSessionDirs",
+        "claudeConfigDirs",
+        "includeDefaultCodexDir",
+        "includeDefaultClaudeDir"
+      ])
+      guard Set(machine.keys) == (version == 3 ? descriptorKeys.union(sourceKeys) : descriptorKeys),
             machine["kind"] as? String == "ssh",
             let ssh = machine["ssh"] as? [String: Any] else {
         throw MachineRegistryStoreError.registryLoadFailed
+      }
+      if version == 3 {
+        guard machine["codexSessionDirs"] is [String],
+              machine["claudeConfigDirs"] is [String],
+              machine["includeDefaultCodexDir"] is Bool,
+              machine["includeDefaultClaudeDir"] is Bool else {
+          throw MachineRegistryStoreError.registryLoadFailed
+        }
       }
       let allowed = Set(["host", "port", "user", "identityFile", "extraOptions", "proxy", "remoteCcusagePath"])
       let required = Set(["host", "port", "user", "extraOptions", "remoteCcusagePath"])
@@ -563,7 +708,7 @@ public struct MachineRegistryStore: MachineRegistryPersistence, @unchecked Senda
         throw MachineRegistryStoreError.registryLoadFailed
       }
       if let proxy = ssh["proxy"] as? [String: Any] {
-        guard version == 2, let kind = proxy["kind"] as? String else {
+        guard version >= 2, let kind = proxy["kind"] as? String else {
           throw MachineRegistryStoreError.registryLoadFailed
         }
         let keys = Set(proxy.keys)

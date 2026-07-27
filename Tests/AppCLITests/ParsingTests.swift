@@ -20,6 +20,8 @@ struct CommandParsingTests {
     #expect(MachinesAddCommand.helpMessage().contains("contents are never read"))
     #expect(MachinesCommand.helpMessage().contains("test-connection"))
     #expect(MachinesCommand.helpMessage().contains("refresh"))
+    #expect(MachinesCommand.helpMessage().contains("update"))
+    #expect(MachinesAddCommand.helpMessage().contains("--codex-session-dir"))
     #expect(DashboardCommand.helpMessage().contains("cost-series"))
     #expect(DashboardCommand.helpMessage().contains("machine-status"))
   }
@@ -73,7 +75,9 @@ struct CommandParsingTests {
       "--ssh-port", "2200", "--display-name", "Remote",
       "--identity-file", "/tmp/ccusage-gauge-test-id",
       "--ssh-option=-4", "--ssh-option=-o ConnectTimeout=10",
-      "--remote-ccusage-path", "/usr/local/bin/ccusage", "--disabled"
+      "--remote-ccusage-path", "/usr/local/bin/ccusage", "--disabled",
+      "--codex-session-dir", "/srv/codex-a", "--codex-session-dir", "~/codex-b",
+      "--claude-config-dir", "/srv/claude", "--exclude-default-codex-dir"
     ])
     let add = try #require(command as? MachinesAddCommand)
     #expect(add.sshPort == 2200)
@@ -81,6 +85,34 @@ struct CommandParsingTests {
     #expect(add.identityFile == "/tmp/ccusage-gauge-test-id")
     #expect(add.sshOptions == ["-4", "-o ConnectTimeout=10"])
     #expect(add.disabled)
+    #expect(add.codexSessionDirs == ["/srv/codex-a", "~/codex-b"])
+    #expect(add.claudeConfigDirs == ["/srv/claude"])
+    #expect(add.excludeDefaultCodexDir)
+  }
+
+  @Test func parsesMachineSourceUpdateAndRejectsAmbiguousOrEmptyUpdates() throws {
+    let update = try #require(RootCommand.parseAsRoot([
+      "client", "machines", "update", "local",
+      "--codex-session-dir", "/srv/codex",
+      "--clear-claude-config-dirs",
+      "--exclude-default-codex-dir",
+      "--include-default-claude-dir"
+    ]) as? MachinesUpdateCommand)
+    #expect(update.id == "local")
+    #expect(update.codexSessionDirs == ["/srv/codex"])
+    #expect(update.clearClaudeConfigDirs)
+    #expect(update.excludeDefaultCodexDir)
+    #expect(update.includeDefaultClaudeDir)
+
+    #expect(throws: (any Error).self) {
+      _ = try RootCommand.parseAsRoot(["client", "machines", "update", "local"])
+    }
+    #expect(throws: (any Error).self) {
+      _ = try RootCommand.parseAsRoot([
+        "client", "machines", "update", "local",
+        "--include-default-codex-dir", "--exclude-default-codex-dir"
+      ])
+    }
   }
 
   @Test func parsesStructuredProxyAndActionCommands() throws {

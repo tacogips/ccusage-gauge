@@ -109,6 +109,10 @@ export type SSHProxy =
   | { kind: "command"; executable: string };
 export interface Machine {
   id: string; displayName: string; kind: "local" | "ssh"; enabled: boolean; ssh?: SSHConnection;
+  codexSessionDirs: string[];
+  claudeConfigDirs: string[];
+  includeDefaultCodexDir: boolean;
+  includeDefaultClaudeDir: boolean;
 }
 export interface MachineStatus {
   id: string; displayName: string; kind: "local" | "ssh"; enabled: boolean;

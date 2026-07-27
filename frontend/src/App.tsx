@@ -1,9 +1,9 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import { type BudgetResponse, type ChartColorsResponse, type CostRow, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type Machine, type MachineConnectionTestResponse, type MachineDataGap, type MachineLatestEvent, type MachineRefreshResponse, type MachinesResponse, type MachineStatusResponse, type MetricRow, type MetricsResponse, getJSON, mutationJSON, requestJSON } from "./api";
-import { runMachineRefreshLifecycle } from "./machineActions";
+import { machineSaveErrors, runMachineRefreshLifecycle } from "./machineActions";
 import { actionRefetchTargets } from "./machineObservability";
 import { availabilityErrorCode, dashboardErrorMessage, getCostSeriesState } from "./costSeriesState";
-import { changingProxyKind, draftFromMachine, emptyMachineDraft, machineDraftErrors, machineRequestBody, type MachineDraft, type MachineProxyKind } from "./machineForm";
+import { changingProxyKind, draftFromMachine, emptyMachineDraft, machineDraftErrors, machineRequestBody, machineSessionSourceBody, type MachineDraft, type MachineProxyKind } from "./machineForm";
 import { BreakdownBars, LoadingState, MachineHealthPanel, type MetricKey } from "./DashboardComponents";
 import { MachineAdminPanel } from "./MachineAdminPanel";
 import {
@@ -345,6 +345,7 @@ export default function App() {
   const [machineDraft, setMachineDraft] = createSignal<MachineDraft>(emptyMachineDraft());
   const [editingMachineID, setEditingMachineID] = createSignal<string>();
   const [machineError, setMachineError] = createSignal<string>();
+  const [machineFieldErrors, setMachineFieldErrors] = createSignal<Record<string, string>>({});
   const [machineActions, setMachineActions] = createSignal<Record<string, { message: string; failed: boolean }>>({});
   const [machineActionInFlight, setMachineActionInFlight] = createSignal<Record<string, boolean>>({});
   const storedColorScheme = window.localStorage.getItem("ccusage-gauge-color-scheme");
@@ -588,12 +589,14 @@ export default function App() {
     applyMachineDraft(emptyMachineDraft());
     setEditingMachineID(undefined);
     setMachineError(undefined);
+    setMachineFieldErrors({});
     setMachineFormOpen(false);
   };
   const beginCreateMachine = () => {
     applyMachineDraft(emptyMachineDraft());
     setEditingMachineID(undefined);
     setMachineError(undefined);
+    setMachineFieldErrors({});
     setMachineFormOpen(true);
   };
   const beginEditMachine = (machine: Machine) => {
@@ -601,6 +604,7 @@ export default function App() {
     setEditingMachineID(machine.id);
     setMachineActions((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine.id)));
     setMachineError(undefined);
+    setMachineFieldErrors({});
     setMachineFormOpen(true);
   };
   const changeMachineProxyKind = (proxyKind: MachineProxyKind) => {
@@ -608,23 +612,28 @@ export default function App() {
   };
   const saveMachine = async () => {
     setMachineError(undefined);
+    setMachineFieldErrors({});
     const draft = currentMachineDraft();
     const validation = machineDraftErrors(draft);
     if (Object.keys(validation).length > 0) {
       const [field, message] = Object.entries(validation)[0];
+      setMachineFieldErrors(validation);
       setMachineError(`${field}: ${message}`);
       return;
     }
     try {
       const editingID = editingMachineID();
+      const isLocal = draft.kind === "local";
       await mutationJSON<Machine>(editingID == null ? "/api/machines" : `/api/machines/${editingID}`, {
-        method: editingID == null ? "POST" : "PUT",
-        body: JSON.stringify(machineRequestBody(draft, editingID == null)),
+        method: editingID == null ? "POST" : isLocal ? "PATCH" : "PUT",
+        body: JSON.stringify(isLocal ? machineSessionSourceBody(draft) : machineRequestBody(draft, editingID == null)),
       });
       closeMachineForm();
       await Promise.all([refreshMachines(), refreshMachineStatuses()]);
     } catch (error) {
-      setMachineError(error instanceof Error ? error.message : "Machine save failed.");
+      const detail = machineSaveErrors(error);
+      setMachineFieldErrors(detail.fieldErrors);
+      setMachineError(detail.message);
     }
   };
   const toggleMachine = async (machine: Machine) => {
@@ -875,6 +884,7 @@ export default function App() {
                   editingID={editingMachineID()}
                   draft={currentMachineDraft()}
                   error={machineError()}
+                  fieldErrors={machineFieldErrors()}
                   onTest={testMachineConnection}
                   onRefresh={refreshMachine}
                   onEdit={beginEditMachine}

@@ -27,11 +27,15 @@ struct RendererTests {
       displayName: "Remote",
       kind: .ssh,
       enabled: true,
-      ssh: SSHConnection(host: "h", port: 22, user: "u", identityFile: "/secret/key")
+      ssh: SSHConnection(host: "h", port: 22, user: "u", identityFile: "/secret/key"),
+      codexSessionDirs: ["/srv/codex"],
+      includeDefaultCodexDir: false
     )
     let text = MachineRenderer.show(descriptor)
     // The path is reported, but only as an opaque reference.
     #expect(text.contains("ssh.identityFile: /secret/key"))
+    #expect(text.contains("codexSessionDirs: /srv/codex"))
+    #expect(text.contains("includeDefaultCodexDir: false"))
   }
 
   @Test func rendersStructuredProxyAndSanitizedActionFailures() {

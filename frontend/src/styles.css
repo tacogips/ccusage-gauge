@@ -65,6 +65,9 @@ header, .panel-title { display: flex; align-items: flex-start; justify-content: 
 .machine-action-result.failed { color: #9a4d24 !important; }
 .machine-form input, .machine-form select { width: 100%; border: 1px solid #bfd0c4; border-radius: 8px; padding: 7px 8px; }
 .machine-field { display: grid; gap: 3px; color: #688076; font-size: .68rem; font-weight: 750; }
+.machine-source-editor { display: grid; gap: 7px; margin: 4px 0; border: 1px solid #bfd0c4; border-radius: 8px; }
+.machine-source-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
+.machine-source-row small { grid-column: 1 / -1; }
 .period-control { position: relative; width: min(100%, 760px); min-width: 0; padding-bottom: 20px; display: grid; justify-items: end; gap: 10px; }
 .range-buttons { width: 100%; min-width: 0; display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 7px; overflow-x: auto; overflow-y: hidden; }
 .background-refresh-status { position: absolute; right: 0; bottom: 0; display: inline-flex; align-items: center; justify-content: flex-end; gap: 7px; color: #557064; font-size: .78rem; font-weight: 750; visibility: hidden; }

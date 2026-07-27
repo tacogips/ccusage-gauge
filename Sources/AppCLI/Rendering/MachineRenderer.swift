@@ -18,6 +18,10 @@ enum MachineRenderer {
     "Created machine \(descriptor.id)\n" + detail(descriptor)
   }
 
+  static func updated(_ descriptor: MachineDescriptor) -> String {
+    "Updated machine \(descriptor.id)\n" + detail(descriptor)
+  }
+
   static func status(_ response: MachineStatusResponse) -> String {
     var lines = ["requested: \(response.requested)"]
     for item in response.machines {
@@ -90,7 +94,11 @@ enum MachineRenderer {
       "id: \(descriptor.id)",
       "displayName: \(descriptor.displayName)",
       "kind: \(descriptor.kind.rawValue)",
-      "enabled: \(descriptor.enabled)"
+      "enabled: \(descriptor.enabled)",
+      "includeDefaultCodexDir: \(descriptor.includeDefaultCodexDir)",
+      "codexSessionDirs: \(descriptor.codexSessionDirs.isEmpty ? "-" : descriptor.codexSessionDirs.joined(separator: ", "))",
+      "includeDefaultClaudeDir: \(descriptor.includeDefaultClaudeDir)",
+      "claudeConfigDirs: \(descriptor.claudeConfigDirs.isEmpty ? "-" : descriptor.claudeConfigDirs.joined(separator: ", "))"
     ]
     if let ssh = descriptor.ssh {
       lines.append("ssh.host: \(ssh.host)")

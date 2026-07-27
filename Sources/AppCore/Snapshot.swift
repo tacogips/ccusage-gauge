@@ -377,6 +377,9 @@ public struct SnapshotService: Sendable {
   public let aggregationCache: UsageAggregationCache?
   public let claudeUsageEventLoader: ClaudeUsageEventLoader?
   public let codexUsageEventLoader: CodexUsageEventLoader?
+  let sourcePlanProvider: (@Sendable () async throws -> MachineSessionSourcePlan)?
+  private let sourceConfigurationFingerprint: (@Sendable () -> String)?
+  let sourceGenerationFence: MachineSessionSourceGenerationFence
   private let usageEventCoordinator: TimestampedUsageEventLoadCoordinator
 
   public init(
@@ -386,7 +389,9 @@ public struct SnapshotService: Sendable {
     defaultRefreshIntervalSeconds: Int = AppConfiguration.defaultPollIntervalSeconds,
     aggregationCache: UsageAggregationCache? = nil,
     claudeUsageEventLoader: ClaudeUsageEventLoader? = nil,
-    codexUsageEventLoader: CodexUsageEventLoader? = nil
+    codexUsageEventLoader: CodexUsageEventLoader? = nil,
+    sourcePlanProvider: (@Sendable () async throws -> MachineSessionSourcePlan)? = nil,
+    sourceConfigurationFingerprint: (@Sendable () -> String)? = nil
   ) {
     self.stateStore = stateStore
     self.client = client
@@ -395,6 +400,9 @@ public struct SnapshotService: Sendable {
     self.aggregationCache = aggregationCache
     self.claudeUsageEventLoader = claudeUsageEventLoader
     self.codexUsageEventLoader = codexUsageEventLoader
+    self.sourcePlanProvider = sourcePlanProvider
+    self.sourceConfigurationFingerprint = sourceConfigurationFingerprint
+    sourceGenerationFence = MachineSessionSourceGenerationFence()
     usageEventCoordinator = TimestampedUsageEventLoadCoordinator()
   }
 
@@ -405,6 +413,17 @@ public struct SnapshotService: Sendable {
     latestDate: Date? = nil,
     progress: SnapshotLoadProgressHandler? = nil
   ) async throws -> CostSnapshot {
+    if let attempt = try await beginSessionSourceAttempt() {
+      return try await withSessionSourceAttempt(attempt) {
+        try await snapshot(
+          now: now,
+          defaultCycle: defaultCycle,
+          earliestDate: earliestDate,
+          latestDate: latestDate,
+          progress: progress
+        )
+      }
+    }
     let loaded = try await stateStore.load(defaultCycle: defaultCycle)
     let state = try calculator.validatedState(loaded, now: now)
     if state != loaded { try await stateStore.save(state) }
@@ -474,6 +493,11 @@ public struct SnapshotService: Sendable {
   }
 
   public func menuBarSnapshot(now: Date = Date(), defaultCycle: ResetCycle = .daily) async throws -> CostSnapshot {
+    if let attempt = try await beginSessionSourceAttempt() {
+      return try await withSessionSourceAttempt(attempt) {
+        try await menuBarSnapshot(now: now, defaultCycle: defaultCycle)
+      }
+    }
     let loaded = try await stateStore.load(defaultCycle: defaultCycle)
     let state = try calculator.validatedState(loaded, now: now)
     if state != loaded { try await stateStore.save(state) }
@@ -552,7 +576,11 @@ public struct SnapshotService: Sendable {
   }
 
   private func validAggregationCache(now: Date) async -> AggregationCachePayload? {
-    guard let cached = await aggregationCache?.load(now: now) else { return nil }
+    guard let cached = await aggregationCache?.load(
+      now: now,
+      sourceConfigurationFingerprint: MachineSessionSourceAttempt.plan?.fingerprint
+        ?? sourceConfigurationFingerprint?()
+    ) else { return nil }
     guard parseDay(cached.cachedFrom) != nil,
           parseDay(cached.cachedThrough) != nil,
           cached.cachedFrom <= cached.cachedThrough else {
@@ -698,7 +726,9 @@ public struct SnapshotService: Sendable {
             metrics: result.metrics,
             sessions: result.sessions,
             coveredRange: AggregationCacheRange(since: range.since, through: range.until),
-            calendar: calculator.calendar
+            calendar: calculator.calendar,
+            sourceConfigurationFingerprint: MachineSessionSourceAttempt.plan?.fingerprint,
+            sourceGeneration: MachineSessionSourceAttempt.cacheGeneration
           )
         }
         return (index, result)
