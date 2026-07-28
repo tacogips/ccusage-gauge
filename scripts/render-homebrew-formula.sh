@@ -5,6 +5,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 artifact_name="ccusage-gauge"
 product="ccusage-gauge"
+source_repository="tacogips/ccusage-gauge"
 
 usage() {
   cat <<EOF
@@ -56,7 +57,7 @@ main() {
   version="$1"
   output="${2:-$repo_root/Formula/$artifact_name.rb}"
   release_dir="${RELEASE_DIR:-$repo_root/dist/homebrew}"
-  release_base_url="${RELEASE_BASE_URL:-https://github.com/user/repo/releases/download/v$version}"
+  release_base_url="${RELEASE_BASE_URL:-https://github.com/$source_repository/releases/download/v$version}"
 
   local darwin_arm64_sha darwin_x64_sha
   darwin_arm64_sha="$(sha_for_target "$version" darwin-arm64 "$release_dir")"
@@ -64,9 +65,9 @@ main() {
 
   mkdir -p "$(dirname "$output")"
   cat > "$output" <<EOF
-class App < Formula
-  desc "A Swift command line tool"
-  homepage "https://github.com/user/repo"
+class CcusageGauge < Formula
+  desc "Monitor AI coding-agent usage and costs"
+  homepage "https://github.com/$source_repository"
   version "$version"
   license "MIT"
 
