@@ -459,6 +459,106 @@ private func aggregateSnapshot(machine: String, generatedAt: Date, cost: Decimal
     }
     #expect(widened <= earliest)
   }
+
+  @Test func coveredDashboardRangeQueriesIssueNoCommands() async throws {
+    let root = try machineTemporaryDirectory()
+    let paths = AppPaths(
+      configFile: root.appendingPathComponent("config/ccusage-gauge/ccusage-config.json"),
+      stateFile: root.appendingPathComponent("state/ccusage-gauge/state.json"),
+      aggregationCacheFile: root.appendingPathComponent("cache/ccusage-gauge/aggregates.sqlite3")
+    )
+    let registryStore = MachineRegistryStore(fileURL: paths.machinesFile)
+    let registry = try registryStore.load()
+    let store = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: 20)
+    let runner = CollectCountingRunner()
+    let collector = try MachineCollector(
+      registry: registry,
+      store: store,
+      connectionTester: { _ in }
+    ) { descriptor in
+      SnapshotService(
+        stateStore: StateStore(fileURL: paths.stateFile),
+        client: CCUsageClient(commandRunner: runner, machine: descriptor.id),
+        aggregationCache: nil
+      )
+    }
+    defer { Task { await collector.stop() } }
+    let owner = MachineRegistryMutationOwner(store: registryStore, registry: registry, runtime: collector)
+    let router = MachineDashboardRouter(
+      store: store, collector: collector, mutationOwner: owner, paths: paths,
+      chartColors: ChartColorConfiguration()
+    )
+    await store.publish(
+      machineID: "local",
+      snapshot: aggregateSnapshot(machine: "local", generatedAt: Date(), cost: 1),
+      coverageStart: .distantPast,
+      revision: 0, generation: 0, now: Date()
+    )
+    for target in [
+      "/api/metrics?range=today&machine=local",
+      "/api/recent?machine=local",
+      "/api/metrics?range=today&machine=local",
+      "/api/recent?machine=local"
+    ] {
+      let response = await router.route(
+        target: target, method: "GET", headers: [:], body: Data(), listenerPort: 18_081
+      )
+      #expect(response.status == 200)
+    }
+    #expect(await runner.collectCount() == 0)
+  }
+
+  @Test func dashboardRangeQueryBeyondCoverageTriggersCollection() async throws {
+    let root = try machineTemporaryDirectory()
+    let paths = AppPaths(
+      configFile: root.appendingPathComponent("config/ccusage-gauge/ccusage-config.json"),
+      stateFile: root.appendingPathComponent("state/ccusage-gauge/state.json"),
+      aggregationCacheFile: root.appendingPathComponent("cache/ccusage-gauge/aggregates.sqlite3")
+    )
+    let registryStore = MachineRegistryStore(fileURL: paths.machinesFile)
+    let registry = try registryStore.load()
+    let store = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: 20)
+    let runner = CollectCountingRunner()
+    let collector = try MachineCollector(
+      registry: registry,
+      store: store,
+      connectionTester: { _ in }
+    ) { descriptor in
+      SnapshotService(
+        stateStore: StateStore(fileURL: paths.stateFile),
+        client: CCUsageClient(commandRunner: runner, machine: descriptor.id),
+        aggregationCache: nil
+      )
+    }
+    defer { Task { await collector.stop() } }
+    let owner = MachineRegistryMutationOwner(store: registryStore, registry: registry, runtime: collector)
+    let router = MachineDashboardRouter(
+      store: store, collector: collector, mutationOwner: owner, paths: paths,
+      chartColors: ChartColorConfiguration()
+    )
+    let calendar = Calendar.current
+    let now = Date()
+    await store.publish(
+      machineID: "local",
+      snapshot: aggregateSnapshot(machine: "local", generatedAt: now, cost: 1),
+      coverageStart: calendar.startOfDay(for: now),
+      revision: 0, generation: 0, now: now
+    )
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd"
+    let start = formatter.string(from: try #require(calendar.date(byAdding: .day, value: -8, to: now)))
+    let end = formatter.string(from: now)
+    _ = await router.route(
+      target: "/api/metrics?range=custom&start=\(start)&end=\(end)&machine=local",
+      method: "GET", headers: [:], body: Data(), listenerPort: 18_081
+    )
+    var collects = await runner.collectCount()
+    for _ in 0..<1_000 where collects == 0 {
+      try await Task.sleep(for: .milliseconds(1))
+      collects = await runner.collectCount()
+    }
+    #expect(collects >= 1)
+  }
 }
 
 @Suite("MergeMemoizationTests") struct MergeMemoizationTests {
