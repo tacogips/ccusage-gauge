@@ -292,10 +292,14 @@ func selectedPeriodCost(
   sessions: [CCUsageSessionMetricRecord],
   calendar: Calendar
 ) -> Decimal {
+  // Use a half-open window [start, end) to match the boundary convention used by
+  // DashboardQueryService (isWithin) and the custom-range filters, so a record
+  // landing exactly on the period's exclusive end is not double-counted here.
+  func isWithin(_ date: Date) -> Bool { date >= interval.start && date < interval.end }
   switch cycle {
   case .hourly, .customHours:
     return sessions
-      .filter { interval.contains($0.timestamp) }
+      .filter { isWithin($0.timestamp) }
       .reduce(Decimal.zero) { $0 + $1.costUSD }
   case .daily, .weekly, .monthly:
     return metrics
@@ -305,7 +309,7 @@ func selectedPeriodCost(
               let date = calendar.date(from: DateComponents(year: components[0], month: components[1], day: components[2])) else {
           return false
         }
-        return interval.contains(date)
+        return isWithin(date)
       }
       .reduce(Decimal.zero) { $0 + $1.costUSD }
   }

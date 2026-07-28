@@ -159,8 +159,11 @@ public struct ClaudeUsageEventLoader: Sendable {
           guard let event = decode(line: line, fractional: fractional, wholeSeconds: wholeSeconds) else { return true }
           let day = formatter.string(from: event.timestamp)
           if day < since { return false }
-          guard until.map({ day <= $0 }) ?? true,
-                latestByIdentity[event.identity] == nil else { return true }
+          guard until.map({ day <= $0 }) ?? true else { return true }
+          // Keep the highest-timestamp record for a given identity, matching the
+          // forward-scan dedup below, so daily totals do not depend on whether a
+          // `since` filter (which triggers this reverse scan) was supplied.
+          if let existing = latestByIdentity[event.identity], existing.timestamp >= event.timestamp { return true }
           latestByIdentity[event.identity] = event
           return true
         }

@@ -182,8 +182,11 @@ public struct MachineDashboardRouter: Sendable {
     do {
       switch path {
       case "/api/recent":
-        let limit = components.queryItems?.first(where: { $0.name == "limit" })?.value.flatMap(Int.init) ?? 48
-        guard (1...500).contains(limit) else { return error(status: 400, code: "invalid_limit", message: "limit must be 1...500") }
+        // A present-but-non-integer limit is rejected like an out-of-range one
+        // instead of silently defaulting to 48.
+        let limitValue = components.queryItems?.first(where: { $0.name == "limit" })?.value
+        let limit = limitValue.flatMap(Int.init) ?? (limitValue == nil ? 48 : nil)
+        guard let limit, (1...500).contains(limit) else { return error(status: 400, code: "invalid_limit", message: "limit must be 1...500") }
         return jsonWithScope(queryService.recent(snapshot: snapshot, limit: limit), scope: selection.scope)
       case "/api/day":
         guard let text = components.queryItems?.first(where: { $0.name == "date" })?.value,

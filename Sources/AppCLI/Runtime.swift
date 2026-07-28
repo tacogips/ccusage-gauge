@@ -20,8 +20,8 @@ enum CommandRuntime {
   }
 
   static func usageSnapshot(json: Bool) async throws {
-    let service = try makeSnapshotService()
     do {
+      let service = try makeSnapshotService()
       let snapshot = try await service.snapshot()
       if json {
         let encoder = JSONEncoder()
@@ -34,10 +34,14 @@ enum CommandRuntime {
       }
     } catch {
       if json {
+        // In JSON mode emit a single structured error to stderr and exit, so
+        // machine consumers do not also receive the plaintext "Error: ..." line
+        // ArgumentParser would print after a rethrow.
         let diagnostic = MachineDiagnosticClassifier.classify(error)
         let payload = ["error": ["code": diagnostic.code, "message": diagnostic.message]]
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         FileHandle.standardError.write(data + Data("\n".utf8))
+        exit(1)
       }
       throw error
     }
