@@ -1,8 +1,10 @@
 import { For, Show, createMemo } from "solid-js";
-import type { LoadStatusResponse, MachineStatus, MetricRow } from "./api";
+import type { LoadStatusResponse, MachineStatus, MetricKey, MetricRow } from "./api";
 import { machineHealthDiagnosticContent, machineHealthSummary } from "./machineObservability";
 
-export type MetricKey = "costUSD" | "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens";
+export type { MetricKey } from "./api";
+
+type BreakdownRow = Pick<MetricRow, MetricKey | "machine" | "model">;
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const integer = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
@@ -85,9 +87,9 @@ export function MachineHealthPanel(props: {
 }
 
 export function BreakdownBars(props: {
-  rows: MetricRow[];
+  rows: BreakdownRow[];
   metric: MetricKey;
-  keyOf: (row: MetricRow) => string;
+  keyOf: (row: BreakdownRow) => string;
   colorFor: (key: string) => string;
   label: string;
 }) {

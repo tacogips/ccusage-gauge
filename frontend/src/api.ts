@@ -10,6 +10,7 @@ export interface MetricRow {
   totalTokens: number;
   machine: string;
 }
+export type MetricKey = "costUSD" | "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens";
 export interface MetricTotals extends Omit<MetricRow, "date" | "agent" | "model" | "machine"> {}
 export interface MachineScope {
   requested: string;

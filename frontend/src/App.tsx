@@ -1,11 +1,12 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
-import { type BudgetResponse, type ChartColorsResponse, type CostRow, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type Machine, type MachineConnectionTestResponse, type MachineDataGap, type MachineLatestEvent, type MachineRefreshResponse, type MachinesResponse, type MachineStatusResponse, type MetricRow, type MetricsResponse, getJSON, mutationJSON, requestJSON } from "./api";
+import { type BudgetResponse, type ChartColorsResponse, type CostRow, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type Machine, type MachineConnectionTestResponse, type MachineDataGap, type MachineLatestEvent, type MachineRefreshResponse, type MachinesResponse, type MachineStatusResponse, type MetricKey, type MetricRow, type MetricsResponse, getJSON, mutationJSON, requestJSON } from "./api";
 import { machineSaveErrors, runMachineRefreshLifecycle } from "./machineActions";
 import { actionRefetchTargets } from "./machineObservability";
 import { availabilityErrorCode, dashboardErrorMessage, getCostSeriesState } from "./costSeriesState";
+import { currentViewMetricTotal } from "./currentViewMetrics";
 import { shieldResource, shouldBlockDashboard } from "./dashboardLoadingState";
 import { changingProxyKind, draftFromMachine, emptyMachineDraft, machineDraftErrors, machineRequestBody, machineSessionSourceBody, type MachineDraft, type MachineProxyKind } from "./machineForm";
-import { BreakdownBars, LoadingState, MachineHealthPanel, type MetricKey } from "./DashboardComponents";
+import { BreakdownBars, LoadingState, MachineHealthPanel } from "./DashboardComponents";
 import { MachineAdminPanel } from "./MachineAdminPanel";
 import {
   initialMachineLimit,
@@ -470,7 +471,10 @@ export default function App() {
     if (qualities.has("sessionEstimated")) return "Session estimate";
     return "Timestamped events";
   });
-  const total = (key: MetricKey) => filteredRows().reduce((sum, row) => sum + metricValue(row, key), 0);
+  // Cards and graph must describe the same view. Sub-daily series use session
+  // timing while daily series use daily aggregates, so totals follow the
+  // currently selected cost series instead of the separate metrics response.
+  const total = (key: MetricKey) => currentViewMetricTotal(filteredCostRows(), key);
   const chartTotal = createMemo(() => filteredCostRows().reduce((sum, row) => sum + metricValue(row, chartMetric()), 0));
   const chartMetricLabel = createMemo(() => chartMetrics.find(([value]) => value === chartMetric())?.[1] ?? "Cost");
   const chartTitle = createMemo(() => `${chartMetricLabel()} over time by ${stackBy()}`);
@@ -1064,11 +1068,11 @@ export default function App() {
             <div class="breakdown-grid">
               <div class="breakdown-col">
                 <h3 class="breakdown-title">By host</h3>
-                <BreakdownBars rows={filteredRows()} metric={chartMetric()} keyOf={(row) => row.machine} colorFor={colorForMachine} label="per host" />
+                <BreakdownBars rows={filteredCostRows()} metric={chartMetric()} keyOf={(row) => row.machine} colorFor={colorForMachine} label="per host" />
               </div>
               <div class="breakdown-col">
                 <h3 class="breakdown-title">By model</h3>
-                <BreakdownBars rows={filteredRows()} metric={chartMetric()} keyOf={(row) => row.model} colorFor={colorForModel} label="per model" />
+                <BreakdownBars rows={filteredCostRows()} metric={chartMetric()} keyOf={(row) => row.model} colorFor={colorForModel} label="per model" />
               </div>
             </div>
             </section>
