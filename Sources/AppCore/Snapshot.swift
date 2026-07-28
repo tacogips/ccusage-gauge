@@ -452,7 +452,10 @@ public struct SnapshotService: Sendable {
     let timezone = snapshotTimezoneIdentifier
     async let blockRecords = client.blocks(since: formatDay(initialFrom), until: today, timezone: timezone)
     async let usageRecords = loadUsage(ranges: ranges, cacheBefore: today, progress: progress)
-    let (points, loadedRanges) = try await (blockRecords, usageRecords)
+    let (rawPoints, loadedRanges) = try await (blockRecords, usageRecords)
+    // Blocks from different session sources share block-aligned start times;
+    // sum them so timestamp-keyed point merging keeps every source's cost.
+    let points = coalescingSameKeyPoints(rawPoints)
     let freshMetrics = loadedRanges.flatMap(\.metrics)
     let freshSessions = loadedRanges.flatMap(\.sessions)
     // The cached prefix is always sorted (SQLite `ORDER BY` on read, and the in-memory payload is
@@ -658,7 +661,9 @@ public struct SnapshotService: Sendable {
   private func loadMetrics(ranges: [(since: String, until: String)]) async throws -> [CCUsageMetricRecord] {
     guard !ranges.isEmpty else { return [] }
     let usagePerRange = try await usageForRanges(ranges)
-    return partitionUsage(usagePerRange, timestampedEvents: [], ranges: ranges, formatDay: memoizedDayFormatter()).flatMap(\.metrics)
+    return coalescingSameKeyMetrics(
+      partitionUsage(usagePerRange, timestampedEvents: [], ranges: ranges, formatDay: memoizedDayFormatter()).flatMap(\.metrics)
+    )
   }
 
   private func loadUsage(
@@ -840,8 +845,8 @@ public struct SnapshotService: Sendable {
       ))
     }
     return UsageLoadResult(
-      metrics: metrics,
-      sessions: fallbackSessions + reconciledTimestampedSessions(
+      metrics: coalescingSameKeyMetrics(metrics),
+      sessions: coalescingSameKeySessions(fallbackSessions) + reconciledTimestampedSessions(
         events: timestampedEvents,
         metrics: metrics,
         calendar: calculator.calendar
