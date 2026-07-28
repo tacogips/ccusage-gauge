@@ -48,8 +48,17 @@ struct CCUsageGaugeMenuBarApp {
 }
 
 @MainActor
-final class MenuBarDelegate: NSObject, NSApplicationDelegate {
+final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+  private struct StatusIconState: Equatable {
+    let fraction: Decimal?
+    let hasBudget: Bool
+    let warning: Bool
+  }
+
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+  private let menu = NSMenu()
+  private var appliedTitle: String?
+  private var appliedIconState: StatusIconState?
   private let launchAtLoginController: LaunchAtLoginControlling
   private var paths = AppPaths.production()
   private lazy var bootstrapLogger = BootstrapLogger(paths: paths, runtime: .menuBar)
@@ -88,8 +97,15 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     bootstrapLogger.activate()
     configureStatusButton()
     updateStatusTitle("$—")
-    rebuildMenu()
+    // Attach the menu once and let it rebuild lazily on open (menuNeedsUpdate),
+    // so background refreshes never swap or redraw the menu while it is showing.
+    menu.delegate = self
+    statusItem.menu = menu
     Task { await bootstrap() }
+  }
+
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    populateMenu(menu)
   }
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -261,7 +277,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       isUsageUnavailable = true
       collectionWarnings = []
       updateStatusTitle("$!")
-      rebuildMenu()
+      refreshE2EWindow()
     }
     openE2EWindowIfNeeded()
   }
@@ -281,7 +297,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       isUsageUnavailable = true
       updateStatusTitle(latestSnapshot.map { Self.statusTitle($0) + " !" } ?? "$!")
     }
-    rebuildMenu()
+    refreshE2EWindow()
   }
 
   private func startPolling(interval: Int, refreshImmediately: Bool = true) {
@@ -292,7 +308,9 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       }
       while !Task.isCancelled {
         await self?.refresh()
-        do { try await Task.sleep(for: .seconds(interval)) } catch { break }
+        // Clamp to at least one second so a corrupt refreshIntervalSeconds
+        // cannot spin the refresh loop.
+        do { try await Task.sleep(for: .seconds(max(interval, 1))) } catch { break }
       }
     }
   }
@@ -300,7 +318,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   private func refresh() async {
     let refreshGeneration = stateMutationGeneration
     guard let machineSnapshotStore else {
-      rebuildMenu()
+      refreshE2EWindow()
       return
     }
     var selectedMachineIDs: [String] = []
@@ -324,11 +342,11 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
       isUsageUnavailable = true
       updateStatusTitle(latestSnapshot.map { Self.statusTitle($0) + " !" } ?? "$!")
     }
-    rebuildMenu()
+    refreshE2EWindow()
   }
 
-  private func rebuildMenu() {
-    let menu = NSMenu()
+  private func populateMenu(_ menu: NSMenu) {
+    menu.removeAllItems()
     if let snapshot = latestSnapshot {
       let budgetItem = NSMenuItem()
       budgetItem.view = BudgetMenuView(snapshot: snapshot)
@@ -359,8 +377,6 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     menu.addItem(withTitle: "Refresh", action: #selector(refreshAction), keyEquivalent: "f").target = self
     menu.addItem(.separator())
     menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q").target = self
-    statusItem.menu = menu
-    refreshE2EWindow()
   }
 
   private func errorDetailsItem(message: String) -> NSMenuItem {
@@ -545,7 +561,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
         latestSnapshot = projectedSnapshot
         updateStatusTitle(Self.statusTitle(projectedSnapshot))
       }
-      rebuildMenu()
+      refreshE2EWindow()
       if snapshotService != nil { Task { await refresh() } }
       return true
     } catch {
@@ -580,12 +596,12 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     } catch {
       launchAtLoginError = "Launch at Login failed: \(error.localizedDescription)"
     }
-    rebuildMenu()
+    refreshE2EWindow()
   }
 
   @objc private func toggleDashboard() {
     if dashboardServer?.isRunning == true { dashboardServer?.stop(); dashboardServer = nil } else { startDashboard() }
-    rebuildMenu()
+    refreshE2EWindow()
   }
 
   private func startDashboard() {
@@ -712,22 +728,37 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func updateStatusTitle(_ title: String) {
-    statusItem.button?.title = title
-    statusItem.button?.setAccessibilityValue(title)
+    // Only touch the button when the value actually changed; reassigning an
+    // identical title forces a redraw of the menu-bar item, which reads as a blink.
+    if appliedTitle != title {
+      appliedTitle = title
+      statusItem.button?.title = title
+      statusItem.button?.setAccessibilityValue(title)
+    }
     updateStatusIcon()
   }
 
   private func updateStatusIcon() {
     let hasWarning = isUsageUnavailable || !collectionWarnings.isEmpty
-    statusItem.button?.image = MenuBarPieIcon.image(
+    let iconState = StatusIconState(
       fraction: latestSnapshot?.budget.visualFraction,
       hasBudget: currentState?.budgetUSD != nil,
       warning: hasWarning
     )
+    // Regenerating and reassigning the pie image every poll is what makes the
+    // icon flicker, so skip it unless the rendered inputs changed.
+    if appliedIconState != iconState {
+      appliedIconState = iconState
+      statusItem.button?.image = MenuBarPieIcon.image(
+        fraction: iconState.fraction,
+        hasBudget: iconState.hasBudget,
+        warning: iconState.warning
+      )
+      e2eIconView?.image = statusItem.button?.image
+    }
     let label = hasWarning ? "Warning: machine usage collection failed" : "ccusage-gauge cost in selected period"
     statusItem.button?.setAccessibilityLabel(label)
     statusItem.button?.toolTip = hasWarning ? errorMessage : "ccusage-gauge — cost in selected period"
-    e2eIconView?.image = statusItem.button?.image
   }
 
   private func openE2EWindowIfNeeded() {
