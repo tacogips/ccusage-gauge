@@ -65,6 +65,24 @@ func rangeLoadMessage(_ state: MachineRangeLoadState) -> String {
   return "Selected usage range is ready"
 }
 
+func effectiveMachineLoadPhase(
+  collection: DashboardLoadStatus,
+  range: MachineRangeLoadState?
+) -> DashboardLoadPhase {
+  // A completed range record can outlive a later polling failure. Never let
+  // that stale `.ready` record hide the current collection failure.
+  if collection.phase == .failed { return .failed }
+  return range?.phase ?? collection.phase
+}
+
+func effectiveMachineLoadMessage(
+  collection: DashboardLoadStatus,
+  range: MachineRangeLoadState?
+) -> String {
+  if collection.phase == .failed { return collection.message }
+  return range.map(rangeLoadMessage) ?? collection.message
+}
+
 func dashboardMutationAllowed(headers: [String: String], listenerPort: Int) -> Bool {
   let normalized = Dictionary(uniqueKeysWithValues: headers.map { ($0.key.lowercased(), $0.value) })
   guard normalized["x-ccusage-gauge-mutation"] == "1" else { return false }

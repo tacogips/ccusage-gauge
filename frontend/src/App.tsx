@@ -3,6 +3,7 @@ import { type BudgetResponse, type ChartColorsResponse, type CostRow, type Dashb
 import { machineSaveErrors, runMachineRefreshLifecycle } from "./machineActions";
 import { actionRefetchTargets } from "./machineObservability";
 import { availabilityErrorCode, dashboardErrorMessage, getCostSeriesState } from "./costSeriesState";
+import { shieldResource, shouldBlockDashboard } from "./dashboardLoadingState";
 import { changingProxyKind, draftFromMachine, emptyMachineDraft, machineDraftErrors, machineRequestBody, machineSessionSourceBody, type MachineDraft, type MachineProxyKind } from "./machineForm";
 import { BreakdownBars, LoadingState, MachineHealthPanel, type MetricKey } from "./DashboardComponents";
 import { MachineAdminPanel } from "./MachineAdminPanel";
@@ -353,8 +354,10 @@ export default function App() {
     ? storedColorScheme
     : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   const [colorScheme, setColorScheme] = createSignal<ColorScheme>(initialColorScheme);
-  const [machines, { refetch: refreshMachines }] = createResource(() => getJSON<MachinesResponse>("/api/machines"));
-  const [chartColors] = createResource(() => getJSON<ChartColorsResponse>("/api/chart-colors"));
+  const [machinesResource, { refetch: refreshMachines }] = createResource(() => getJSON<MachinesResponse>("/api/machines"));
+  const machines = shieldResource(machinesResource);
+  const [chartColorsResource] = createResource(() => getJSON<ChartColorsResponse>("/api/chart-colors"));
+  const chartColors = shieldResource(chartColorsResource);
   const requestedMachineScope = createMemo(() => requestedMachineIDs(machines()?.machines ?? [], selectedMachines()));
   const machineSuffix = createMemo(() => isDashboardStateLoaded() && machines() != null
     ? machineQuery(requestedMachineScope())
@@ -364,31 +367,36 @@ export default function App() {
     return suffix == null || suffix.length === 0 ? path : `${path}${path.includes("?") ? "&" : "?"}${suffix}`;
   };
   const machineStatusPath = createMemo(() => machineSuffix() == null ? undefined : withMachine("/api/machine-status"));
-  const [machineStatuses, { refetch: refreshMachineStatuses }] = createResource(
+  const [machineStatusesResource, { refetch: refreshMachineStatuses }] = createResource(
     machineStatusPath,
     (path) => getJSON<MachineStatusResponse>(path)
   );
+  const machineStatuses = shieldResource(machineStatusesResource);
 
   const periodPath = createMemo(() => machineSuffix() == null ? undefined : range() === "custom"
     ? withMachine(`/api/metrics?range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`)
     : withMachine(`/api/metrics?range=${range()}`));
-  const [period, { refetch: refreshPeriod }] = createResource(periodPath, (path) => getJSON<MetricsResponse>(path));
+  const [periodResource, { refetch: refreshPeriod }] = createResource(periodPath, (path) => getJSON<MetricsResponse>(path));
+  const period = shieldResource(periodResource);
   const costPath = createMemo(() => machineSuffix() == null ? undefined : range() === "custom"
     ? withMachine(`/api/cost-series?granularity=${granularity()}&range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`)
     : withMachine(`/api/cost-series?granularity=${granularity()}&range=${range()}`));
-  const [costSeries, { refetch: refreshCostSeries }] = createResource(costPath, getCostSeriesState);
+  const [costSeriesResource, { refetch: refreshCostSeries }] = createResource(costPath, getCostSeriesState);
+  const costSeries = shieldResource(costSeriesResource);
   const budgetPath = createMemo(() => machineSuffix() == null ? undefined : withMachine("/api/budget"));
-  const [budget, { refetch: refreshBudget }] = createResource(budgetPath, (path) => getJSON<BudgetResponse>(path));
+  const [budgetResource, { refetch: refreshBudget }] = createResource(budgetPath, (path) => getJSON<BudgetResponse>(path));
+  const budget = shieldResource(budgetResource);
   const loadStatusPath = createMemo(() => {
     if (machineSuffix() == null) return undefined;
     return range() === "custom"
       ? withMachine(`/api/load-status?range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`)
       : withMachine(`/api/load-status?range=${range()}`);
   });
-  const [loadStatus, { refetch: refreshLoadStatus }] = createResource(
+  const [loadStatusResource, { refetch: refreshLoadStatus }] = createResource(
     loadStatusPath,
     (path) => getJSON<LoadStatusResponse>(path)
   );
+  const loadStatus = shieldResource(loadStatusResource);
 
   const selectableMachines = createMemo(() => (machines()?.machines ?? []).filter((machine) => machine.enabled));
   const visibleMachines = createMemo(() => visibleMachineItems(selectableMachines(), areAllMachinesVisible()));
@@ -499,7 +507,13 @@ export default function App() {
     (period() == null && !periodAvailabilityError())
     || costSeries() == null
     || (budget() == null && !budgetAvailabilityError()));
-  const isBlockingLoading = createMemo(() => isInitialLoading() || isRangeLoading());
+  const isBlockingLoading = createMemo(() => shouldBlockDashboard({
+    isInitialLoading: isInitialLoading(),
+    isRangeLoading: isRangeLoading(),
+    isFetching: period.loading || costSeries.loading || budget.loading,
+    hasFailedRequest: period.error != null || costSeries.error != null || budget.error != null,
+    loadStatus: loadStatus(),
+  }));
   const isBackgroundLoading = createMemo(() => !isBlockingLoading() &&
     (loadStatus()?.isLoading || isRefreshing() || period.loading || costSeries.loading || budget.loading));
   const visibleRangeLoad = createMemo(() => period()?.rangeLoad ?? costSeries()?.rangeLoad);
@@ -743,6 +757,22 @@ export default function App() {
     if (key === lastVisibleRangeProgress) return;
     lastVisibleRangeProgress = key;
     void Promise.all([refreshPeriod(), refreshCostSeries()]);
+  });
+  let lastTerminalRecovery = "";
+  createEffect(() => {
+    const status = loadStatus();
+    if (!status || !["ready", "failed"].includes(status.phase)
+        || period.loading || costSeries.loading || budget.loading) return;
+    if (period() != null && costSeries() != null && budget() != null) return;
+    const key = `${loadStatusPath()}:${status.phase}:${status.completed}/${status.total}`;
+    if (key === lastTerminalRecovery) return;
+    lastTerminalRecovery = key;
+    void Promise.all([
+      refreshPeriod(),
+      refreshCostSeries(),
+      refreshBudget(),
+      refreshMachineStatuses(),
+    ]);
   });
   onMount(() => {
     void getJSON<DashboardUIStateResponse>("/api/dashboard-state")

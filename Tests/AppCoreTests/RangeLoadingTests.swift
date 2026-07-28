@@ -50,6 +50,27 @@ private struct RangeFixture: Sendable {
 }
 
 @Suite struct RangeLoadingTests {
+  @Test func completedRangeDoesNotHideNewerCollectionFailure() {
+    let collection = DashboardLoadStatus(
+      phase: .failed,
+      message: "Usage data loading failed",
+      completed: 1,
+      total: 1,
+      isLoading: false
+    )
+    let range = MachineRangeLoadState(
+      machineID: "remote",
+      requestedStart: Date(timeIntervalSince1970: 0),
+      requestedEnd: Date(timeIntervalSince1970: 86_400),
+      phase: .ready,
+      progress: SnapshotLoadProgress(completed: 1, total: 1),
+      isLoading: false
+    )
+
+    #expect(effectiveMachineLoadPhase(collection: collection, range: range) == .failed)
+    #expect(effectiveMachineLoadMessage(collection: collection, range: range) == "Usage data loading failed")
+  }
+
   @Test func snapshotLoadsOnlyRequestedDayInsteadOfCurrentWeek() async throws {
     let fixture = try await makeFixture()
     let requested = try #require(day("2026-07-14", calendar: fixture.calendar))

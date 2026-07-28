@@ -322,8 +322,8 @@ public struct MachineDashboardRouter: Sendable {
         let range = rangeByMachine[id]
         return MachineLoadStatusItem(
           id: id,
-          phase: range?.phase ?? status.phase,
-          message: range.map(rangeLoadMessage) ?? status.message,
+          phase: effectiveMachineLoadPhase(collection: status, range: range),
+          message: effectiveMachineLoadMessage(collection: status, range: range),
           completed: range?.progress.completed ?? status.completed,
           total: range?.progress.total ?? status.total,
           isLoading: range?.isLoading ?? status.isLoading,
