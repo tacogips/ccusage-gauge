@@ -294,7 +294,7 @@ refresh.
 ## Remote machines
 
 `serve` always exposes the synthetic `local` machine and loads SSH descriptors
-from the closed, version-2 `~/.config/ccusage-gauge/machines.json` registry.
+from the closed, version-3 `~/.config/ccusage-gauge/machines.json` registry.
 Registry creation and edits are available from the dashboard. SSH collection
 executes the remote `ccusage` binary through an operator-provided forwarded port;
 it does not deploy an agent, push data, or persist a cache remotely. Identity
@@ -341,6 +341,52 @@ credential-isolation verification. Docker Swarm, file-backed Compose secrets,
 host SSH mounts, credential bind mounts, and named volumes are not supported
 fallbacks.
 
+## Session source directories
+
+Every machine — the synthetic `local` machine and each SSH machine — carries
+its own list of Codex home directories (`codexSessionDirs`) and Claude config
+directories (`claudeConfigDirs`), plus two flags that control whether the
+default locations are also read (`includeDefaultCodexDir` for `~/.codex` or
+`CODEX_HOME`, `includeDefaultClaudeDir` for `~/.claude` or
+`CLAUDE_CONFIG_DIR`). Usage from every configured directory of a machine is
+collected and summed into that machine's row. All fields default to today's
+behavior: empty lists with both defaults enabled.
+
+Typical setups:
+
+- **One machine, many agents.** A host runs several Codex instances in Docker
+  with their session directories bound to host volumes. Add each bound path to
+  the machine's `codexSessionDirs` and the machine row aggregates all of them
+  together with the default directories.
+- **One host, separate rows.** To track directories on the same host
+  separately, register the host as multiple logical machines, give each one
+  its own directory list, and disable the default directories on entries that
+  must not read `~/.codex`/`~/.claude`.
+
+Paths must be absolute or `~`-prefixed; for SSH machines they are resolved on
+the remote host (`~` expands to the remote `$HOME`), and a directory that does
+not exist yet simply contributes no usage. Directories can be edited from the
+dashboard's machine admin panel, the CLI, or the HTTP API:
+
+```bash
+# CLI: replace the Codex directory list and stop reading ~/.codex.
+ccusage-gauge client machines update build-server \
+  --codex-session-dir /srv/codex-a --codex-session-dir /srv/codex-b \
+  --exclude-default-codex-dir
+
+# API: the same change as a tri-state PATCH (omitted fields stay unchanged).
+curl -X PATCH http://127.0.0.1:18081/api/machines/build-server \
+  -H 'Content-Type: application/json' \
+  -H 'X-CCUsage-Gauge-Mutation: 1' \
+  -d '{"codexSessionDirs":["/srv/codex-a","/srv/codex-b"],"includeDefaultCodexDir":false}'
+```
+
+Committed edits apply without restarting ccusage-gauge: the collector rebuilds
+the machine's source plan, discards caches produced under the previous
+configuration, and recollects with the new directory set on the next cycle.
+The dashboard intentionally returns to its loading state for that machine
+while the recollection replaces values from the old configuration.
+
 ## Dashboard client commands
 
 The `ccusage-gauge client` command tree talks to a running dashboard server over
@@ -381,6 +427,17 @@ ccusage-gauge client machines add remote-via-jump \
   --host box.example.internal --user ccusage \
   --proxy-jump-host bastion.example.internal --proxy-jump-user ccusage \
   --proxy-jump-known-hosts-file ~/.ssh/known_hosts
+
+# Register an SSH machine that reads only explicit session directories.
+ccusage-gauge client machines add docker-host \
+  --host docker.example.internal --user ccusage \
+  --codex-session-dir /srv/codex-a --codex-session-dir /srv/codex-b \
+  --exclude-default-codex-dir
+
+# Update session-source directories on an existing machine (see
+# "Session source directories" above); applies without a restart.
+ccusage-gauge client machines update local \
+  --claude-config-dir ~/work/claude --include-default-claude-dir
 
 # Validate connectivity or collect one machine immediately.
 ccusage-gauge client machines test-connection remote-box
