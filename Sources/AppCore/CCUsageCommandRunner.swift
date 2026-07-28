@@ -291,6 +291,16 @@ public struct LocalCCUsageCommandRunner: CCUsageSourceCommandRunner, Sendable {
     }
   }
 
+  private static func disabledAgentRoot(_ agent: MachineSessionAgent) -> String {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("ccusage-gauge-disabled-\(agent.rawValue)", isDirectory: true)
+    try? FileManager.default.createDirectory(
+      at: root.appendingPathComponent(agent.scanDirectoryName, isDirectory: true),
+      withIntermediateDirectories: true
+    )
+    return root.path
+  }
+
   public func run(
     arguments: [String],
     source: MachineSessionSource,
@@ -301,8 +311,11 @@ public struct LocalCCUsageCommandRunner: CCUsageSourceCommandRunner, Sendable {
       throw CCUsageCommandFailure(runnerKind: .local, phase: .spawnFailed)
     }
     var environment = ProcessInfo.processInfo.environment
-    environment["CODEX_HOME"] = source.agent == .codex ? value : "/dev/null/ccusage-gauge-disabled-codex"
-    environment["CLAUDE_CONFIG_DIR"] = source.agent == .claude ? value : "/dev/null/ccusage-gauge-disabled-claude"
+    // ccusage hard-errors on a nonexistent agent dir, so the agent not covered
+    // by this source is pointed at an empty directory with the expected
+    // structure, which yields empty data instead of a CLI error.
+    environment["CODEX_HOME"] = source.agent == .codex ? value : Self.disabledAgentRoot(.codex)
+    environment["CLAUDE_CONFIG_DIR"] = source.agent == .claude ? value : Self.disabledAgentRoot(.claude)
     do {
       let result = try await environmentRunner.run(
         executable: executable,
@@ -552,10 +565,12 @@ public struct SSHCCUsageCommandRunner:
       esac
       exit 0
     fi
+    disabled_root=${TMPDIR:-/tmp}/ccusage-gauge-disabled
+    mkdir -p "$disabled_root/codex/sessions" "$disabled_root/claude/projects"
     if [ "$agent" = codex ]; then
-      CODEX_HOME=$source_value CLAUDE_CONFIG_DIR=/dev/null/ccusage-gauge-disabled-claude "$executable" "$@"
+      CODEX_HOME=$source_value CLAUDE_CONFIG_DIR=$disabled_root/claude "$executable" "$@"
     else
-      CODEX_HOME=/dev/null/ccusage-gauge-disabled-codex CLAUDE_CONFIG_DIR=$source_value "$executable" "$@"
+      CODEX_HOME=$disabled_root/codex CLAUDE_CONFIG_DIR=$source_value "$executable" "$@"
     fi
     """
 

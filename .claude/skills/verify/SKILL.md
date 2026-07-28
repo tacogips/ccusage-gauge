@@ -39,6 +39,14 @@ Gotcha: use FIXED block `startTime`s (e.g. today T03:00:00Z). Relative
 "minutes ago" timestamps mint new cost points every collection cycle and fake
 an inflation bug that isn't there.
 
+Gotcha: real ccusage (20.0.x) HARD-ERRORS (exit 1, `CliError: No valid Claude
+data directories found`) when `CODEX_HOME`/`CLAUDE_CONFIG_DIR` points at a
+nonexistent path; a directory that exists but has an empty `sessions/` /
+`projects/` substructure yields empty data with exit 0. Make the stub exit 1
+on nonexistent dirs too — a lenient stub hid exactly this integration break
+once. After API-level checks pass, also launch the real menu-bar app
+(`task app:run`) against the real ccusage at least once.
+
 ## Useful endpoints
 
 - `GET /api/machines`, `GET /api/machines/<id>` — machine round-trip
