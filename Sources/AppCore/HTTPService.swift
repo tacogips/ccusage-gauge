@@ -483,8 +483,9 @@ public struct DashboardRouter: Sendable {
         let snapshot = try await snapshotCache.snapshot(earliestDate: requestedCoverageStart(for: path, components: components))
         switch path {
         case "/api/recent":
-          let limit = components.queryItems?.first(where: { $0.name == "limit" })?.value.flatMap(Int.init) ?? 48
-          guard (1...500).contains(limit) else { return errorResponse(status: 400, code: "invalid_limit", message: "limit must be 1...500") }
+          let limitValue = components.queryItems?.first(where: { $0.name == "limit" })?.value
+          let limit = limitValue.flatMap(Int.init) ?? (limitValue == nil ? 48 : nil)
+          guard let limit, (1...500).contains(limit) else { return errorResponse(status: 400, code: "invalid_limit", message: "limit must be 1...500") }
           return json(queryService.recent(snapshot: snapshot, limit: limit))
         case "/api/day":
           guard let text = components.queryItems?.first(where: { $0.name == "date" })?.value,
@@ -543,6 +544,11 @@ public struct DashboardRouter: Sendable {
       }
     }
     guard let file = assetResolver.resolve(path: path), let data = try? Data(contentsOf: file) else {
+      // With assets installed, an unresolved path is a genuinely missing file
+      // (e.g. a stale hashed asset) — report 404, not "assets are not installed".
+      if assetResolver.resolve(path: "/") != nil {
+        return errorResponse(status: 404, code: "not_found", message: "File not found")
+      }
       return errorResponse(status: 503, code: "assets_missing", message: "Dashboard assets are not installed")
     }
     return HTTPResponse(status: 200, contentType: Self.contentType(for: file.pathExtension), body: data)

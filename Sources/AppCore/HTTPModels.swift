@@ -34,11 +34,18 @@ public struct StaticAssetResolver: Sendable {
   public func resolve(path: String) -> URL? {
     let requested = path == "/" ? "index.html" : String(path.drop(while: { $0 == "/" }))
     guard !requested.contains("..") else { return nil }
+    // Fall back to index.html only for extensionless navigation routes. Requests
+    // that target a concrete file (e.g. /assets/index-*.js) must resolve to that
+    // file or fail, never to index.html, so a missing asset never gets served as
+    // HTML with a text/html content type (which browsers reject for modules).
+    let allowsIndexFallback = !path.hasPrefix("/api/")
+      && URL(fileURLWithPath: requested).pathExtension.isEmpty
     for root in roots() {
       let candidate = root.appendingPathComponent(requested)
       if FileManager.default.isReadableFile(atPath: candidate.path) { return candidate }
+      guard allowsIndexFallback else { continue }
       let index = root.appendingPathComponent("index.html")
-      if !path.hasPrefix("/api/"), FileManager.default.isReadableFile(atPath: index.path) { return index }
+      if FileManager.default.isReadableFile(atPath: index.path) { return index }
     }
     return nil
   }
