@@ -68,7 +68,6 @@ main() {
 class CcusageGauge < Formula
   desc "Monitor AI coding-agent usage and costs"
   homepage "https://github.com/$source_repository"
-  version "$version"
   license "MIT"
 
   livecheck do
