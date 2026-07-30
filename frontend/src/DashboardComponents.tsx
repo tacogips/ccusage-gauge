@@ -109,9 +109,9 @@ export function BreakdownBars(props: {
       <div class="breakdown-bars" role="img" aria-label={`${props.metric} total ${props.label} for the selected period`}>
         <For each={totals()}>{(entry) => (
           <div class="breakdown-bar-row">
-            <span class="breakdown-name">
+            <span class="breakdown-name" data-tooltip={entry.key}>
               <i class="breakdown-swatch" style={{ background: props.colorFor(entry.key) }} aria-hidden="true" />
-              <span class="breakdown-label" title={entry.key}>{entry.key}</span>
+              <span class="breakdown-label">{entry.key}</span>
             </span>
             <div class="breakdown-track">
               <div class="breakdown-fill" style={{ width: `${(entry.value / maximum()) * 100}%`, background: props.colorFor(entry.key) }} title={`${entry.key}: ${format(entry.value)} · ${share(entry.value)}%`} />
