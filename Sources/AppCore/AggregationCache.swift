@@ -19,6 +19,7 @@ public struct AggregationCachePayload: Equatable, Sendable {
   public let metrics: [CCUsageMetricRecord]
   public let sessions: [CCUsageSessionMetricRecord]
   public let coveredRanges: [AggregationCacheRange]
+  public let directoryCoveredRanges: [AggregationCacheRange]
   public let sourceConfigurationFingerprint: String?
 
   public init(
@@ -29,6 +30,7 @@ public struct AggregationCachePayload: Equatable, Sendable {
     metrics: [CCUsageMetricRecord],
     sessions: [CCUsageSessionMetricRecord],
     coveredRanges: [AggregationCacheRange]? = nil,
+    directoryCoveredRanges: [AggregationCacheRange] = [],
     sourceConfigurationFingerprint: String? = nil
   ) {
     self.createdAt = createdAt
@@ -38,6 +40,7 @@ public struct AggregationCachePayload: Equatable, Sendable {
     self.metrics = metrics
     self.sessions = sessions
     self.coveredRanges = coveredRanges ?? [AggregationCacheRange(since: cachedFrom, through: cachedThrough)]
+    self.directoryCoveredRanges = directoryCoveredRanges
     self.sourceConfigurationFingerprint = sourceConfigurationFingerprint
   }
 }
@@ -142,8 +145,11 @@ public actor UsageAggregationCache {
     createdAt: Date? = nil,
     now: Date = Date(),
     coveredRanges: [AggregationCacheRange]? = nil,
+    directoryCoveredRanges: [AggregationCacheRange]? = nil,
     sourceConfigurationFingerprint: String? = nil
   ) throws {
+    let resolvedCoveredRanges = coveredRanges
+      ?? [AggregationCacheRange(since: cachedFrom, through: cachedThrough)]
     let payload = AggregationCachePayload(
       createdAt: createdAt ?? now,
       updatedAt: now,
@@ -151,7 +157,8 @@ public actor UsageAggregationCache {
       cachedThrough: cachedThrough,
       metrics: metrics,
       sessions: sessions,
-      coveredRanges: coveredRanges,
+      coveredRanges: resolvedCoveredRanges,
+      directoryCoveredRanges: directoryCoveredRanges ?? resolvedCoveredRanges,
       sourceConfigurationFingerprint: sourceConfigurationFingerprint ?? expectedSourceConfigurationFingerprint
     )
     try fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -177,8 +184,19 @@ public actor UsageAggregationCache {
       }
     }
     let current = load(now: now, sourceConfigurationFingerprint: expectedSourceConfigurationFingerprint)
+    let existingAggregateCoverage = current?.coveredRanges ?? []
+    func wasAggregateCovered(_ day: String) -> Bool {
+      existingAggregateCoverage.contains { range in
+        range.since <= day && day <= range.through
+      }
+    }
     let retainedMetrics = (current?.metrics ?? []).filter {
-      $0.date < coveredRange.since || $0.date > coveredRange.through
+      $0.date < coveredRange.since
+        || $0.date > coveredRange.through
+        || wasAggregateCovered($0.date)
+    }
+    let replacementMetrics = metrics.filter {
+      !wasAggregateCovered($0.date)
     }
     let retainedSessions = (current?.sessions ?? []).filter {
       let day = Self.dayString($0.timestamp, calendar: calendar)
@@ -188,13 +206,16 @@ public actor UsageAggregationCache {
     guard let cachedFrom = ranges.map(\.since).min(),
           let cachedThrough = ranges.map(\.through).max() else { return }
     try save(
-      metrics: (retainedMetrics + metrics).sorted(by: metricsInIncreasingOrder),
+      metrics: (retainedMetrics + replacementMetrics).sorted(by: metricsInIncreasingOrder),
       sessions: (retainedSessions + sessions).sorted(by: sessionsInIncreasingOrder),
       cachedFrom: cachedFrom,
       cachedThrough: cachedThrough,
       createdAt: current?.createdAt,
       now: now,
       coveredRanges: ranges,
+      directoryCoveredRanges: Self.normalizedRanges(
+        (current?.directoryCoveredRanges ?? []) + [coveredRange]
+      ),
       sourceConfigurationFingerprint: expectedSourceConfigurationFingerprint
     )
   }
@@ -272,6 +293,7 @@ public actor UsageAggregationCache {
       metrics: metrics,
       sessions: sessions,
       coveredRanges: try readCoveredRanges(from: database, fallback: metadata),
+      directoryCoveredRanges: try readDirectoryCoveredRanges(from: database),
       sourceConfigurationFingerprint: metadata.sourceConfigurationFingerprint
     )
   }
@@ -283,13 +305,20 @@ public actor UsageAggregationCache {
     try execute("BEGIN IMMEDIATE", in: database)
     do {
       try execute(
-        "DELETE FROM cache_metadata; DELETE FROM daily_metrics; DELETE FROM session_metrics; DELETE FROM coverage_ranges",
+        """
+        DELETE FROM cache_metadata;
+        DELETE FROM daily_metrics;
+        DELETE FROM session_metrics;
+        DELETE FROM coverage_ranges;
+        DELETE FROM directory_coverage_ranges
+        """,
         in: database
       )
       try insertMetadata(payload, into: database)
       try insertMetrics(payload.metrics, into: database)
       try insertSessions(payload.sessions, into: database)
       try insertCoveredRanges(payload.coveredRanges, into: database)
+      try insertDirectoryCoveredRanges(payload.directoryCoveredRanges, into: database)
       try execute("COMMIT", in: database)
     } catch {
       try? execute("ROLLBACK", in: database)
@@ -327,7 +356,8 @@ public actor UsageAggregationCache {
         input_tokens INTEGER NOT NULL,
         output_tokens INTEGER NOT NULL,
         cache_creation_tokens INTEGER NOT NULL,
-        cache_read_tokens INTEGER NOT NULL
+        cache_read_tokens INTEGER NOT NULL,
+        directory TEXT
       );
       CREATE TABLE IF NOT EXISTS session_metrics (
         timestamp REAL NOT NULL,
@@ -338,7 +368,8 @@ public actor UsageAggregationCache {
         output_tokens INTEGER NOT NULL,
         cache_creation_tokens INTEGER NOT NULL,
         cache_read_tokens INTEGER NOT NULL,
-        data_quality TEXT NOT NULL
+        data_quality TEXT NOT NULL,
+        directory TEXT
       );
       CREATE INDEX IF NOT EXISTS daily_metrics_date_idx ON daily_metrics(date);
       CREATE INDEX IF NOT EXISTS session_metrics_timestamp_idx ON session_metrics(timestamp);
@@ -352,6 +383,11 @@ public actor UsageAggregationCache {
         through_day TEXT NOT NULL,
         PRIMARY KEY(since_day, through_day)
       );
+      CREATE TABLE IF NOT EXISTS directory_coverage_ranges (
+        since_day TEXT NOT NULL,
+        through_day TEXT NOT NULL,
+        PRIMARY KEY(since_day, through_day)
+      );
       """, in: database)
     if try !hasColumn("cached_from", in: "cache_metadata", database: database) {
       try execute("ALTER TABLE cache_metadata ADD COLUMN cached_from TEXT", in: database)
@@ -359,6 +395,28 @@ public actor UsageAggregationCache {
     if try !hasColumn("source_configuration_fingerprint", in: "cache_metadata", database: database) {
       try execute("ALTER TABLE cache_metadata ADD COLUMN source_configuration_fingerprint TEXT", in: database)
     }
+    if try !hasColumn("directory", in: "daily_metrics", database: database) {
+      try execute("ALTER TABLE daily_metrics ADD COLUMN directory TEXT", in: database)
+    }
+    if try !hasColumn("directory", in: "session_metrics", database: database) {
+      try execute("ALTER TABLE session_metrics ADD COLUMN directory TEXT", in: database)
+    }
+  }
+
+  private func readDirectoryCoveredRanges(from database: OpaquePointer) throws -> [AggregationCacheRange] {
+    let statement = try prepare(
+      "SELECT since_day, through_day FROM directory_coverage_ranges ORDER BY since_day, through_day",
+      in: database
+    )
+    defer { sqlite3_finalize(statement) }
+    var ranges: [AggregationCacheRange] = []
+    while sqlite3_step(statement) == SQLITE_ROW {
+      ranges.append(AggregationCacheRange(
+        since: try text(statement, column: 0),
+        through: try text(statement, column: 1)
+      ))
+    }
+    return Self.normalizedRanges(ranges)
   }
 
   private func readCoveredRanges(
@@ -402,8 +460,8 @@ public actor UsageAggregationCache {
   private func readMetrics(from database: OpaquePointer) throws -> [CCUsageMetricRecord] {
     let statement = try prepare("""
       SELECT date, agent, model, cost_usd, input_tokens, output_tokens,
-             cache_creation_tokens, cache_read_tokens
-      FROM daily_metrics ORDER BY date, agent, model
+             cache_creation_tokens, cache_read_tokens, directory
+      FROM daily_metrics ORDER BY date, agent, model, directory
       """, in: database)
     defer { sqlite3_finalize(statement) }
     var rows: [CCUsageMetricRecord] = []
@@ -420,7 +478,8 @@ public actor UsageAggregationCache {
         outputTokens: Int(sqlite3_column_int64(statement, 5)),
         cacheCreationTokens: Int(sqlite3_column_int64(statement, 6)),
         cacheReadTokens: Int(sqlite3_column_int64(statement, 7)),
-        machine: machineID
+        machine: machineID,
+        directory: optionalText(statement, column: 8)
       ))
     }
     return rows
@@ -429,8 +488,8 @@ public actor UsageAggregationCache {
   private func readSessions(from database: OpaquePointer) throws -> [CCUsageSessionMetricRecord] {
     let statement = try prepare("""
       SELECT timestamp, agent, model, cost_usd, input_tokens, output_tokens,
-             cache_creation_tokens, cache_read_tokens, data_quality
-      FROM session_metrics ORDER BY timestamp, agent, model
+             cache_creation_tokens, cache_read_tokens, data_quality, directory
+      FROM session_metrics ORDER BY timestamp, agent, model, directory
       """, in: database)
     defer { sqlite3_finalize(statement) }
     var rows: [CCUsageSessionMetricRecord] = []
@@ -451,7 +510,8 @@ public actor UsageAggregationCache {
         cacheCreationTokens: Int(sqlite3_column_int64(statement, 6)),
         cacheReadTokens: Int(sqlite3_column_int64(statement, 7)),
         dataQuality: dataQuality,
-        machine: machineID
+        machine: machineID,
+        directory: optionalText(statement, column: 9)
       ))
     }
     return rows
@@ -483,8 +543,8 @@ public actor UsageAggregationCache {
     let statement = try prepare("""
       INSERT INTO daily_metrics(
         date, agent, model, cost_usd, input_tokens, output_tokens,
-        cache_creation_tokens, cache_read_tokens
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        cache_creation_tokens, cache_read_tokens, directory
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       """, in: database)
     defer { sqlite3_finalize(statement) }
     for row in metrics {
@@ -498,6 +558,7 @@ public actor UsageAggregationCache {
       sqlite3_bind_int64(statement, 6, sqlite3_int64(row.outputTokens))
       sqlite3_bind_int64(statement, 7, sqlite3_int64(row.cacheCreationTokens))
       sqlite3_bind_int64(statement, 8, sqlite3_int64(row.cacheReadTokens))
+      try bindOptional(row.directory, to: 9, in: statement)
       try stepDone(statement)
     }
   }
@@ -506,8 +567,8 @@ public actor UsageAggregationCache {
     let statement = try prepare("""
       INSERT INTO session_metrics(
         timestamp, agent, model, cost_usd, input_tokens, output_tokens,
-        cache_creation_tokens, cache_read_tokens, data_quality
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cache_creation_tokens, cache_read_tokens, data_quality, directory
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """, in: database)
     defer { sqlite3_finalize(statement) }
     for row in sessions {
@@ -522,6 +583,7 @@ public actor UsageAggregationCache {
       sqlite3_bind_int64(statement, 7, sqlite3_int64(row.cacheCreationTokens))
       sqlite3_bind_int64(statement, 8, sqlite3_int64(row.cacheReadTokens))
       try bind(row.dataQuality.rawValue, to: 9, in: statement)
+      try bindOptional(row.directory, to: 10, in: statement)
       try stepDone(statement)
     }
   }
@@ -532,6 +594,24 @@ public actor UsageAggregationCache {
   ) throws {
     let statement = try prepare(
       "INSERT INTO coverage_ranges(since_day, through_day) VALUES (?, ?)",
+      in: database
+    )
+    defer { sqlite3_finalize(statement) }
+    for range in Self.normalizedRanges(ranges) {
+      sqlite3_reset(statement)
+      sqlite3_clear_bindings(statement)
+      try bind(range.since, to: 1, in: statement)
+      try bind(range.through, to: 2, in: statement)
+      try stepDone(statement)
+    }
+  }
+
+  private func insertDirectoryCoveredRanges(
+    _ ranges: [AggregationCacheRange],
+    into database: OpaquePointer
+  ) throws {
+    let statement = try prepare(
+      "INSERT INTO directory_coverage_ranges(since_day, through_day) VALUES (?, ?)",
       in: database
     )
     defer { sqlite3_finalize(statement) }
@@ -560,6 +640,16 @@ public actor UsageAggregationCache {
   private func bind(_ value: String, to index: Int32, in statement: OpaquePointer) throws {
     guard sqlite3_bind_text(statement, index, value, -1, sqliteTransient) == SQLITE_OK else {
       throw AggregationCacheError.invalidDatabase
+    }
+  }
+
+  private func bindOptional(_ value: String?, to index: Int32, in statement: OpaquePointer) throws {
+    if let value {
+      try bind(value, to: index, in: statement)
+    } else {
+      guard sqlite3_bind_null(statement, index) == SQLITE_OK else {
+        throw AggregationCacheError.invalidDatabase
+      }
     }
   }
 
@@ -617,6 +707,7 @@ public actor UsageAggregationCache {
       metrics: payload.metrics,
       sessions: payload.sessions,
       coveredRanges: payload.coveredRanges,
+      directoryCoveredRanges: payload.directoryCoveredRanges,
       sourceConfigurationFingerprint: expected
     )
     memoryPayload = adopted

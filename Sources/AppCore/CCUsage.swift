@@ -5,15 +5,23 @@ public struct CCUsageCostRecord: Codable, Equatable, Sendable {
   public let costUSD: Decimal
   public let models: [String]
   public let machine: String
+  public let directory: String?
 
-  public init(timestamp: Date, costUSD: Decimal, models: [String], machine: String = "local") {
+  public init(
+    timestamp: Date,
+    costUSD: Decimal,
+    models: [String],
+    machine: String = "local",
+    directory: String? = nil
+  ) {
     self.timestamp = timestamp
     self.costUSD = costUSD
     self.models = models
     self.machine = machine
+    self.directory = directory
   }
 
-  private enum CodingKeys: String, CodingKey { case timestamp, costUSD, models, machine }
+  private enum CodingKeys: String, CodingKey { case timestamp, costUSD, models, machine, directory }
 
   public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -21,6 +29,7 @@ public struct CCUsageCostRecord: Codable, Equatable, Sendable {
     costUSD = try values.decode(Decimal.self, forKey: .costUSD)
     models = try values.decode([String].self, forKey: .models)
     machine = try values.decodeIfPresent(String.self, forKey: .machine) ?? "local"
+    directory = try values.decodeIfPresent(String.self, forKey: .directory)
     guard !machine.isEmpty else {
       throw DecodingError.dataCorruptedError(forKey: .machine, in: values, debugDescription: "machine must not be empty")
     }
@@ -50,6 +59,7 @@ public struct CCUsageMetricRecord: Codable, Equatable, Sendable {
   public let cacheReadTokens: Int
   public let totalTokens: Int
   public let machine: String
+  public let directory: String?
 
   public init(
     date: String,
@@ -60,7 +70,8 @@ public struct CCUsageMetricRecord: Codable, Equatable, Sendable {
     outputTokens: Int,
     cacheCreationTokens: Int,
     cacheReadTokens: Int,
-    machine: String = "local"
+    machine: String = "local",
+    directory: String? = nil
   ) {
     self.date = date
     self.agent = agent
@@ -71,12 +82,13 @@ public struct CCUsageMetricRecord: Codable, Equatable, Sendable {
     self.cacheCreationTokens = cacheCreationTokens
     self.cacheReadTokens = cacheReadTokens
     self.machine = machine
+    self.directory = directory
     totalTokens = inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
   }
 
   private enum CodingKeys: String, CodingKey {
     case date, agent, model, costUSD, inputTokens, outputTokens
-    case cacheCreationTokens, cacheReadTokens, totalTokens, machine
+    case cacheCreationTokens, cacheReadTokens, totalTokens, machine, directory
   }
 
   public init(from decoder: Decoder) throws {
@@ -91,6 +103,7 @@ public struct CCUsageMetricRecord: Codable, Equatable, Sendable {
     cacheReadTokens = try values.decode(Int.self, forKey: .cacheReadTokens)
     totalTokens = inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
     machine = try values.decodeIfPresent(String.self, forKey: .machine) ?? "local"
+    directory = try values.decodeIfPresent(String.self, forKey: .directory)
     guard !machine.isEmpty else {
       throw DecodingError.dataCorruptedError(forKey: .machine, in: values, debugDescription: "machine must not be empty")
     }
@@ -114,6 +127,7 @@ public struct CCUsageSessionMetricRecord: Codable, Equatable, Sendable {
   public let totalTokens: Int
   public let dataQuality: UsageDataQuality
   public let machine: String
+  public let directory: String?
 
   public init(
     timestamp: Date,
@@ -125,7 +139,8 @@ public struct CCUsageSessionMetricRecord: Codable, Equatable, Sendable {
     cacheCreationTokens: Int = 0,
     cacheReadTokens: Int = 0,
     dataQuality: UsageDataQuality = .sessionEstimated,
-    machine: String = "local"
+    machine: String = "local",
+    directory: String? = nil
   ) {
     self.timestamp = timestamp
     self.agent = agent
@@ -137,12 +152,13 @@ public struct CCUsageSessionMetricRecord: Codable, Equatable, Sendable {
     self.cacheReadTokens = cacheReadTokens
     self.dataQuality = dataQuality
     self.machine = machine
+    self.directory = directory
     totalTokens = inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
   }
 
   private enum CodingKeys: String, CodingKey {
     case timestamp, agent, model, costUSD, inputTokens, outputTokens
-    case cacheCreationTokens, cacheReadTokens, totalTokens, dataQuality, machine
+    case cacheCreationTokens, cacheReadTokens, totalTokens, dataQuality, machine, directory
   }
 
   public init(from decoder: Decoder) throws {
@@ -158,6 +174,7 @@ public struct CCUsageSessionMetricRecord: Codable, Equatable, Sendable {
     dataQuality = try values.decode(UsageDataQuality.self, forKey: .dataQuality)
     totalTokens = inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens
     machine = try values.decodeIfPresent(String.self, forKey: .machine) ?? "local"
+    directory = try values.decodeIfPresent(String.self, forKey: .directory)
     guard !machine.isEmpty else {
       throw DecodingError.dataCorruptedError(forKey: .machine, in: values, debugDescription: "machine must not be empty")
     }
@@ -624,7 +641,13 @@ public struct CCUsageClient: Sendable {
         timezone: timezone
       )
       return records.map {
-        CCUsageCostRecord(timestamp: $0.timestamp, costUSD: $0.costUSD, models: $0.models, machine: machine)
+        CCUsageCostRecord(
+          timestamp: $0.timestamp,
+          costUSD: $0.costUSD,
+          models: $0.models,
+          machine: machine,
+          directory: $0.directory
+        )
       }
     } catch let failure as CCUsageCommandFailure {
       throw CCUsageError.commandFailed(failure)
@@ -651,7 +674,8 @@ public struct CCUsageClient: Sendable {
           outputTokens: row.outputTokens,
           cacheCreationTokens: row.cacheCreationTokens,
           cacheReadTokens: row.cacheReadTokens,
-          machine: machine
+          machine: machine,
+          directory: row.directory
         )
       }
     } catch let failure as CCUsageCommandFailure {
@@ -672,7 +696,8 @@ public struct CCUsageClient: Sendable {
         cacheCreationTokens: row.cacheCreationTokens,
         cacheReadTokens: row.cacheReadTokens,
         dataQuality: row.dataQuality,
-        machine: machine
+        machine: machine,
+        directory: row.directory
       )
     }
   }
@@ -691,7 +716,8 @@ public struct CCUsageClient: Sendable {
             outputTokens: row.outputTokens,
             cacheCreationTokens: row.cacheCreationTokens,
             cacheReadTokens: row.cacheReadTokens,
-            machine: machine
+            machine: machine,
+            directory: row.directory
           )
         },
         sessions: usage.sessions.map { row in
@@ -705,7 +731,8 @@ public struct CCUsageClient: Sendable {
             cacheCreationTokens: row.cacheCreationTokens,
             cacheReadTokens: row.cacheReadTokens,
             dataQuality: row.dataQuality,
-            machine: machine
+            machine: machine,
+            directory: row.directory
           )
         }
       )

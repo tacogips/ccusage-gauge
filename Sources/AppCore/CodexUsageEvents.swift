@@ -57,6 +57,7 @@ public struct CodexUsageEventLoader: Sendable {
     for file in UsageEventLogReader.jsonlFiles(roots: roots, modifiedSince: minimumModificationDate) {
       var sessionID = file.deletingPathExtension().lastPathComponent
       var model = ""
+      var directory: String?
       let relevantTypes = [
         Data(#""type":"session_meta""#.utf8),
         Data(#""type":"turn_context""#.utf8),
@@ -64,9 +65,10 @@ public struct CodexUsageEventLoader: Sendable {
       ]
       if let since {
         var pending: [CodexEnvelope] = []
+        var resolved: [(envelope: CodexEnvelope, model: String)] = []
         try UsageEventLogReader.forEachLineFromEnd(in: file, matchingAny: relevantTypes) { line in
           if let rawDay = UsageEventLogReader.timestampDay(in: line) {
-            if let scanFloor, rawDay < scanFloor { return pending.isEmpty ? false : true }
+            if let scanFloor, rawDay < scanFloor, pending.isEmpty, resolved.isEmpty { return false }
             if let scanCeiling, rawDay > scanCeiling { return true }
           }
           guard let envelope = try? JSONDecoder().decode(CodexEnvelope.self, from: line),
@@ -80,25 +82,46 @@ public struct CodexUsageEventLoader: Sendable {
           if envelope.type == "turn_context",
              let pendingModel = envelope.payload.model,
              !pendingModel.isEmpty {
-            for pendingEnvelope in pending {
+            resolved.append(contentsOf: pending.map { ($0, pendingModel) })
+            pending.removeAll(keepingCapacity: true)
+          }
+          if envelope.type == "session_meta" {
+            let effectiveSessionID = envelope.payload.id.flatMap { $0.isEmpty ? nil : $0 } ?? sessionID
+            let effectiveDirectory = normalizedDirectory(envelope.payload.cwd)
+            for item in resolved {
               addCodexEvent(
-                pendingEnvelope,
-                sessionID: sessionID,
-                model: pendingModel,
+                item.envelope,
+                sessionID: effectiveSessionID,
+                model: item.model,
+                directory: effectiveDirectory,
                 fractional: fractional,
                 wholeSeconds: wholeSeconds,
                 to: &eventsByIdentity
               )
             }
-            pending.removeAll(keepingCapacity: true)
+            resolved.removeAll(keepingCapacity: true)
           }
-          return day >= since || !pending.isEmpty
+          return day >= since || !pending.isEmpty || !resolved.isEmpty
+        }
+        for item in resolved {
+          addCodexEvent(
+            item.envelope,
+            sessionID: sessionID,
+            model: item.model,
+            directory: directory,
+            fractional: fractional,
+            wholeSeconds: wholeSeconds,
+            to: &eventsByIdentity
+          )
         }
         continue
       }
       try UsageEventLogReader.forEachLine(in: file, matchingAny: relevantTypes) { line in
         guard let envelope = try? JSONDecoder().decode(CodexEnvelope.self, from: line) else { return }
-        if envelope.type == "session_meta", let id = envelope.payload.id { sessionID = id }
+        if envelope.type == "session_meta" {
+          if let id = envelope.payload.id, !id.isEmpty { sessionID = id }
+          directory = normalizedDirectory(envelope.payload.cwd)
+        }
         if envelope.type == "turn_context", let nextModel = envelope.payload.model, !nextModel.isEmpty {
           model = nextModel
           return
@@ -131,7 +154,8 @@ public struct CodexUsageEventLoader: Sendable {
           cacheCreationTokens: 0,
           cacheReadTokens: last.cachedInputTokens,
           cacheCreationFiveMinuteTokens: 0,
-          cacheCreationOneHourTokens: 0
+          cacheCreationOneHourTokens: 0,
+          directory: directory
         )
         eventsByIdentity[event.identity] = event
       }
@@ -145,6 +169,7 @@ public struct CodexUsageEventLoader: Sendable {
     _ envelope: CodexEnvelope,
     sessionID: String,
     model: String,
+    directory: String?,
     fractional: ISO8601DateFormatter,
     wholeSeconds: ISO8601DateFormatter,
     to eventsByIdentity: inout [String: TimestampedUsageEvent]
@@ -172,7 +197,8 @@ public struct CodexUsageEventLoader: Sendable {
       cacheCreationTokens: 0,
       cacheReadTokens: last.cachedInputTokens,
       cacheCreationFiveMinuteTokens: 0,
-      cacheCreationOneHourTokens: 0
+      cacheCreationOneHourTokens: 0,
+      directory: directory
     )
     if eventsByIdentity[event.identity] == nil { eventsByIdentity[event.identity] = event }
   }
@@ -191,6 +217,11 @@ public struct CodexUsageEventLoader: Sendable {
     fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return fractional.date(from: text) ?? ISO8601DateFormatter().date(from: text)
   }
+
+  private static func normalizedDirectory(_ value: String?) -> String? {
+    guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+    return value
+  }
 }
 
 private struct CodexEnvelope: Decodable {
@@ -203,6 +234,7 @@ private struct CodexPayload: Decodable {
   let type: String?
   let id: String?
   let model: String?
+  let cwd: String?
   let info: CodexTokenInfo?
 }
 

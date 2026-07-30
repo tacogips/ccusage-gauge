@@ -10,6 +10,7 @@ private struct MetricCoalesceKey: Hashable {
   let agent: String
   let model: String
   let machine: String
+  let directory: String?
 }
 
 private struct SessionCoalesceKey: Hashable {
@@ -18,11 +19,13 @@ private struct SessionCoalesceKey: Hashable {
   let model: String
   let machine: String
   let quality: UsageDataQuality
+  let directory: String?
 }
 
 private struct PointCoalesceKey: Hashable {
   let timestamp: Date
   let machine: String
+  let directory: String?
 }
 
 func coalescingSameKeyMetrics(_ rows: [CCUsageMetricRecord]) -> [CCUsageMetricRecord] {
@@ -30,7 +33,13 @@ func coalescingSameKeyMetrics(_ rows: [CCUsageMetricRecord]) -> [CCUsageMetricRe
   var order: [MetricCoalesceKey] = []
   var grouped: [MetricCoalesceKey: CCUsageMetricRecord] = [:]
   for row in rows {
-    let key = MetricCoalesceKey(date: row.date, agent: row.agent, model: row.model, machine: row.machine)
+    let key = MetricCoalesceKey(
+      date: row.date,
+      agent: row.agent,
+      model: row.model,
+      machine: row.machine,
+      directory: row.directory
+    )
     if let existing = grouped[key] {
       grouped[key] = CCUsageMetricRecord(
         date: row.date,
@@ -41,7 +50,8 @@ func coalescingSameKeyMetrics(_ rows: [CCUsageMetricRecord]) -> [CCUsageMetricRe
         outputTokens: existing.outputTokens + row.outputTokens,
         cacheCreationTokens: existing.cacheCreationTokens + row.cacheCreationTokens,
         cacheReadTokens: existing.cacheReadTokens + row.cacheReadTokens,
-        machine: row.machine
+        machine: row.machine,
+        directory: row.directory
       )
     } else {
       order.append(key)
@@ -62,7 +72,8 @@ func coalescingSameKeySessions(_ rows: [CCUsageSessionMetricRecord]) -> [CCUsage
       agent: row.agent,
       model: row.model,
       machine: row.machine,
-      quality: row.dataQuality
+      quality: row.dataQuality,
+      directory: row.directory
     )
     if let existing = grouped[key] {
       grouped[key] = CCUsageSessionMetricRecord(
@@ -75,7 +86,8 @@ func coalescingSameKeySessions(_ rows: [CCUsageSessionMetricRecord]) -> [CCUsage
         cacheCreationTokens: existing.cacheCreationTokens + row.cacheCreationTokens,
         cacheReadTokens: existing.cacheReadTokens + row.cacheReadTokens,
         dataQuality: row.dataQuality,
-        machine: row.machine
+        machine: row.machine,
+        directory: row.directory
       )
     } else {
       order.append(key)
@@ -91,7 +103,11 @@ func coalescingSameKeyPoints(_ rows: [CCUsageCostRecord]) -> [CCUsageCostRecord]
   var order: [PointCoalesceKey] = []
   var grouped: [PointCoalesceKey: CCUsageCostRecord] = [:]
   for row in rows {
-    let key = PointCoalesceKey(timestamp: row.timestamp, machine: row.machine)
+    let key = PointCoalesceKey(
+      timestamp: row.timestamp,
+      machine: row.machine,
+      directory: row.directory
+    )
     if let existing = grouped[key] {
       var models = existing.models
       for model in row.models where !models.contains(model) { models.append(model) }
@@ -99,7 +115,8 @@ func coalescingSameKeyPoints(_ rows: [CCUsageCostRecord]) -> [CCUsageCostRecord]
         timestamp: row.timestamp,
         costUSD: existing.costUSD + row.costUSD,
         models: models,
-        machine: row.machine
+        machine: row.machine,
+        directory: row.directory
       )
     } else {
       order.append(key)

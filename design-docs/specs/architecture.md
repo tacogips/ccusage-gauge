@@ -11,10 +11,10 @@ Swift domain services. It periodically invokes the installed `ccusage` CLI,
 shows cost since the active reset boundary, and optionally serves a dashboard
 from `127.0.0.1`.
 
-`ccusage` v20.0.17-compatible aggregate JSON remains the historical usage
-source. Host-local Codex and Claude JSONL event readers may supply recent
-timestamped session detail for reconciliation, but do not replace the aggregate
-source. Per-machine source-root selection follows
+`ccusage` v20.0.17-compatible aggregate JSON remains the authoritative usage
+source. Host-local Codex and Claude JSONL event readers supply timestamped
+session detail for reconciliation across each materialized dashboard range, but
+do not replace aggregate costs or tokens. Per-machine source-root selection follows
 `design-machine-session-source-directories.md`. Static configuration and
 mutable user state have separate ownership and storage locations.
 
@@ -255,6 +255,325 @@ accepted schema and protect against double counting.
 All internal monetary calculations use `Decimal`. JSON APIs emit numeric USD
 values at a documented precision; UI rounding is presentation-only.
 
+### Project-directory dimension and filtering
+
+The original source issue is the workflow-input request “Add per-machine
+sub-directory filtering and bar-graph subdirectory split to ccusage-gauge
+dashboard.” The follow-up issue is “Explicit sub-directory display names with
+rename UI/API and cross-machine label uniqueness.” No GitHub issue URL,
+repository/number pair, Codex-agent reference, reference repository, or Cursor
+CLI behavior was supplied. This section therefore maps both workflow intakes
+directly onto the existing ccusage-gauge architecture; no reference-code
+divergence or Cursor adapter is required.
+
+Project directory is optional provenance attached to usage, not a path the
+application opens or executes. Claude assistant events obtain it from the
+event's `cwd`; Codex token events inherit the most recent `cwd` from their
+session metadata. Forward and reverse JSONL scans must produce the same
+association. A missing, empty, or unusable value becomes `nil`; otherwise the
+source string is retained as an opaque exact-match value. Collection never
+resolves symlinks, expands home-directory syntax, or tests the directory on the
+local or remote filesystem.
+
+Local machines read candidate event lines from their resolved session-source
+scan scopes. This feature does not add a remote JSONL transport, remote parser,
+or general-purpose file-reading operation to the SSH adapter. Existing SSH
+machines therefore continue to use remote `ccusage` aggregates without
+host-side event reconciliation, and their rows have `directory == nil` unless a
+future aggregate format supplies optional directory provenance directly.
+`GET /api/subdirectories` returns an empty directory list for such a machine,
+the sidebar renders no nested choices beneath it, and the machine's
+unattributed rows remain visible. The per-machine filter contract still prevents
+another machine's directory selection from excluding those rows. Transporting
+raw or projected remote session content is a separate security- and
+privacy-sensitive feature requiring its own explicit scope and adversarial
+design review.
+
+`TimestampedUsageEvent`, `CCUsageCostRecord`, `CCUsageMetricRecord`, and
+`CCUsageSessionMetricRecord` carry this optional `directory` value through
+snapshot construction. Reconciled timestamped sessions copy the event
+directory while retaining the existing authoritative daily cost and token
+allocation. Aggregate, coalescing, snapshot-merge, and cache identities include
+directory, with `nil` as a distinct identity, so otherwise equal rows from two
+projects cannot collapse.
+
+For a local machine, directory-provenance coverage follows aggregate snapshot
+coverage rather than the former recent-event optimization. Initial week/history
+warming, an older custom-range expansion, and a targeted refresh load JSONL
+events for the same host-calendar days being materialized and reconcile them
+with that range's aggregate rows. Thus directory filtering works for all
+dashboard ranges whose source event logs are still present; it is not silently
+limited to the recent graph window. Deleted or unavailable historical event
+logs cannot be reconstructed from `ccusage` aggregates, so their usage remains
+unattributed and follows the documented `nil` filtering semantics.
+
+SQLite daily/session cache tables gain nullable directory columns and
+per-host-day directory-provenance coverage through an idempotent additive
+migration. Pre-change cached days begin as provenance-unscanned rather than
+being treated as complete. Their first directory-aware snapshot load scans the
+currently available local event logs and builds one complete replacement for
+that day's derived session partition. In one transaction it removes the prior
+session partition, inserts the replacement rows, and marks provenance coverage
+scanned, even when the replacement contains no attributed events. Authoritative
+daily aggregate rows are never removed or rewritten by this backfill.
+
+Failure or interruption rolls back both the session replacement and coverage
+marker, retains the previously published snapshot, and leaves the day eligible
+for retry. A retry recomputes and replaces the complete partition; it never
+merges the replacement additively with legacy `nil` rows. Snapshot publication
+occurs only after commit, so no reader can observe both legacy and attributed
+copies. Completed historical days are reused without repeated JSONL scans; the
+current host day remains eligible for the same complete-partition replacement
+on refresh. Previously encoded records still decode a missing directory as
+`nil`. Unfiltered totals continue to come from authoritative aggregates and
+must be identical before backfill, after successful backfill, and after any
+failed or retried backfill.
+
+Raw `ccusage` daily/session rows that do not identify a project remain
+unattributed. An unfiltered query that does not request a directory breakdown
+continues to use the existing authoritative aggregate path. A daily query with
+one or more directory filters, or with the optional directory-breakdown request
+enabled, instead derives its rows by grouping the reconciled dashboard sessions
+by host calendar day, machine, agent, model, and directory. This supplies
+directory-resolved rows for filtering or chart splitting without inventing
+directory attribution for raw aggregate rows. Reconciliation preserves the
+authoritative aggregate cost and token allocation, so the directory-resolved
+rows, including their `nil` group, have the same unfiltered totals as the
+aggregate path. Unattributed session rows remain visible when a machine has no
+active directory selection and are excluded when that machine has one or more
+selected directories.
+
+The read API adds an optional, repeatable query item
+`directory=<machine-id>:<full-directory>`. The complete value is percent
+encoded, and the server separates the validated machine id at the first colon.
+No `directory` item means the existing unfiltered behavior. One or more items
+for a selected machine form an exact-match OR set for that machine; filters for
+different machines never intersect or affect one another. A well-formed filter
+for a known machine outside the current `machine` selection is ignored, which
+makes an unchecked machine neutral even if a stale client retains its prior
+values. Malformed entries and unknown machine ids return a non-sensitive `400`
+or `404` response using existing selection conventions. Directory values must
+not appear in persistent logs or error messages.
+
+`/api/metrics`, `/api/cost-series`, and `/api/budget` accept the directory
+items. Their rows expose optional `directory`; filtered totals and the budget's
+spent-derived values are recomputed from the filtered rows. In addition,
+`/api/cost-series` accepts the optional single query item
+`directoryBreakdown=true`. Omission or `false` preserves the existing response
+path and grouping when there are no directory filters. `true` requests
+directory-resolved rows independently of filtering, including for daily
+granularity; duplicate values or values other than `true` and `false` return
+`400`. A directory filter also selects the directory-resolved path regardless
+of this flag. Existing clients that omit both additions receive unchanged rows,
+totals, and grouping.
+
+The additive `GET /api/subdirectories?machine=<id>` route accepts the same
+machine-selection contract as the snapshot-backed dashboard data routes: omit
+`machine` or pass exactly `machine=all` for all enabled machines, or repeat
+`machine=<id>` for one or more distinct canonical ids. The `all` sentinel
+cannot be mixed with ids, and duplicate, empty, or non-canonical values return
+`400`. The route returns stable, full-string-sorted values grouped by machine.
+`names` is an optional map from full directory value to explicit display name:
+
+```json
+{"machines":[{"machine":"local","directories":["/Users/example/project"],"names":{"/Users/example/project":"Billing"}}]}
+```
+
+The list is derived from the selected machines' retained, provenance-scanned
+snapshot coverage, excludes `nil`, and exposes the full value only so the
+loopback SPA can submit exact filters. A historical range expansion refreshes
+the list after the expanded snapshot is published, so newly observed
+directories become selectable. A `names` entry is returned only when its
+directory is present in the same machine's `directories` array; stored names
+for paths that are not currently discovered are retained but not disclosed.
+The field is omitted when a machine has no applicable explicit names, so
+clients that only decode `directories` remain compatible. The UI never
+displays the full path by default. `DashboardCostRow`, metric response rows,
+and their frontend counterparts encode `directory` only when present,
+preserving decoding compatibility for pre-change snapshots, caches, saved API
+fixtures, and clients.
+
+Explicit names are dashboard-host metadata, not usage provenance and not
+per-browser UI state. They are stored in the existing
+`~/.cache/ccusage-gauge/dashboard-state.sqlite3` database, or the equivalent
+file under `CCUSAGE_GAUGE_CACHE_HOME`, in a separate idempotently created table
+keyed by canonical machine id and opaque full directory string, with the
+normalized non-empty display name and update time.
+The table is independent of the singleton `DashboardUIState` value, so an API
+rename is visible to every browser and survives reloads and application
+restarts. No name is sent to or persisted on a remote machine. Upsert and clear
+operations are serialized by the store; the last successfully committed
+request for a key wins. A stored name remains available if a directory
+temporarily disappears and applies again if the exact machine/path key is
+rediscovered.
+Deleting a configured machine is different from temporary directory
+disappearance: the registry transaction first persists a dashboard-name
+deletion marker in a prepared phase, which immediately excludes that machine's
+names from reads. After registry persistence succeeds, the transaction advances
+the marker to a committed phase before publishing the runtime transition, then
+immediately attempts to purge the rows while retaining the marker as a durable
+barrier. Before restoring the previous registry after a failed runtime
+transition, the transaction advances the marker to a rollback phase. After the
+registry restoration is durable it removes that marker, so the unchanged names
+become visible again. If post-commit purge fails, the committed machine deletion
+remains successful, the marker continues to hide the names, and the mutation
+owner records the machine id as pending metadata cleanup. It retries cleanup
+with bounded same-process
+backoff and on the next machine-catalog read; `GET /api/machines` exposes any
+remaining ids through optional `metadataCleanupPendingMachineIds` so the SPA can
+show a reconciliation warning. A rolled-back deletion removes the marker and
+restores the unchanged names. Creating a machine under a previously used canonical id
+atomically removes any retained rows and the marker before the registry commit,
+so a replacement machine cannot inherit the deleted identity's labels. These
+membership transitions apply equally to API mutations, bulk replacement, and
+external registry reload.
+Before either production dashboard router becomes available, startup
+transactionally reconciles this metadata with the persisted registry. A
+prepared marker for a machine id still present in the registry is removed so an
+interrupted pre-persistence deletion cannot keep valid names hidden after
+restart. A rollback marker for a machine id still present is also removed
+without deleting names, covering termination or marker-cleanup failure after
+the previous registry was restored. A committed marker for an id that is
+already present again identifies machine-id reuse after a durable deletion:
+startup purges the old names before removing the marker. Metadata for ids absent
+from the registry is promoted to a committed marker and purged regardless of
+its prior phase, completing cleanup that may have been interrupted after the
+registry commit or before a rollback completed. A
+reconciliation storage failure fails dashboard startup rather than serving
+ambiguous or stale names.
+
+Both local `HTTPService` mode and `MachineDashboardRouter` expose
+`PUT /api/subdirectories/name` with this request shape:
+
+```json
+{"machine":"local","directory":"/Users/example/project","name":"Billing"}
+```
+
+`machine` must be a canonical id and must exist in the local or machine
+registry scope served by that router. The local-only surface accepts only
+`local`. `directory` is an opaque, non-empty string and is not resolved,
+opened, normalized, or required to be present in the current snapshot. The
+`name` member is required but its value may be `null`; a null, empty, or
+whitespace-only value clears the row. Non-empty names are trimmed at their
+edges, must contain no control characters, and are limited to 200 Unicode code
+points. A successful set returns
+`{"status":"ok","machine":"local","directory":"/Users/example/project","name":"Billing"}`;
+a successful clear returns the same object with `name:null`.
+The name-store write transaction rejects a machine id with an active deletion
+marker. This closes a stale-authorization race with concurrent machine deletion;
+the route returns the same sanitized `404 machine_not_found` response used when
+the machine has already left the served registry.
+
+Malformed JSON or invalid machine, directory, or name values return `400` with
+`invalid_directory_name`; an unknown canonical machine returns `404` with
+`machine_not_found`; persistence failure returns `503` with
+`directory_name_unavailable`. Responses and persistent logs never include
+database details or untrusted path/name values in error messages. Both the
+local-only `HTTPService` surface and `MachineDashboardRouter` apply the same
+common loopback-authority, exact same-origin/fetch-metadata, and
+`X-CCUsage-Gauge-Mutation: 1` gate. That gate runs before request-body decoding,
+machine or directory validation, and store access, and a rejected request makes
+no observable state change. `OPTIONS` is rejected under the same control-route
+policy. The SPA sends the mutation header; non-browser automation may omit
+browser origin and fetch metadata but must send the header. A failed write does
+not update the effective name. A name-store read failure fails the subdirectory
+request with `503` instead of silently presenting derived labels as if explicit
+names had been cleared.
+
+The SPA owns selected directories as a map keyed by machine id. Only a checked
+machine renders its nested directory checkboxes. Unchecking it removes that
+machine's active directory set and omits its directory query items; rechecking
+therefore starts unfiltered. Selecting no nested checkbox also means unfiltered
+for that machine. Machine, model, and agent filters continue to compose as
+logical AND dimensions.
+
+Directory labels are deterministic presentation values allocated in one pass
+across every machine in the dashboard's subdirectory catalog. The SPA fetches
+that catalog for all enabled machines independently of the active machine
+filter, so toggling a machine does not renumber another machine's labels.
+Retained snapshots for enabled stale machines remain inventory sources even
+while their usage is excluded from current totals. Machine create, edit,
+enable, disable, and removal operations refresh the catalog before presenting
+the resulting global allocation.
+Flatten the machine/path entries and sort first by machine id and then by full
+directory string. For each entry, use its explicit name as the base when
+present. Otherwise remove trailing path separators, take the deepest non-empty
+component (using `/` as the label for the root), then take its first 10 Unicode
+code points.
+
+Use the base label when it is globally unused; otherwise append the smallest
+`-2`, `-3`, and so on that produces a label not already allocated anywhere in
+the catalog. The uniqueness check covers collisions between two derived names,
+two explicit names, an explicit and a derived name, and a generated suffix
+colliding with another entry's base. Explicit names are not truncated; any
+suffix is appended to the complete explicit name. Full directory strings
+paired with machine ids remain the stable selection and series identities, so
+renaming changes presentation without changing filters, data grouping, or
+color identity.
+
+Each sidebar directory row provides an inline rename action. Starting an edit
+copies the current explicit name, or an empty value when only a derived name
+exists. Enter or blur submits the `PUT`; Escape cancels; submitting a blank
+value clears the name and restores the derived fallback. After a successful
+response the SPA updates its names catalog, reruns global label allocation, and
+immediately updates both the sidebar and chart legend. A failed response leaves
+the last confirmed label in place, keeps the edit recoverable, and shows a
+non-sensitive inline error. A transport timeout, truncated response, or lost
+response is not authoritative because the idempotent `PUT` may already have
+committed. For that ambiguous result, the SPA refetches the catalog and compares
+the exact normalized machine/path name: a match confirms and closes the edit;
+a mismatch or failed refetch retains recoverable input and reports that the
+outcome is unconfirmed rather than falsely declaring failure. A subsequent
+subdirectory fetch remains the source of truth and proves persistence after
+reload.
+
+The graph's stack control adds `subdirectory` beside the existing `model` and
+`machine` values. It defaults to the existing non-subdirectory state, so
+subdirectory splitting is disabled until explicitly selected. Old persisted
+`model` and `machine` values remain valid; missing or unknown saved values fall
+back to `model`. The frontend sends `directoryBreakdown=true` to
+`/api/cost-series` only while `subdirectory` stacking is selected; it omits the
+item for model or machine stacking. Active directory filters remain separate
+query items and continue to request directory-resolved rows even while another
+stack mode is selected. When subdirectory stacking is off and no directory
+filter is active, bucket totals and visual series match current behavior. When
+it is on, the series identity combines machine and full directory so equal
+names on different machines never merge. Its displayed name is the same
+globally allocated explicit-or-derived label used by the sidebar; machine-name
+prefixing is no longer needed to disambiguate discovered directories.
+Unattributed rows use the existing distinct, machine-aware `No directory`
+presentation unless an active directory filter has excluded them.
+Subdirectory series use their own deterministic color namespace keyed by
+stable machine/path identity, so a rename does not change series color and does
+not perturb existing model or machine color assignments.
+
+Compatibility and behavior are locked by tests for event decoding with and
+without `cwd`, Codex session-metadata inheritance in both scan directions,
+historical-range provenance loading, pre-change cache provenance backfill,
+cache/snapshot decoding without directory, merge-key separation, machine-local
+filtering, unattributed-row inclusion and exclusion, deterministic globally
+unique label collision suffixes (including cross-machine derived, explicit,
+mixed, and suffix-versus-base collisions), persistent name set/clear/reopen,
+rename validation and both routing surfaces, mutation-gate parity and rejection
+before decoding or persistence, optional-name response decoding,
+sidebar and chart label refresh without identity/color changes, lost-response
+rename reconciliation, rollback-phase restart recovery, nested-filter
+visibility, historical-list refresh, machine-uncheck reset, query encoding,
+daily directory-breakdown requests with and without active filters,
+omitted/false breakdown compatibility, persisted stack-value fallback, atomic
+backfill rollback/retry, no legacy-and-attributed session duplication, and
+unchanged totals before and after successful or failed backfill. Targeted
+checks precede the full implementation gate:
+
+```text
+swift test --filter DirectoryFeature
+cd frontend && bun test machineScope
+cd frontend && bun test api
+swift build
+swift test
+cd frontend && bun test
+```
+
 ## Aggregation Period and Budget Rules
 
 ### Persisted reset baseline contract
@@ -399,7 +718,9 @@ Successful responses use JSON and stable field names. Bad parameters return
 `503` or `500` with a machine-readable error code and non-sensitive message.
 No route accepts arbitrary filesystem paths or executes arbitrary commands. The
 explicit state-changing HTTP control surface comprises machine-registry create,
-replace, patch, and delete, `GET /api/refresh`, and `DELETE /api/cache`.
+replace, patch, and delete, `GET /api/refresh`, `DELETE /api/cache`, and
+`PUT /api/subdirectories/name` on both the local-only and machine-scoped
+dashboard routing surfaces.
 Read-through historical queries may populate their selected machine caches but
 cannot change configuration or delete retained data. Budget and
 aggregation-period mutations remain menu-bar actions. Every explicit control
@@ -478,14 +799,18 @@ old-generation cancellation, and affected-poller replacement before replying.
 Poll publications are revision/generation fenced; unaffected pollers continue
 running.
 
-Every existing query route accepts `machine=<id|all>`, defaulting to `all`.
-Concrete ids select exactly one snapshot. Unknown ids return `404`; invalid
-parameters return `400`; disabled ids return `409`; enabled ids without a
-snapshot return `503`. Retained stale snapshots remain readable only for
-explicitly historical intervals. Before any interval reaching the current host
-day is aggregated, selection excludes machines whose derived state is stale,
-error, never-collected, or disabled. Their retained rows therefore cannot enter
-current series, totals, budget values, or summary cards.
+Every snapshot-backed dashboard data route defaults to all enabled machines
+when `machine` is omitted. A caller may instead pass exactly `machine=all` or
+repeat `machine=<id>` to select one or more distinct canonical ids. The `all`
+sentinel cannot be mixed with concrete ids, and duplicate, empty, or
+non-canonical values return `400`. Unknown ids return `404`; disabled ids return
+`409`; enabled ids without a snapshot return `503`. Health and control routes
+retain their separately documented single-id-or-`all` contracts. Retained stale
+snapshots remain readable only for explicitly historical intervals. Before any
+interval reaching the current host day is aggregated, selection excludes
+machines whose derived state is stale, error, never-collected, or disabled.
+Their retained rows therefore cannot enter current series, totals, budget
+values, or summary cards.
 
 The all-machines view merges only snapshots eligible for the requested interval
 and returns partial `200` results when at least one machine remains. It stamps

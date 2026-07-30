@@ -35,7 +35,7 @@ ccusage-gauge serve
     └─ "remote-b"   -> SSHCCUsageTransport(host:port) -> SnapshotService -> aggregates-remote-b.sqlite3
   MachineCollector: per-machine PollingService, each refreshes on interval
   MachineSnapshotStore: latest CostSnapshot per machine (+ collection status)
-  DashboardRouter: reads ?machine=<id|all>, serves per-machine or merged snapshot
+  DashboardRouter: reads repeated ?machine=<id> or machine=all, serves selected snapshots
 ```
 
 The machine id is the provenance key across registry entries, cache files,
@@ -314,6 +314,9 @@ Remote data source: on each remote machine, `ccusage` reads that machine's own
 (`ClaudeUsageEventLoader` / `CodexUsageEventLoader`) reads local files and cannot
 run remotely, so remote machines use ccusage's own `session`/`daily` output
 without host-side event reconciliation (dataQuality stays as ccusage reports).
+The project-directory feature preserves this boundary: absent optional
+directory provenance in the aggregate format, remote rows are unattributed and
+the remote machine exposes no subdirectory choices.
 
 ### 2. Machine registry
 
@@ -790,11 +793,14 @@ contract.
   the latest snapshot, inclusive coverage start, transient load status, and
   `MachineCollectionStatus` (attempt/success/error timestamps, sanitized error,
   active-collection flag, and refresh interval) used by the exact health DTO.
-- `DashboardRouter` accepts `?machine=<id>` (single machine) or `machine=all`
-  (default, merged). Merge = concatenate machine snapshots with each row stamped
-  with its machine id, recompute totals. All existing endpoints (`/api/metrics`,
-  `/api/cost-series`, `/api/period`, `/api/budget`, `/api/recent`, `/api/day`)
-  gain machine awareness.
+- `DashboardRouter` defaults snapshot-backed dashboard data routes to all
+  enabled machines when `machine` is omitted. Such routes accept exactly
+  `machine=all` or one or more repeated, distinct `machine=<id>` items; `all`
+  cannot be mixed with concrete ids. Merge = concatenate selected machine
+  snapshots with each row stamped with its machine id, then recompute totals.
+  All existing endpoints (`/api/metrics`, `/api/cost-series`, `/api/period`,
+  `/api/budget`, `/api/recent`, `/api/day`) gain machine awareness. Health and
+  control routes keep their separately specified single-id-or-`all` contracts.
 - New `/api/machines` (registry CRUD) and `/api/machine-status` (collection
   health per machine, for the dashboard).
 

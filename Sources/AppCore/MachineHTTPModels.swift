@@ -166,6 +166,17 @@ extension MachinePatchField {
 
 public struct MachinesResponse: Codable, Sendable {
   public let machines: [MachineDescriptor]
+  public let metadataCleanupPendingMachineIds: [String]?
+
+  public init(
+    machines: [MachineDescriptor],
+    metadataCleanupPendingMachineIds: [String]? = nil
+  ) {
+    self.machines = machines
+    self.metadataCleanupPendingMachineIds = metadataCleanupPendingMachineIds?.isEmpty == true
+      ? nil
+      : metadataCleanupPendingMachineIds
+  }
 }
 
 public struct RefreshResponse: Codable, Sendable {

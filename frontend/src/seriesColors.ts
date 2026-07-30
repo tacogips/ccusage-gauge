@@ -1,14 +1,16 @@
-export type SeriesKind = "machine" | "model";
+export type SeriesKind = "machine" | "model" | "subdirectory";
 export type ColorScheme = "light" | "dark";
 
 const colorsByScheme: Record<ColorScheme, Record<SeriesKind, readonly string[]>> = {
   light: {
     machine: ["#238855", "#3f75b5", "#b86f32", "#7b5eb5", "#b84f6f", "#468a86", "#8a7a35", "#596d7a"],
     model: ["#3f75b5", "#238855", "#7b5eb5", "#b86f32", "#468a86", "#b84f6f", "#596d7a", "#8a7a35"],
+    subdirectory: ["#7b5eb5", "#238855", "#b86f32", "#3f75b5", "#b84f6f", "#468a86", "#8a7a35", "#596d7a"],
   },
   dark: {
     machine: ["#55c98a", "#70a7e8", "#e6a15c", "#a98ae8", "#e77b9d", "#70c7c1", "#c2ae57", "#8fa6b5"],
     model: ["#70a7e8", "#55c98a", "#a98ae8", "#e6a15c", "#70c7c1", "#e77b9d", "#8fa6b5", "#c2ae57"],
+    subdirectory: ["#a98ae8", "#55c98a", "#e6a15c", "#70a7e8", "#e77b9d", "#70c7c1", "#c2ae57", "#8fa6b5"],
   },
 };
 

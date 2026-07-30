@@ -120,7 +120,10 @@ public struct DashboardCostRow: Codable, Equatable, Sendable {
   public let totalTokens: Int
   public let dataQuality: String
   public let machine: String
+  public let directory: String?
 }
+
+public typealias DashboardDirectorySelections = [String: Set<String>]
 
 public struct DashboardCostResponse: Codable, Equatable, Sendable, ScopedDashboardResponse {
   public let range: String
@@ -232,14 +235,33 @@ public struct DashboardQueryService: Sendable {
     return PeriodResponse(range: "custom", series: points, totalUSD: points.reduce(0) { $0 + $1.costUSD })
   }
 
-  public func budget(snapshot: CostSnapshot) -> BudgetResponse {
-    BudgetResponse(
-      budgetUSD: snapshot.budget.budgetUSD,
-      spentUSD: snapshot.budget.spentUSD,
-      remainingUSD: snapshot.budget.remainingUSD,
-      overageUSD: snapshot.budget.overageUSD,
-      usagePercentage: snapshot.budget.usagePercentage,
-      visualFraction: snapshot.budget.visualFraction,
+  public func budget(
+    snapshot: CostSnapshot,
+    directorySelections: DashboardDirectorySelections = [:]
+  ) -> BudgetResponse {
+    let summary: BudgetSummary
+    if directorySelections.isEmpty {
+      summary = snapshot.budget
+    } else {
+      let interval = DateInterval(
+        start: snapshot.activeBoundaryAt,
+        end: max(snapshot.activeBoundaryAt, snapshot.generatedAt)
+      )
+      let spent = snapshot.dashboardSessions
+        .filter {
+          isWithin($0.timestamp, interval: interval)
+            && matchesDirectory(machine: $0.machine, directory: $0.directory, selections: directorySelections)
+        }
+        .reduce(Decimal.zero) { $0 + $1.costUSD }
+      summary = BudgetSummary(spentUSD: spent, budgetUSD: snapshot.budget.budgetUSD)
+    }
+    return BudgetResponse(
+      budgetUSD: summary.budgetUSD,
+      spentUSD: summary.spentUSD,
+      remainingUSD: summary.remainingUSD,
+      overageUSD: summary.overageUSD,
+      usagePercentage: summary.usagePercentage,
+      visualFraction: summary.visualFraction,
       resetCycle: snapshot.resetCycle.label,
       activeBoundaryAt: snapshot.activeBoundaryAt,
       refreshIntervalSeconds: snapshot.refreshIntervalSeconds
@@ -251,11 +273,17 @@ public struct DashboardQueryService: Sendable {
     range: String,
     startDate: Date? = nil,
     endDate: Date? = nil,
-    now: Date = Date()
+    now: Date = Date(),
+    directorySelections: DashboardDirectorySelections = [:]
   ) throws -> DashboardMetricsResponse {
     let interval = try queryInterval(range: range, startDate: startDate, endDate: endDate, now: now)
-    if range == "recent12h" {
-      let rows = aggregateSessions(snapshot.dashboardSessions, interval: interval)
+    if range == "recent12h" || !directorySelections.isEmpty {
+      let rows = aggregateSessions(
+        snapshot.dashboardSessions,
+        interval: interval,
+        includeDirectory: !directorySelections.isEmpty,
+        directorySelections: directorySelections
+      )
       return DashboardMetricsResponse(range: range, rows: rows, totals: metricTotals(rows))
     }
     // One formatter and one memo per call: row dates repeat heavily (~30-90 unique days),
@@ -274,14 +302,25 @@ public struct DashboardQueryService: Sendable {
     range: String,
     startDate: Date? = nil,
     endDate: Date? = nil,
-    now: Date = Date()
+    now: Date = Date(),
+    directorySelections: DashboardDirectorySelections = [:],
+    directoryBreakdown: Bool = false
   ) throws -> DashboardCostResponse {
     let interval = try queryInterval(range: range, startDate: startDate, endDate: endDate, now: now)
     let rows: [DashboardCostRow]
+    let directoryResolved = directoryBreakdown || !directorySelections.isEmpty
     switch granularity {
     case "15min", "hourly", "6hour":
-      rows = snapshot.dashboardSessions.compactMap { record in
+      let sessions = directoryResolved
+        ? snapshot.dashboardSessions
+        : collapsedSessions(snapshot.dashboardSessions)
+      rows = sessions.compactMap { record in
         guard isWithin(record.timestamp, interval: interval) else { return nil }
+        guard matchesDirectory(
+          machine: record.machine,
+          directory: record.directory,
+          selections: directorySelections
+        ) else { return nil }
         return DashboardCostRow(
           timestamp: record.timestamp,
           agent: record.agent,
@@ -293,12 +332,21 @@ public struct DashboardQueryService: Sendable {
           cacheReadTokens: record.cacheReadTokens,
           totalTokens: record.totalTokens,
           dataQuality: record.dataQuality.rawValue,
-          machine: record.machine
+          machine: record.machine,
+          directory: directoryResolved ? record.directory : nil
         )
       }
     case "daily":
+      let records = directoryResolved
+        ? aggregateSessions(
+          snapshot.dashboardSessions,
+          interval: interval,
+          includeDirectory: true,
+          directorySelections: directorySelections
+        )
+        : snapshot.dashboardMetrics
       let parse = memoizedDayParser()
-      rows = snapshot.dashboardMetrics.compactMap { record in
+      rows = records.compactMap { record in
         guard let timestamp = parse(record.date), isWithin(timestamp, interval: interval) else { return nil }
         return DashboardCostRow(
           timestamp: timestamp,
@@ -311,7 +359,8 @@ public struct DashboardQueryService: Sendable {
           cacheReadTokens: record.cacheReadTokens,
           totalTokens: record.totalTokens,
           dataQuality: "daily",
-          machine: record.machine
+          machine: record.machine,
+          directory: directoryResolved ? record.directory : nil
         )
       }
     default: throw DashboardQueryError.invalidGranularity
@@ -378,9 +427,17 @@ public struct DashboardQueryService: Sendable {
 
   private func aggregateSessions(
     _ sessions: [CCUsageSessionMetricRecord],
-    interval: DateInterval?
+    interval: DateInterval?,
+    includeDirectory: Bool = false,
+    directorySelections: DashboardDirectorySelections = [:]
   ) -> [CCUsageMetricRecord] {
-    struct Key: Hashable { let date: String; let agent: String; let model: String; let machine: String }
+    struct Key: Hashable {
+      let date: String
+      let agent: String
+      let model: String
+      let machine: String
+      let directory: String?
+    }
     struct Values {
       var costUSD = Decimal.zero
       var inputTokens = 0
@@ -391,7 +448,18 @@ public struct DashboardQueryService: Sendable {
     var groups: [Key: Values] = [:]
     let day = memoizedDayFormatter()
     for session in sessions where isWithin(session.timestamp, interval: interval) {
-      let key = Key(date: day(session.timestamp), agent: session.agent, model: session.model, machine: session.machine)
+      guard matchesDirectory(
+        machine: session.machine,
+        directory: session.directory,
+        selections: directorySelections
+      ) else { continue }
+      let key = Key(
+        date: day(session.timestamp),
+        agent: session.agent,
+        model: session.model,
+        machine: session.machine,
+        directory: includeDirectory ? session.directory : nil
+      )
       var values = groups[key, default: Values()]
       values.costUSD += session.costUSD
       values.inputTokens += session.inputTokens
@@ -410,9 +478,73 @@ public struct DashboardQueryService: Sendable {
         outputTokens: values.outputTokens,
         cacheCreationTokens: values.cacheCreationTokens,
         cacheReadTokens: values.cacheReadTokens,
+        machine: key.machine,
+        directory: key.directory
+      )
+    }.sorted {
+      ($0.date, $0.agent, $0.model, $0.machine, $0.directory ?? "")
+        < ($1.date, $1.agent, $1.model, $1.machine, $1.directory ?? "")
+    }
+  }
+
+  private func collapsedSessions(
+    _ sessions: [CCUsageSessionMetricRecord]
+  ) -> [CCUsageSessionMetricRecord] {
+    struct Key: Hashable {
+      let timestamp: Date
+      let agent: String
+      let model: String
+      let machine: String
+      let quality: UsageDataQuality
+    }
+    struct Values {
+      var costUSD = Decimal.zero
+      var inputTokens = 0
+      var outputTokens = 0
+      var cacheCreationTokens = 0
+      var cacheReadTokens = 0
+    }
+    var groups: [Key: Values] = [:]
+    for session in sessions {
+      let key = Key(
+        timestamp: session.timestamp,
+        agent: session.agent,
+        model: session.model,
+        machine: session.machine,
+        quality: session.dataQuality
+      )
+      var values = groups[key, default: Values()]
+      values.costUSD += session.costUSD
+      values.inputTokens += session.inputTokens
+      values.outputTokens += session.outputTokens
+      values.cacheCreationTokens += session.cacheCreationTokens
+      values.cacheReadTokens += session.cacheReadTokens
+      groups[key] = values
+    }
+    return groups.map { key, values in
+      CCUsageSessionMetricRecord(
+        timestamp: key.timestamp,
+        agent: key.agent,
+        model: key.model,
+        costUSD: values.costUSD,
+        inputTokens: values.inputTokens,
+        outputTokens: values.outputTokens,
+        cacheCreationTokens: values.cacheCreationTokens,
+        cacheReadTokens: values.cacheReadTokens,
+        dataQuality: key.quality,
         machine: key.machine
       )
-    }.sorted { ($0.date, $0.agent, $0.model) < ($1.date, $1.agent, $1.model) }
+    }.sorted(by: sessionsInIncreasingOrder)
+  }
+
+  private func matchesDirectory(
+    machine: String,
+    directory: String?,
+    selections: DashboardDirectorySelections
+  ) -> Bool {
+    guard let selected = selections[machine], !selected.isEmpty else { return true }
+    guard let directory else { return false }
+    return selected.contains(directory)
   }
 
   private func queryInterval(

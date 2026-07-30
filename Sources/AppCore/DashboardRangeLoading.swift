@@ -106,6 +106,10 @@ func dashboardDataDisposition(
   now: Date,
   queryService: DashboardQueryService
 ) -> DashboardDataDisposition {
+  // Directory labels are allocated from the complete enabled-machine catalog.
+  // Retained snapshots therefore remain inventory sources while a machine is
+  // stale, even though its usage is excluded from current totals.
+  if path == "/api/subdirectories" { return .historical }
   if path == "/api/recent" || path == "/api/budget" { return .current }
   let today = queryService.calendar.startOfDay(for: now)
   let queryValue: (String) -> String? = { name in

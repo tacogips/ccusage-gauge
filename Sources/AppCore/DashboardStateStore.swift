@@ -51,7 +51,8 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
     selectedMachines = try container.decodeIfPresent([String].self, forKey: .selectedMachines) ?? []
     granularity = try container.decode(String.self, forKey: .granularity)
     chartMetric = try container.decode(String.self, forKey: .chartMetric)
-    stackBy = try container.decodeIfPresent(String.self, forKey: .stackBy) ?? "model"
+    let decodedStackBy = try container.decodeIfPresent(String.self, forKey: .stackBy) ?? "model"
+    stackBy = ["model", "machine", "subdirectory"].contains(decodedStackBy) ? decodedStackBy : "model"
   }
 
   public func validate() throws {
@@ -63,7 +64,7 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
           selectedModels.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 500 }),
           selectedAgents.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 100 }),
           selectedMachines.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 100 }),
-          ["model", "machine"].contains(stackBy) else {
+          ["model", "machine", "subdirectory"].contains(stackBy) else {
       throw DashboardStateError.invalidState
     }
   }
@@ -97,7 +98,9 @@ public actor DashboardStateStore {
     guard sqlite3_prepare_v2(database, "SELECT value FROM dashboard_state WHERE id = 1", -1, &statement, nil) == SQLITE_OK,
           let statement else { throw DashboardStateError.databaseUnavailable }
     defer { sqlite3_finalize(statement) }
-    guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+    let stepResult = sqlite3_step(statement)
+    if stepResult == SQLITE_DONE { return nil }
+    guard stepResult == SQLITE_ROW else { throw DashboardStateError.databaseUnavailable }
     guard let bytes = sqlite3_column_blob(statement, 0) else { throw DashboardStateError.invalidState }
     let data = Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 0)))
     let state = try JSONDecoder().decode(DashboardUIState.self, from: data)
@@ -133,6 +136,10 @@ public actor DashboardStateStore {
     let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
     guard sqlite3_open_v2(fileURL.path, &database, flags, nil) == SQLITE_OK, let database else {
       if let database { sqlite3_close(database) }
+      throw DashboardStateError.databaseUnavailable
+    }
+    guard sqlite3_busy_timeout(database, 5_000) == SQLITE_OK else {
+      sqlite3_close(database)
       throw DashboardStateError.databaseUnavailable
     }
     return database

@@ -13,6 +13,42 @@ public struct TimestampedUsageEvent: Equatable, Sendable {
   public let cacheReadTokens: Int
   public let cacheCreationFiveMinuteTokens: Int
   public let cacheCreationOneHourTokens: Int
+  public let directory: String?
+
+  public init(
+    timestamp: Date,
+    agent: String,
+    sessionID: String,
+    requestID: String,
+    messageID: String,
+    model: String,
+    inputTokens: Int,
+    outputTokens: Int,
+    cacheCreationTokens: Int,
+    cacheReadTokens: Int,
+    cacheCreationFiveMinuteTokens: Int,
+    cacheCreationOneHourTokens: Int,
+    directory: String? = nil
+  ) {
+    self.timestamp = timestamp
+    self.agent = agent
+    self.sessionID = sessionID
+    self.requestID = requestID
+    self.messageID = messageID
+    self.model = model
+    self.inputTokens = inputTokens
+    self.outputTokens = outputTokens
+    self.cacheCreationTokens = cacheCreationTokens
+    self.cacheReadTokens = cacheReadTokens
+    self.cacheCreationFiveMinuteTokens = cacheCreationFiveMinuteTokens
+    self.cacheCreationOneHourTokens = cacheCreationOneHourTokens
+    self.directory = Self.normalizedDirectory(directory)
+  }
+
+  private static func normalizedDirectory(_ value: String?) -> String? {
+    guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+    return value
+  }
 
   var identity: String { "\(sessionID)\u{1f}\(requestID)\u{1f}\(messageID)" }
 
@@ -125,7 +161,8 @@ public struct ClaudeUsageEventLoader: Sendable {
       cacheCreationTokens: usage.cacheCreationInputTokens,
       cacheReadTokens: usage.cacheReadInputTokens,
       cacheCreationFiveMinuteTokens: usage.cacheCreation?.fiveMinuteInputTokens ?? 0,
-      cacheCreationOneHourTokens: usage.cacheCreation?.oneHourInputTokens ?? 0
+      cacheCreationOneHourTokens: usage.cacheCreation?.oneHourInputTokens ?? 0,
+      directory: envelope.cwd
     )
   }
 
@@ -285,10 +322,11 @@ private struct EventEnvelope: Decodable {
   let timestamp: String
   let sessionID: String?
   let requestID: String?
+  let cwd: String?
   let message: EventMessage
 
   enum CodingKeys: String, CodingKey {
-    case type, timestamp, message
+    case type, timestamp, cwd, message
     case sessionID = "sessionId"
     case requestID = "requestId"
   }

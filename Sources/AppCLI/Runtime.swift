@@ -114,7 +114,16 @@ enum CommandRuntime {
         }
       )
     }
-    let mutationOwner = MachineRegistryMutationOwner(store: registryStore, registry: registry, runtime: collector)
+    let directoryNameStore = DashboardDirectoryNameStore(fileURL: paths.dashboardStateFile)
+    try await directoryNameStore.reconcileMachineRegistry(
+      machineIDs: registry.machines.map(\.id)
+    )
+    let mutationOwner = MachineRegistryMutationOwner(
+      store: registryStore,
+      registry: registry,
+      runtime: collector,
+      metadataLifecycle: directoryNameStore
+    )
     let resolver = StaticAssetResolver(explicitRoot: assets.map { URL(fileURLWithPath: $0, isDirectory: true) })
     let machineRouter = MachineDashboardRouter(
       store: snapshotStore,
@@ -122,6 +131,7 @@ enum CommandRuntime {
       mutationOwner: mutationOwner,
       paths: paths,
       dashboardStateStore: DashboardStateStore(fileURL: paths.dashboardStateFile),
+      directoryNameStore: directoryNameStore,
       chartColors: config.chartColors
     )
     let router = DashboardRouter(machineRouter: machineRouter, assetResolver: resolver)

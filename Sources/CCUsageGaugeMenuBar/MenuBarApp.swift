@@ -240,7 +240,16 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
           }
         )
       }
-      let mutationOwner = MachineRegistryMutationOwner(store: registryStore, registry: registry, runtime: collector)
+      let directoryNameStore = DashboardDirectoryNameStore(fileURL: paths.dashboardStateFile)
+      try await directoryNameStore.reconcileMachineRegistry(
+        machineIDs: registry.machines.map(\.id)
+      )
+      let mutationOwner = MachineRegistryMutationOwner(
+        store: registryStore,
+        registry: registry,
+        runtime: collector,
+        metadataLifecycle: directoryNameStore
+      )
       machineSnapshotStore = machineStore
       machineCollector = collector
       machineRouter = MachineDashboardRouter(
@@ -249,6 +258,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mutationOwner: mutationOwner,
         paths: paths,
         dashboardStateStore: DashboardStateStore(fileURL: paths.dashboardStateFile),
+        directoryNameStore: directoryNameStore,
         chartColors: loaded.chartColors
       )
       errorMessage = nil

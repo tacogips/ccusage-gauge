@@ -15,6 +15,8 @@ describe("series colors", () => {
   test("uses separate stable namespaces for machines and models", () => {
     expect(seriesColor("light", "machine", "shared-name")).toBe("#596d7a");
     expect(seriesColor("light", "model", "shared-name")).toBe("#b86f32");
+    expect(seriesColor("light", "subdirectory", "shared-name"))
+      .not.toBe(seriesColor("light", "model", "shared-name"));
   });
 
   test("switches fallback palettes between light and dark schemes", () => {
