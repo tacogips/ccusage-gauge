@@ -37,7 +37,7 @@ public actor DashboardDirectoryNameStore: MachineRegistryMetadataLifecycle {
       throw DashboardDirectoryNameError.invalidInput
     }
     let normalizedName = try Self.normalizedName(name)
-    let database = try openDatabase()
+    nonisolated(unsafe) let database = try openDatabase()
     defer { sqlite3_close(database) }
     try createSchema(in: database)
     try transaction(in: database) {
@@ -108,7 +108,7 @@ public actor DashboardDirectoryNameStore: MachineRegistryMetadataLifecycle {
       throw DashboardDirectoryNameError.invalidInput
     }
     let activeMachineIDs = Set(machineIDs)
-    let database = try openDatabase()
+    nonisolated(unsafe) let database = try openDatabase()
     defer { sqlite3_close(database) }
     try createSchema(in: database)
     try transaction(in: database) {
@@ -135,7 +135,7 @@ public actor DashboardDirectoryNameStore: MachineRegistryMetadataLifecycle {
 
   public func prepareMachineCreation(machineID: String) throws {
     try validateMachineID(machineID)
-    let database = try openDatabase()
+    nonisolated(unsafe) let database = try openDatabase()
     defer { sqlite3_close(database) }
     try createSchema(in: database)
     try transaction(in: database) {
