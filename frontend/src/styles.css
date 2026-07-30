@@ -25,6 +25,16 @@ button.model-choice { grid-template-columns: minmax(0, 1fr); }
 .model-choice input { accent-color: #22734b; }
 .model-choice span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .82rem; font-weight: 650; }
 .machine-filter label.model-choice { grid-template-columns: auto minmax(0, 1fr) auto; }
+.machine-directory-group { min-width: 0; }
+.directory-filter-list { display: grid; gap: 4px; margin: 3px 0 5px 22px; padding-left: 9px; border-left: 2px solid #d5e5da; }
+.directory-choice { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 5px 7px; border-radius: 8px; color: #60776d; }
+.directory-choice:hover, .directory-choice.active { background: #edf5ef; color: #174c33; }
+.directory-choice > input { accent-color: #22734b; }
+.directory-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .72rem; font-weight: 650; }
+.directory-rename-button, .directory-rename-editor button { border: 0; background: transparent; color: inherit; padding: 2px 4px; font-size: .64rem; cursor: pointer; }
+.directory-rename-editor { grid-column: 2 / -1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; align-items: center; }
+.directory-rename-input { min-width: 0; border: 1px solid #9db9a8; border-radius: 5px; padding: 3px 5px; font: inherit; color: inherit; background: #fff; }
+.directory-rename-error { grid-column: 1 / -1; color: #9d2f2f; font-size: .62rem; line-height: 1.2; }
 .machine-warning-icon { width: 17px; height: 17px; flex: 0 0 auto; fill: #f6c453; stroke: #8d4b16; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .model-choice.unavailable, .model-choice.estimated { position: relative; cursor: help; }
 .model-choice.unavailable { opacity: .56; }
@@ -214,6 +224,9 @@ input[type="date"] { border: 1px solid #bfd0c4; background: white; color: #17312
 :root[data-color-scheme="dark"] .partial-range-status { background: rgba(91,65,17,.42); border-color: #826625; color: #efd58b; }
 :root[data-color-scheme="dark"] .model-choice:hover { background: #294638; }
 :root[data-color-scheme="dark"] .model-choice.active, :root[data-color-scheme="dark"] .model-tags span, :root[data-color-scheme="dark"] .agent-tag { background: #294f3b; color: #c9efd6; }
+:root[data-color-scheme="dark"] .directory-filter-list { border-color: #345140; }
+:root[data-color-scheme="dark"] .directory-choice:hover, :root[data-color-scheme="dark"] .directory-choice.active { background: #294638; color: #c9efd6; }
+:root[data-color-scheme="dark"] .directory-rename-input { background: #17251d; border-color: #52705e; }
 :root[data-color-scheme="dark"] .range-buttons button, :root[data-color-scheme="dark"] .agent-buttons button { background: #294a39; color: #c5e7d2; }
 :root[data-color-scheme="dark"] .refresh-icon, :root[data-color-scheme="dark"] .config-menu summary { background: rgba(25,44,35,.84); border-color: #42624f; color: #c5e7d2; }
 :root[data-color-scheme="dark"] .refresh-icon:hover, :root[data-color-scheme="dark"] .config-menu summary:hover, :root[data-color-scheme="dark"] .config-menu[open] summary { background: #294a39; color: white; }

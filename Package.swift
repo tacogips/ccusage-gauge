@@ -29,7 +29,7 @@ var targets: [Target] = [
   ),
   .testTarget(
     name: "AppCoreTests",
-    dependencies: ["AppCore"]
+    dependencies: ["AppCore", "CSQLite"]
   ),
   .testTarget(
     name: "AppCLITests",

@@ -9,6 +9,7 @@ export interface MetricRow {
   cacheReadTokens: number;
   totalTokens: number;
   machine: string;
+  directory?: string;
 }
 export type MetricKey = "costUSD" | "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens";
 export interface MetricTotals extends Omit<MetricRow, "date" | "agent" | "model" | "machine"> {}
@@ -56,6 +57,7 @@ export interface CostRow {
   cacheReadTokens: number; totalTokens: number;
   dataQuality: "timestamped" | "sessionEstimated" | "daily";
   machine: string;
+  directory?: string;
 }
 export interface CostSeriesResponse {
   range: string;
@@ -96,7 +98,7 @@ export interface DashboardUIState {
   selectedMachines: string[];
   granularity: "15min" | "hourly" | "6hour" | "daily";
   chartMetric: "costUSD" | "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens";
-  stackBy: "model" | "machine";
+  stackBy: "model" | "machine" | "subdirectory";
 }
 export interface DashboardUIStateResponse { state?: DashboardUIState }
 export interface SSHConnection {
@@ -144,7 +146,26 @@ export interface AvailabilityErrorResponse {
   requestedCoverageStart?: string;
   availableCoverageStart?: string;
 }
-export interface MachinesResponse { machines: Machine[] }
+export interface MachinesResponse {
+  machines: Machine[];
+  metadataCleanupPendingMachineIds?: string[];
+}
+export interface MachineSubdirectories {
+  machine: string;
+  directories: string[];
+  names?: Record<string, string>;
+}
+export interface SubdirectoriesResponse {
+  machines: MachineSubdirectories[];
+}
+export interface DirectoryNameRequest {
+  machine: string;
+  directory: string;
+  name: string | null;
+}
+export interface DirectoryNameResponse extends DirectoryNameRequest {
+  status: "ok";
+}
 export interface ChartColorScheme { machines: Record<string, string>; models: Record<string, string> }
 export interface ChartColorsResponse { light: ChartColorScheme; dark: ChartColorScheme }
 export interface MachineStatusResponse { requested: string; generatedAt: string; machines: MachineStatus[] }
@@ -212,4 +233,13 @@ export function mutationJSON<T>(path: string, init: RequestInit = {}): Promise<T
   headers.set("X-CCUsage-Gauge-Mutation", "1");
   if (init.body != null) headers.set("Content-Type", "application/json");
   return requestJSON<T>(path, { ...init, headers });
+}
+
+export function renameSubdirectory(
+  request: DirectoryNameRequest,
+): Promise<DirectoryNameResponse> {
+  return mutationJSON<DirectoryNameResponse>("/api/subdirectories/name", {
+    method: "PUT",
+    body: JSON.stringify(request),
+  });
 }

@@ -10,6 +10,7 @@ private struct AgentModelBucket: Hashable {
   let timestamp: Date
   let agent: String
   let model: String
+  let directory: String?
 }
 
 private struct UsageLoadResult: Sendable {
@@ -237,7 +238,8 @@ private func reconciledTimestampedSessions(
         outputTokens: outputTokens,
         cacheCreationTokens: cacheCreationTokens,
         cacheReadTokens: cacheReadTokens,
-        dataQuality: .timestamped
+        dataQuality: .timestamped,
+        directory: event.directory
       )
     }
   }
@@ -246,7 +248,12 @@ private func reconciledTimestampedSessions(
     let bucketTimestamp = Date(
       timeIntervalSince1970: floor(event.timestamp.timeIntervalSince1970 / 900) * 900
     )
-    let key = AgentModelBucket(timestamp: bucketTimestamp, agent: event.agent, model: event.model)
+    let key = AgentModelBucket(
+      timestamp: bucketTimestamp,
+      agent: event.agent,
+      model: event.model,
+      directory: event.directory
+    )
     var totals = buckets[key] ?? UsageBucketTotals()
     totals.costUSD += event.costUSD
     totals.inputTokens += event.inputTokens
@@ -265,7 +272,8 @@ private func reconciledTimestampedSessions(
       outputTokens: totals.outputTokens,
       cacheCreationTokens: totals.cacheCreationTokens,
       cacheReadTokens: totals.cacheReadTokens,
-      dataQuality: .timestamped
+      dataQuality: .timestamped,
+      directory: key.directory
     )
   }.sorted { ($0.timestamp, $0.model) < ($1.timestamp, $1.model) }
 }
@@ -470,8 +478,15 @@ public struct SnapshotService: Sendable {
     let dashboardMetrics: [CCUsageMetricRecord]
     let dashboardSessions: [CCUsageSessionMetricRecord]
     if let cached {
-      dashboardMetrics = mergeSorted(cached.metrics, sortedFreshMetrics, by: metricsInIncreasingOrder)
-      dashboardSessions = mergeSorted(cached.sessions, sortedFreshSessions, by: sessionsInIncreasingOrder)
+      let retainedMetrics = cached.metrics.filter { row in
+        !ranges.contains { $0.since <= row.date && row.date <= $0.until }
+      }
+      let retainedSessions = cached.sessions.filter { row in
+        let day = formatDay(row.timestamp)
+        return !ranges.contains { $0.since <= day && day <= $0.until }
+      }
+      dashboardMetrics = mergeSorted(retainedMetrics, sortedFreshMetrics, by: metricsInIncreasingOrder)
+      dashboardSessions = mergeSorted(retainedSessions, sortedFreshSessions, by: sessionsInIncreasingOrder)
     } else {
       dashboardMetrics = sortedFreshMetrics
       dashboardSessions = sortedFreshSessions
@@ -608,13 +623,14 @@ public struct SnapshotService: Sendable {
     let requestedStart = formatDay(desiredFrom)
     let requestedEnd = formatDay(desiredThrough)
     let historicalCoverage = cached?.coveredRanges ?? []
+    let directoryCoverage = cached?.directoryCoveredRanges ?? []
     var missingDays: [Date] = []
     var cursor = desiredFrom
     while cursor <= desiredThrough {
       let day = formatDay(cursor)
-      let isPersisted = day < today && historicalCoverage.contains {
-        $0.since <= day && day <= $0.through
-      }
+      let isPersisted = day < today
+        && historicalCoverage.contains { $0.since <= day && day <= $0.through }
+        && directoryCoverage.contains { $0.since <= day && day <= $0.through }
       if !isPersisted { missingDays.append(cursor) }
       guard let next = calculator.calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
       cursor = next
@@ -731,7 +747,7 @@ public struct SnapshotService: Sendable {
           formatDay: formatDay
         )
         if range.until < cacheBefore {
-          try? await aggregationCache?.merge(
+          try await aggregationCache?.merge(
             metrics: result.metrics,
             sessions: result.sessions,
             coveredRange: AggregationCacheRange(since: range.since, through: range.until),
@@ -813,16 +829,8 @@ public struct SnapshotService: Sendable {
   private func loadRecentTimestampedEvents(
     ranges: [(since: String, until: String)]
   ) async throws -> [TimestampedUsageEvent] {
-    guard let latestDayText = ranges.map(\.until).max(),
-          let latestDay = parseDay(latestDayText),
-          let currentMonth = calculator.calendar.dateInterval(of: .month, for: latestDay),
-          let recentStartDate = calculator.calendar.date(byAdding: .month, value: -1, to: currentMonth.start) else {
-      return []
-    }
-    let recentStart = formatDay(recentStartDate)
-    let recentRanges = ranges.filter { $0.until >= recentStart }
-    guard let since = recentRanges.map({ max($0.since, recentStart) }).min(),
-          let until = recentRanges.map(\.until).max() else { return [] }
+    guard let since = ranges.map(\.since).min(),
+          let until = ranges.map(\.until).max() else { return [] }
     return try await usageEventCoordinator.events(
       claudeLoader: claudeUsageEventLoader,
       codexLoader: codexUsageEventLoader,

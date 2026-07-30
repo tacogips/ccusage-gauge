@@ -367,7 +367,8 @@ public struct DashboardRouter: Sendable {
   private let queryService: DashboardQueryService
   private let assetResolver: StaticAssetResolver
   private let cacheClearer: CacheClearer
-  private let dashboardStateStore: DashboardStateStore?
+  let dashboardStateStore: DashboardStateStore?
+  let directoryNameStore: DashboardDirectoryNameStore?
   private let machineRouter: MachineDashboardRouter?
 
   public init(
@@ -376,12 +377,15 @@ public struct DashboardRouter: Sendable {
     queryService: DashboardQueryService = DashboardQueryService(),
     assetResolver: StaticAssetResolver,
     dashboardStateStore: DashboardStateStore? = nil,
+    directoryNameStore: DashboardDirectoryNameStore? = nil,
     cacheClearer: @escaping CacheClearer = {}
   ) {
     snapshotCache = DashboardSnapshotCache(maxAgeSeconds: snapshotCacheMaxAgeSeconds) { _ in try await snapshotProvider() }
     self.queryService = queryService
     self.assetResolver = assetResolver
     self.dashboardStateStore = dashboardStateStore
+    self.directoryNameStore = directoryNameStore
+      ?? dashboardStateStore.map { DashboardDirectoryNameStore(fileURL: $0.fileURL) }
     self.cacheClearer = cacheClearer
     machineRouter = nil
   }
@@ -392,6 +396,7 @@ public struct DashboardRouter: Sendable {
     queryService: DashboardQueryService = DashboardQueryService(),
     assetResolver: StaticAssetResolver,
     dashboardStateStore: DashboardStateStore? = nil,
+    directoryNameStore: DashboardDirectoryNameStore? = nil,
     cacheClearer: @escaping CacheClearer = {}
   ) {
     snapshotCache = DashboardSnapshotCache(
@@ -401,6 +406,8 @@ public struct DashboardRouter: Sendable {
     self.queryService = queryService
     self.assetResolver = assetResolver
     self.dashboardStateStore = dashboardStateStore
+    self.directoryNameStore = directoryNameStore
+      ?? dashboardStateStore.map { DashboardDirectoryNameStore(fileURL: $0.fileURL) }
     self.cacheClearer = cacheClearer
     machineRouter = nil
   }
@@ -411,12 +418,15 @@ public struct DashboardRouter: Sendable {
     queryService: DashboardQueryService = DashboardQueryService(),
     assetResolver: StaticAssetResolver,
     dashboardStateStore: DashboardStateStore? = nil,
+    directoryNameStore: DashboardDirectoryNameStore? = nil,
     cacheClearer: @escaping CacheClearer = {}
   ) {
     snapshotCache = DashboardSnapshotCache(maxAgeSeconds: snapshotCacheMaxAgeSeconds, loader: rangeSnapshotProvider)
     self.queryService = queryService
     self.assetResolver = assetResolver
     self.dashboardStateStore = dashboardStateStore
+    self.directoryNameStore = directoryNameStore
+      ?? dashboardStateStore.map { DashboardDirectoryNameStore(fileURL: $0.fileURL) }
     self.cacheClearer = cacheClearer
     machineRouter = nil
   }
@@ -427,6 +437,7 @@ public struct DashboardRouter: Sendable {
     self.assetResolver = assetResolver
     cacheClearer = {}
     dashboardStateStore = nil
+    directoryNameStore = nil
     self.machineRouter = machineRouter
   }
 
@@ -456,6 +467,13 @@ public struct DashboardRouter: Sendable {
         listenerPort: listenerPort
       )
     }
+    if let response = await directoryNameMutationResponse(
+      path: path,
+      method: method,
+      headers: headers,
+      body: body,
+      listenerPort: listenerPort
+    ) { return response }
     let isCacheClear = path == "/api/cache" && method == "DELETE"
     let isDashboardStateSave = path == "/api/dashboard-state" && method == "PUT"
     guard method == "GET" || isCacheClear || isDashboardStateSave else {
@@ -476,69 +494,39 @@ public struct DashboardRouter: Sendable {
         return json(await snapshotCache.status())
       }
       do {
+        let directoryRequest = try dashboardDirectoryRequest(
+          components,
+          descriptors: [.local],
+          requestedMachines: "local",
+          acceptsBreakdown: path == "/api/cost-series"
+        )
         if path == "/api/refresh" {
           _ = try await snapshotCache.snapshot(forceRefresh: true)
           return json(["status": "ok"])
         }
         let snapshot = try await snapshotCache.snapshot(earliestDate: requestedCoverageStart(for: path, components: components))
-        switch path {
-        case "/api/recent":
-          let limitValue = components.queryItems?.first(where: { $0.name == "limit" })?.value
-          let limit = limitValue.flatMap(Int.init) ?? (limitValue == nil ? 48 : nil)
-          guard let limit, (1...500).contains(limit) else { return errorResponse(status: 400, code: "invalid_limit", message: "limit must be 1...500") }
-          return json(queryService.recent(snapshot: snapshot, limit: limit))
-        case "/api/day":
-          guard let text = components.queryItems?.first(where: { $0.name == "date" })?.value,
-                let date = queryService.parseDay(text) else {
-            return errorResponse(status: 400, code: "invalid_date", message: "date must use YYYY-MM-DD")
-          }
-          return json(queryService.day(snapshot: snapshot, date: date))
-        case "/api/period":
-          let range = components.queryItems?.first(where: { $0.name == "range" })?.value ?? "today"
-          if range == "custom" {
-            guard let startText = components.queryItems?.first(where: { $0.name == "start" })?.value,
-                  let endText = components.queryItems?.first(where: { $0.name == "end" })?.value,
-                  let startDate = queryService.parseDay(startText),
-                  let endDate = queryService.parseDay(endText) else {
-              return errorResponse(status: 400, code: "invalid_custom_range", message: "custom range requires start and end dates in YYYY-MM-DD format")
-            }
-            return json(try queryService.period(snapshot: snapshot, startDate: startDate, endDate: endDate))
-          }
-          return json(try queryService.period(snapshot: snapshot, range: range))
-        case "/api/metrics":
-          let range = components.queryItems?.first(where: { $0.name == "range" })?.value ?? "today"
-          if range == "custom" {
-            guard let startText = components.queryItems?.first(where: { $0.name == "start" })?.value,
-                  let endText = components.queryItems?.first(where: { $0.name == "end" })?.value,
-                  let startDate = queryService.parseDay(startText),
-                  let endDate = queryService.parseDay(endText) else {
-              return errorResponse(status: 400, code: "invalid_custom_range", message: "custom range requires start and end dates in YYYY-MM-DD format")
-            }
-            return json(try queryService.metrics(snapshot: snapshot, range: range, startDate: startDate, endDate: endDate))
-          }
-          return json(try queryService.metrics(snapshot: snapshot, range: range))
-        case "/api/cost-series":
-          let range = components.queryItems?.first(where: { $0.name == "range" })?.value ?? "today"
-          let granularity = components.queryItems?.first(where: { $0.name == "granularity" })?.value ?? "hourly"
-          if range == "custom" {
-            guard let startText = components.queryItems?.first(where: { $0.name == "start" })?.value,
-                  let endText = components.queryItems?.first(where: { $0.name == "end" })?.value,
-                  let startDate = queryService.parseDay(startText),
-                  let endDate = queryService.parseDay(endText) else {
-              return errorResponse(status: 400, code: "invalid_custom_range", message: "custom range requires start and end dates in YYYY-MM-DD format")
-            }
-            return json(try queryService.costSeries(snapshot: snapshot, granularity: granularity, range: range, startDate: startDate, endDate: endDate))
-          }
-          return json(try queryService.costSeries(snapshot: snapshot, granularity: granularity, range: range))
-        case "/api/budget": return json(queryService.budget(snapshot: snapshot))
-        default: return errorResponse(status: 404, code: "not_found", message: "API route not found")
-        }
+        return try await dashboardDataResponse(
+          path: path,
+          components: components,
+          snapshot: snapshot,
+          directoryRequest: directoryRequest
+        )
       } catch DashboardQueryError.invalidRange {
         return errorResponse(status: 400, code: "invalid_range", message: "range must be recent12h, today, yesterday, week, month, or custom")
       } catch DashboardQueryError.invalidCustomRange {
         return errorResponse(status: 400, code: "invalid_custom_range", message: "custom range start must not be after end")
       } catch DashboardQueryError.invalidGranularity {
         return errorResponse(status: 400, code: "invalid_granularity", message: "granularity must be 15min, hourly, 6hour, or daily")
+      } catch DashboardDirectoryRequestError.machineNotFound {
+        return errorResponse(status: 404, code: "machine_not_found", message: "Machine not found")
+      } catch DashboardDirectoryRequestError.invalid {
+        return errorResponse(status: 400, code: "invalid_directory", message: "Invalid directory selection")
+      } catch DashboardDirectoryNameError.databaseUnavailable {
+        return errorResponse(
+          status: 503,
+          code: "directory_name_unavailable",
+          message: "Directory name storage is unavailable"
+        )
       } catch {
         return errorResponse(status: 503, code: "usage_unavailable", message: "Usage data is temporarily unavailable")
       }
@@ -552,27 +540,6 @@ public struct DashboardRouter: Sendable {
       return errorResponse(status: 503, code: "assets_missing", message: "Dashboard assets are not installed")
     }
     return HTTPResponse(status: 200, contentType: Self.contentType(for: file.pathExtension), body: data)
-  }
-
-  private func dashboardStateResponse(path: String, method: String, body: Data) async -> HTTPResponse? {
-    guard path == "/api/dashboard-state" else { return nil }
-    guard let dashboardStateStore else {
-      return errorResponse(status: 503, code: "state_unavailable", message: "Dashboard state storage is unavailable")
-    }
-    do {
-      if method == "PUT" {
-        let state = try JSONDecoder().decode(DashboardUIState.self, from: body)
-        try await dashboardStateStore.save(state)
-        return json(["status": "ok"])
-      }
-      return json(DashboardUIStateResponse(state: try await dashboardStateStore.load()))
-    } catch DashboardStateError.invalidState {
-      return errorResponse(status: 400, code: "invalid_dashboard_state", message: "Dashboard state is invalid")
-    } catch is DecodingError {
-      return errorResponse(status: 400, code: "invalid_dashboard_state", message: "Dashboard state is invalid")
-    } catch {
-      return errorResponse(status: 503, code: "state_unavailable", message: "Dashboard state storage is unavailable")
-    }
   }
 
   private func requestedCoverageStart(for path: String, components: URLComponents) -> Date? {
@@ -598,14 +565,14 @@ public struct DashboardRouter: Sendable {
     }
   }
 
-  private func json<T: Encodable>(_ value: T) -> HTTPResponse {
+  func json<T: Encodable>(_ value: T) -> HTTPResponse {
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     guard let body = try? encoder.encode(value) else { return errorResponse(status: 500, code: "encoding_failed", message: "Response encoding failed") }
     return HTTPResponse(status: 200, contentType: "application/json", body: body)
   }
 
-  private func errorResponse(status: Int, code: String, message: String) -> HTTPResponse {
+  func errorResponse(status: Int, code: String, message: String) -> HTTPResponse {
     let body = (try? JSONSerialization.data(withJSONObject: ["error": ["code": code, "message": message]], options: [.sortedKeys])) ?? Data()
     return HTTPResponse(status: status, contentType: "application/json", body: body)
   }
@@ -617,6 +584,109 @@ public struct DashboardRouter: Sendable {
     case "js": "text/javascript; charset=utf-8"
     case "svg": "image/svg+xml"
     default: "application/octet-stream"
+    }
+  }
+}
+
+private extension DashboardRouter {
+  /// Handles the local dashboard data routes. Split out of
+  /// `route(target:method:headers:body:listenerPort:)` so that entry point stays
+  /// within the project's cyclomatic-complexity budget.
+  func dashboardDataResponse(
+    path: String,
+    components: URLComponents,
+    snapshot: CostSnapshot,
+    directoryRequest: DashboardDirectoryRequest
+  ) async throws -> HTTPResponse {
+    switch path {
+    case "/api/recent":
+      let limitValue = components.queryItems?.first(where: { $0.name == "limit" })?.value
+      let limit = limitValue.flatMap(Int.init) ?? (limitValue == nil ? 48 : nil)
+      guard let limit, (1...500).contains(limit) else { return errorResponse(status: 400, code: "invalid_limit", message: "limit must be 1...500") }
+      return json(queryService.recent(snapshot: snapshot, limit: limit))
+    case "/api/day":
+      guard let text = components.queryItems?.first(where: { $0.name == "date" })?.value,
+            let date = queryService.parseDay(text) else {
+        return errorResponse(status: 400, code: "invalid_date", message: "date must use YYYY-MM-DD")
+      }
+      return json(queryService.day(snapshot: snapshot, date: date))
+    case "/api/period":
+      let range = components.queryItems?.first(where: { $0.name == "range" })?.value ?? "today"
+      if range == "custom" {
+        guard let startText = components.queryItems?.first(where: { $0.name == "start" })?.value,
+              let endText = components.queryItems?.first(where: { $0.name == "end" })?.value,
+              let startDate = queryService.parseDay(startText),
+              let endDate = queryService.parseDay(endText) else {
+          return errorResponse(status: 400, code: "invalid_custom_range", message: "custom range requires start and end dates in YYYY-MM-DD format")
+        }
+        return json(try queryService.period(snapshot: snapshot, startDate: startDate, endDate: endDate))
+      }
+      return json(try queryService.period(snapshot: snapshot, range: range))
+    case "/api/metrics":
+      let range = components.queryItems?.first(where: { $0.name == "range" })?.value ?? "today"
+      if range == "custom" {
+        guard let startText = components.queryItems?.first(where: { $0.name == "start" })?.value,
+              let endText = components.queryItems?.first(where: { $0.name == "end" })?.value,
+              let startDate = queryService.parseDay(startText),
+              let endDate = queryService.parseDay(endText) else {
+          return errorResponse(status: 400, code: "invalid_custom_range", message: "custom range requires start and end dates in YYYY-MM-DD format")
+        }
+        return json(try queryService.metrics(
+          snapshot: snapshot,
+          range: range,
+          startDate: startDate,
+          endDate: endDate,
+          directorySelections: directoryRequest.selections
+        ))
+      }
+      return json(try queryService.metrics(
+        snapshot: snapshot,
+        range: range,
+        directorySelections: directoryRequest.selections
+      ))
+    case "/api/cost-series":
+      let range = components.queryItems?.first(where: { $0.name == "range" })?.value ?? "today"
+      let granularity = components.queryItems?.first(where: { $0.name == "granularity" })?.value ?? "hourly"
+      if range == "custom" {
+        guard let startText = components.queryItems?.first(where: { $0.name == "start" })?.value,
+              let endText = components.queryItems?.first(where: { $0.name == "end" })?.value,
+              let startDate = queryService.parseDay(startText),
+              let endDate = queryService.parseDay(endText) else {
+          return errorResponse(status: 400, code: "invalid_custom_range", message: "custom range requires start and end dates in YYYY-MM-DD format")
+        }
+        return json(try queryService.costSeries(
+          snapshot: snapshot,
+          granularity: granularity,
+          range: range,
+          startDate: startDate,
+          endDate: endDate,
+          directorySelections: directoryRequest.selections,
+          directoryBreakdown: directoryRequest.breakdown
+        ))
+      }
+      return json(try queryService.costSeries(
+        snapshot: snapshot,
+        granularity: granularity,
+        range: range,
+        directorySelections: directoryRequest.selections,
+        directoryBreakdown: directoryRequest.breakdown
+      ))
+    case "/api/budget":
+      return json(queryService.budget(
+        snapshot: snapshot,
+        directorySelections: directoryRequest.selections
+      ))
+    case "/api/subdirectories":
+      guard let directoryNameStore else {
+        throw DashboardDirectoryNameError.databaseUnavailable
+      }
+      let names = try await directoryNameStore.names(machineIDs: ["local"])
+      return json(subdirectoriesResponse(
+        snapshot: snapshot,
+        machineIDs: ["local"],
+        namesByMachine: names
+      ))
+    default: return errorResponse(status: 404, code: "not_found", message: "API route not found")
     }
   }
 }

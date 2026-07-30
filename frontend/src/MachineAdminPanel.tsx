@@ -54,6 +54,9 @@ export function MachineAdminPanel(props: {
       }}</For>
     </div>
     <button class="secondary" onClick={props.onToggleForm}>{props.formOpen ? "Cancel" : "Add SSH machine"}</button>
+    <Show when={!props.formOpen && props.error}>
+      {(message) => <small class="machine-warning" role="alert">{message()}</small>}
+    </Show>
     <Show when={props.formOpen}><div class="machine-form">
       <Show when={props.draft.kind === "ssh"}>
         <input aria-label="Machine id" placeholder="machine-id" value={props.draft.id} disabled={props.editingID != null} onInput={(event) => update("id", event.currentTarget.value)} />

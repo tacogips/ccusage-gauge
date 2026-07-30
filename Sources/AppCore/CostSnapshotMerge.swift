@@ -3,6 +3,7 @@ import Foundation
 private struct CostPointKey: Hashable {
   let timestamp: Date
   let machine: String
+  let directory: String?
 }
 
 private struct MetricRowKey: Hashable {
@@ -10,6 +11,7 @@ private struct MetricRowKey: Hashable {
   let agent: String
   let model: String
   let machine: String
+  let directory: String?
 }
 
 private struct SessionRowKey: Hashable {
@@ -18,6 +20,7 @@ private struct SessionRowKey: Hashable {
   let model: String
   let machine: String
   let quality: UsageDataQuality
+  let directory: String?
 }
 
 func mergingSnapshots(
@@ -27,14 +30,34 @@ func mergingSnapshots(
 ) -> CostSnapshot {
   guard let existing else { return fresh }
   var points: [CostPointKey: CCUsageCostRecord] = [:]
-  existing.points.forEach { points[CostPointKey(timestamp: $0.timestamp, machine: $0.machine)] = $0 }
-  fresh.points.forEach { points[CostPointKey(timestamp: $0.timestamp, machine: $0.machine)] = $0 }
+  existing.points.forEach {
+    points[CostPointKey(timestamp: $0.timestamp, machine: $0.machine, directory: $0.directory)] = $0
+  }
+  fresh.points.forEach {
+    points[CostPointKey(timestamp: $0.timestamp, machine: $0.machine, directory: $0.directory)] = $0
+  }
   var metrics: [MetricRowKey: CCUsageMetricRecord] = [:]
   existing.dashboardMetrics.forEach {
-    metrics[MetricRowKey(date: $0.date, agent: $0.agent, model: $0.model, machine: $0.machine)] = $0
+    metrics[
+      MetricRowKey(
+        date: $0.date,
+        agent: $0.agent,
+        model: $0.model,
+        machine: $0.machine,
+        directory: $0.directory
+      )
+    ] = $0
   }
   fresh.dashboardMetrics.forEach {
-    metrics[MetricRowKey(date: $0.date, agent: $0.agent, model: $0.model, machine: $0.machine)] = $0
+    metrics[
+      MetricRowKey(
+        date: $0.date,
+        agent: $0.agent,
+        model: $0.model,
+        machine: $0.machine,
+        directory: $0.directory
+      )
+    ] = $0
   }
   var sessions: [SessionRowKey: CCUsageSessionMetricRecord] = [:]
   existing.dashboardSessions.forEach {
@@ -44,7 +67,8 @@ func mergingSnapshots(
         agent: $0.agent,
         model: $0.model,
         machine: $0.machine,
-        quality: $0.dataQuality
+        quality: $0.dataQuality,
+        directory: $0.directory
       )
     ] = $0
   }
@@ -55,7 +79,8 @@ func mergingSnapshots(
         agent: $0.agent,
         model: $0.model,
         machine: $0.machine,
-        quality: $0.dataQuality
+        quality: $0.dataQuality,
+        directory: $0.directory
       )
     ] = $0
   }

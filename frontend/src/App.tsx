@@ -1,14 +1,39 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
-import { type BudgetResponse, type ChartColorsResponse, type CostRow, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type Machine, type MachineConnectionTestResponse, type MachineDataGap, type MachineLatestEvent, type MachineRefreshResponse, type MachinesResponse, type MachineStatusResponse, type MetricKey, type MetricRow, type MetricsResponse, getJSON, mutationJSON, requestJSON } from "./api";
-import { machineSaveErrors, runMachineRefreshLifecycle } from "./machineActions";
+import { type BudgetResponse, type ChartColorsResponse, type CostRow, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type Machine, type MachineConnectionTestResponse, type MachineDataGap, type MachineLatestEvent, type MachineRefreshResponse, type MachinesResponse, type MachineStatusResponse, type MetricKey, type MetricRow, type MetricsResponse, type SubdirectoriesResponse, getJSON, mutationJSON, renameSubdirectory, requestJSON } from "./api";
+import {
+  machineSaveErrors,
+  machineMetadataCleanupWarning,
+  removeMachineCatalog,
+  runMachineRefreshLifecycle,
+  saveMachineCatalog,
+  toggleMachineCatalog,
+  type MachineCatalogRefreshFailure,
+} from "./machineActions";
 import { actionRefetchTargets } from "./machineObservability";
 import { availabilityErrorCode, dashboardErrorMessage, getCostSeriesState } from "./costSeriesState";
 import { currentViewMetricTotal } from "./currentViewMetrics";
+import {
+  costSeriesDataPath,
+  dashboardDataPath,
+  defaultStackBy,
+  beginDirectoryRename,
+  directoryCatalogRefreshWarning,
+  directoryCatalogWithConfirmedFallback,
+  directoryRenameIntent,
+  submitDirectoryRename,
+  type DirectoryRenameEditor,
+  type DirectoryRenameInteraction,
+  restoredStackBy,
+  visibleDirectoryChoices,
+} from "./dashboardDirectoryState";
+import { initializeDashboardState } from "./dashboardStatePersistence";
 import { shieldResource, shouldBlockDashboard } from "./dashboardLoadingState";
-import { changingProxyKind, draftFromMachine, emptyMachineDraft, machineDraftErrors, machineRequestBody, machineSessionSourceBody, type MachineDraft, type MachineProxyKind } from "./machineForm";
+import { changingProxyKind, draftFromMachine, emptyMachineDraft, machineDraftErrors, type MachineDraft, type MachineProxyKind } from "./machineForm";
 import { BreakdownBars, LoadingState, MachineHealthPanel } from "./DashboardComponents";
 import { MachineAdminPanel } from "./MachineAdminPanel";
 import {
+  clearUncheckedDirectorySelections,
+  directoryLabels,
   initialMachineLimit,
   machineProgressDetail,
   machineQuery,
@@ -18,6 +43,7 @@ import {
 } from "./machineScope";
 import { type ColorScheme, seriesColor } from "./seriesColors";
 import { alignedBucketStart, axisCurrency, bucketMilliseconds, chartDateLabel, clippedInterval, nextBucket, niceChartMaximum } from "./usageChartGeometry";
+import { chartSeriesIdentity, chartSeriesLabel, directorySeriesDisplayLabel, type StackBy } from "./usageChartSeries";
 
 type QuickRange = "recent12h" | "today" | "yesterday" | "week" | "month";
 type Range = QuickRange | "custom";
@@ -56,12 +82,13 @@ function Bars(props: {
   timelineStart?: string;
   timelineEndExclusive?: string;
   onLazyLoadingChange: (isLoading: boolean) => void;
-  stackBy: "model" | "machine";
+  stackBy: StackBy;
   colorScheme: ColorScheme;
   colorOverrides?: Readonly<Record<string, string>>;
   markers: MachineLatestEvent[];
   gaps: MachineDataGap[];
   evaluatedAt?: string;
+  subdirectoryLabel: (row: CostRow) => string;
 }) {
   const [hoveredSegment, setHoveredSegment] = createSignal<{ bucketIndex: number; model: string } | null>(null);
   const [loadedAfter, setLoadedAfter] = createSignal(Number.NEGATIVE_INFINITY);
@@ -78,7 +105,12 @@ function Bars(props: {
     renderFrame = undefined;
     completionFrame = undefined;
   };
-  const seriesName = (row: CostRow) => props.stackBy === "machine" ? row.machine : row.model;
+  const seriesName = (row: CostRow) => chartSeriesIdentity(row, props.stackBy);
+  const seriesLabels = createMemo(() => new Map(props.rows.map((row) => [
+    seriesName(row),
+    chartSeriesLabel(row, props.stackBy, props.subdirectoryLabel),
+  ])));
+  const displaySeries = (series: string) => seriesLabels().get(series) ?? series;
   const models = createMemo(() => [...new Set(props.rows.map(seriesName))].sort());
   const colorForSeries = (series: string) => seriesColor(props.colorScheme, props.stackBy, series, props.colorOverrides);
   const occupiedPoints = createMemo(() => {
@@ -232,7 +264,7 @@ function Bars(props: {
     <div class="chart-wrap" role="img" aria-label={`${props.label} ${props.metric} by ${props.granularity} and model`}>
       <Show when={hasChartContent()} fallback={<div class="chart"><p class="empty">No usage matches this period and model filter.</p></div>}>
         <div class="chart-legend" aria-hidden="true">
-          <For each={models()}>{(model) => <span title={model}><i style={{ background: colorForSeries(model) }} />{model}</span>}</For>
+          <For each={models()}>{(model) => <span title={displaySeries(model)}><i style={{ background: colorForSeries(model) }} />{displaySeries(model)}</span>}</For>
         </div>
         <Show when={props.granularity !== "daily"}>
           <p class="chart-scroll-hint">Newest data is shown first. Scroll left to render earlier 12-hour windows.</p>
@@ -255,7 +287,7 @@ function Bars(props: {
                 const y = () => chartMargin.top + plotHeight - ((precedingValue() + segment.value) / axisMaximum()) * plotHeight;
                 return <rect class="cost-bar" fill={colorForSeries(segment.model)} x={x()} y={y()} width={barWidth()} height={height()} rx="2"
                   onMouseEnter={() => setHoveredSegment({ bucketIndex: index(), model: segment.model })} onMouseLeave={() => setHoveredSegment(null)}>
-                  <title>{`${new Date(point.timestamp).toLocaleString()} · ${segment.model}: ${formatValue(segment.value)}`}</title>
+                  <title>{`${new Date(point.timestamp).toLocaleString()} · ${displaySeries(segment.model)}: ${formatValue(segment.value)}`}</title>
                 </rect>;
               }}</For>
               <Show when={showsLabel()}>
@@ -292,7 +324,7 @@ function Bars(props: {
             <g class="chart-tooltip" transform={`translate(${point.x} ${point.y})`} pointer-events="none">
               <rect width="300" height="54" rx="7" />
               <text class="chart-tooltip-label" x="12" y="20">{point.label}</text>
-              <text class="chart-tooltip-value" x="12" y="41">{point.model} · {metricLabel()}: {formatValue(point.value)}</text>
+              <text class="chart-tooltip-value" x="12" y="41">{displaySeries(point.model)} · {metricLabel()}: {formatValue(point.value)}</text>
             </g>
           )}</Show>
             </svg>
@@ -332,7 +364,7 @@ export default function App() {
   const [selectedAgents, setSelectedAgents] = createSignal<string[]>([]);
   const [granularity, setGranularity] = createSignal<Granularity>("hourly");
   const [chartMetric, setChartMetric] = createSignal<MetricKey>("costUSD");
-  const [stackBy, setStackBy] = createSignal<"model" | "machine">("model");
+  const [stackBy, setStackBy] = createSignal<StackBy>(defaultStackBy);
   const [isGraphLazyLoading, setIsGraphLazyLoading] = createSignal(false);
   const [isRefreshing, setIsRefreshing] = createSignal(false);
   const [isRangeLoading, setIsRangeLoading] = createSignal(false);
@@ -340,7 +372,13 @@ export default function App() {
   const [isClearingCache, setIsClearingCache] = createSignal(false);
   const [cacheStatus, setCacheStatus] = createSignal<string>();
   const [isDashboardStateLoaded, setIsDashboardStateLoaded] = createSignal(false);
+  const [isDashboardStatePersistenceEnabled, setIsDashboardStatePersistenceEnabled] =
+    createSignal(false);
   const [selectedMachines, setSelectedMachines] = createSignal<string[]>([]);
+  const [selectedDirectories, setSelectedDirectories] = createSignal<Record<string, string[]>>({});
+  const [directoryRenameEditor, setDirectoryRenameEditor] = createSignal<DirectoryRenameEditor>();
+  const [confirmedSubdirectories, setConfirmedSubdirectories] = createSignal<SubdirectoriesResponse>();
+  const [directoryCatalogWarning, setDirectoryCatalogWarning] = createSignal<string>();
   const [areAllMachinesVisible, setAreAllMachinesVisible] = createSignal(false);
   const [isMachineGraphRendering, setIsMachineGraphRendering] = createSignal(false);
   const [machineFormOpen, setMachineFormOpen] = createSignal(false);
@@ -357,6 +395,8 @@ export default function App() {
   const [colorScheme, setColorScheme] = createSignal<ColorScheme>(initialColorScheme);
   const [machinesResource, { refetch: refreshMachines }] = createResource(() => getJSON<MachinesResponse>("/api/machines"));
   const machines = shieldResource(machinesResource);
+  const metadataCleanupWarning = createMemo(() =>
+    machineMetadataCleanupWarning(machines()?.metadataCleanupPendingMachineIds ?? []));
   const [chartColorsResource] = createResource(() => getJSON<ChartColorsResponse>("/api/chart-colors"));
   const chartColors = shieldResource(chartColorsResource);
   const requestedMachineScope = createMemo(() => requestedMachineIDs(machines()?.machines ?? [], selectedMachines()));
@@ -374,17 +414,48 @@ export default function App() {
   );
   const machineStatuses = shieldResource(machineStatusesResource);
 
+  const subdirectoriesPath = createMemo(() => machineSuffix() == null
+    ? undefined
+    : "/api/subdirectories?machine=all");
+  const [subdirectoriesResource, {
+    refetch: refreshSubdirectories,
+    mutate: mutateSubdirectories,
+  }] = createResource(
+    subdirectoriesPath,
+    (path) => getJSON<SubdirectoriesResponse>(path),
+  );
+  const subdirectoriesResult = shieldResource(subdirectoriesResource);
+  const subdirectories = () => directoryCatalogWithConfirmedFallback(
+    subdirectoriesResult(),
+    confirmedSubdirectories(),
+  );
+  createEffect(() => {
+    const catalog = subdirectoriesResult();
+    if (catalog == null) return;
+    setConfirmedSubdirectories(catalog);
+    if (!subdirectoriesResult.loading) setDirectoryCatalogWarning(undefined);
+  });
   const periodPath = createMemo(() => machineSuffix() == null ? undefined : range() === "custom"
-    ? withMachine(`/api/metrics?range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`)
-    : withMachine(`/api/metrics?range=${range()}`));
+    ? dashboardDataPath(
+      `/api/metrics?range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`,
+      requestedMachineScope(),
+      selectedDirectories(),
+    )
+    : dashboardDataPath(`/api/metrics?range=${range()}`, requestedMachineScope(), selectedDirectories()));
   const [periodResource, { refetch: refreshPeriod }] = createResource(periodPath, (path) => getJSON<MetricsResponse>(path));
   const period = shieldResource(periodResource);
-  const costPath = createMemo(() => machineSuffix() == null ? undefined : range() === "custom"
-    ? withMachine(`/api/cost-series?granularity=${granularity()}&range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`)
-    : withMachine(`/api/cost-series?granularity=${granularity()}&range=${range()}`));
+  const costPath = createMemo(() => {
+    if (machineSuffix() == null) return undefined;
+    const path = range() === "custom"
+      ? `/api/cost-series?granularity=${granularity()}&range=custom&start=${appliedCustomRange().start}&end=${appliedCustomRange().end}`
+      : `/api/cost-series?granularity=${granularity()}&range=${range()}`;
+    return costSeriesDataPath(path, requestedMachineScope(), selectedDirectories(), stackBy());
+  });
   const [costSeriesResource, { refetch: refreshCostSeries }] = createResource(costPath, getCostSeriesState);
   const costSeries = shieldResource(costSeriesResource);
-  const budgetPath = createMemo(() => machineSuffix() == null ? undefined : withMachine("/api/budget"));
+  const budgetPath = createMemo(() => machineSuffix() == null
+    ? undefined
+    : dashboardDataPath("/api/budget", requestedMachineScope(), selectedDirectories()));
   const [budgetResource, { refetch: refreshBudget }] = createResource(budgetPath, (path) => getJSON<BudgetResponse>(path));
   const budget = shieldResource(budgetResource);
   const loadStatusPath = createMemo(() => {
@@ -401,6 +472,11 @@ export default function App() {
 
   const selectableMachines = createMemo(() => (machines()?.machines ?? []).filter((machine) => machine.enabled));
   const visibleMachines = createMemo(() => visibleMachineItems(selectableMachines(), areAllMachinesVisible()));
+  const directoriesByMachine = createMemo(() => new Map(
+    (subdirectories()?.machines ?? []).map((item) => [item.machine, item.directories]),
+  ));
+  const directoryLabelsByMachine = createMemo(() =>
+    directoryLabels(subdirectories()?.machines ?? []));
   const allMachinesSelected = createMemo(() =>
     selectableMachines().length > 0 && requestedMachineScope().length === selectableMachines().length);
   const machineScopeLabel = createMemo(() => allMachinesSelected()
@@ -418,6 +494,15 @@ export default function App() {
   const activeChartColors = () => chartColors()?.[colorScheme()];
   const colorForMachine = (machine: string) => seriesColor(colorScheme(), "machine", machine, activeChartColors()?.machines);
   const colorForModel = (model: string) => seriesColor(colorScheme(), "model", model, activeChartColors()?.models);
+  const subdirectorySeriesLabel = (row: CostRow) => {
+    const machine = selectableMachines().find((item) => item.id === row.machine);
+    return directorySeriesDisplayLabel(
+      row,
+      row.directory == null ? undefined : directoryLabelsByMachine().get(row.machine)?.get(row.directory),
+      machine?.displayName,
+      requestedMachineScope().length > 1,
+    );
+  };
   const estimatedModels = createMemo(() => new Set(machineFilteredCostRows()
     .filter((row) => row.dataQuality === "sessionEstimated")
     .map((row) => row.model)));
@@ -441,6 +526,13 @@ export default function App() {
     if (replacement.length === selectedMachines().length
         && replacement.every((id, index) => id === selectedMachines()[index])) return;
     setSelectedMachines(replacement);
+  });
+  createEffect(() => {
+    const checked = requestedMachineScope();
+    setSelectedDirectories((current) => {
+      const next = clearUncheckedDirectorySelections(current, checked);
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
   });
   createEffect(() => {
     if (!isDashboardStateLoaded() || period()?.range !== range() || costSeries()?.range !== range() || costSeries()?.granularity !== granularity()) return;
@@ -550,6 +642,61 @@ export default function App() {
     const next = toggledMachineSelection(effective, machine);
     return next.length === 0 ? effective : next;
   });
+  const toggleDirectory = (machine: string, directory: string) => {
+    setSelectedDirectories((current) => {
+      const selected = current[machine] ?? [];
+      const next = selected.includes(directory)
+        ? selected.filter((item) => item !== directory)
+        : [...selected, directory];
+      if (next.length === 0) {
+        return Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine));
+      }
+      return { ...current, [machine]: next };
+    });
+  };
+  const explicitDirectoryName = (machine: string, directory: string) =>
+    subdirectories()?.machines.find((item) => item.machine === machine)?.names?.[directory];
+  const directoryEditorFor = (machine: string, directory: string) => {
+    const editor = directoryRenameEditor();
+    return editor?.machine === machine && editor.directory === directory ? editor : undefined;
+  };
+  const startDirectoryRename = (machine: string, directory: string) => {
+    setDirectoryRenameEditor(beginDirectoryRename(
+      machine,
+      directory,
+      explicitDirectoryName(machine, directory),
+    ));
+  };
+  const saveDirectoryRename = async (machine: string, directory: string) => {
+    const editor = directoryEditorFor(machine, directory);
+    if (editor == null || editor.saving) return;
+    await submitDirectoryRename(editor, {
+      rename: renameSubdirectory,
+      setEditor: (next) => setDirectoryRenameEditor((current) =>
+        current?.machine === machine && current.directory === directory ? next : current),
+      currentCatalog: subdirectories,
+      applyConfirmedCatalog: (catalog) => {
+        setConfirmedSubdirectories(catalog);
+        mutateSubdirectories(() => catalog);
+      },
+      refreshCatalog: refreshSubdirectories,
+      reportCatalogRefreshFailure: (_error, kind) => {
+        setDirectoryCatalogWarning(directoryCatalogRefreshWarning(kind));
+      },
+    });
+  };
+  const handleDirectoryRenameInteraction = (
+    machine: string,
+    directory: string,
+    interaction: DirectoryRenameInteraction,
+  ) => {
+    const intent = directoryRenameIntent(interaction);
+    if (intent === "save") {
+      void saveDirectoryRename(machine, directory);
+    } else if (intent === "cancel") {
+      setDirectoryRenameEditor(undefined);
+    }
+  };
   const toggleAgent = (agent: string) => {
     const nextAgents = selectedAgents().includes(agent)
       ? selectedAgents().filter((item) => item !== agent)
@@ -569,7 +716,13 @@ export default function App() {
     if (refreshPromise) return refreshPromise;
     setIsRefreshing(true);
     refreshPromise = mutationJSON<{ status: string }>(withMachine("/api/refresh"))
-      .then(() => Promise.all([refreshPeriod(), refreshCostSeries(), refreshBudget(), refreshMachineStatuses()]))
+      .then(() => Promise.all([
+        refreshPeriod(),
+        refreshCostSeries(),
+        refreshBudget(),
+        refreshMachineStatuses(),
+        refreshSubdirectories(),
+      ]))
       .finally(() => {
         refreshPromise = undefined;
         setIsRefreshing(false);
@@ -628,6 +781,14 @@ export default function App() {
   const changeMachineProxyKind = (proxyKind: MachineProxyKind) => {
     applyMachineDraft(changingProxyKind(currentMachineDraft(), proxyKind));
   };
+  const reportMachineCatalogRefreshFailures = (
+    failures: MachineCatalogRefreshFailure[],
+  ) => {
+    const catalogs = failures.map((failure) => failure.catalog).join(", ");
+    setMachineError(
+      `Machine change saved, but ${catalogs} could not be refreshed after retry. Reload the dashboard to reconcile.`,
+    );
+  };
   const saveMachine = async () => {
     setMachineError(undefined);
     setMachineFieldErrors({});
@@ -641,13 +802,16 @@ export default function App() {
     }
     try {
       const editingID = editingMachineID();
-      const isLocal = draft.kind === "local";
-      await mutationJSON<Machine>(editingID == null ? "/api/machines" : `/api/machines/${editingID}`, {
-        method: editingID == null ? "POST" : isLocal ? "PATCH" : "PUT",
-        body: JSON.stringify(isLocal ? machineSessionSourceBody(draft) : machineRequestBody(draft, editingID == null)),
+      await saveMachineCatalog({
+        draft,
+        editingID,
+        request: mutationJSON,
+        saved: closeMachineForm,
+        refreshMachines,
+        refreshMachineStatuses,
+        refreshSubdirectories,
+        reportCatalogRefreshFailures: reportMachineCatalogRefreshFailures,
       });
-      closeMachineForm();
-      await Promise.all([refreshMachines(), refreshMachineStatuses()]);
     } catch (error) {
       const detail = machineSaveErrors(error);
       setMachineFieldErrors(detail.fieldErrors);
@@ -656,16 +820,30 @@ export default function App() {
   };
   const toggleMachine = async (machine: Machine) => {
     setMachineActions((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine.id)));
-    await mutationJSON<Machine>(`/api/machines/${machine.id}`, {
-      method: "PATCH", body: JSON.stringify({ enabled: !machine.enabled }),
+    setMachineError(undefined);
+    await toggleMachineCatalog({
+      machine,
+      request: mutationJSON,
+      refreshMachines,
+      refreshMachineStatuses,
+      refreshSubdirectories,
+      reportCatalogRefreshFailures: reportMachineCatalogRefreshFailures,
     });
-    await Promise.all([refreshMachines(), refreshMachineStatuses()]);
   };
   const removeMachine = async (machine: Machine) => {
     if (!window.confirm(`Remove ${machine.displayName}? Its host cache will be retained.`)) return;
-    await mutationJSON<void>(`/api/machines/${machine.id}`, { method: "DELETE" });
-    setSelectedMachines((current) => current.filter((id) => id !== machine.id));
-    await Promise.all([refreshMachines(), refreshMachineStatuses()]);
+    setMachineError(undefined);
+    await removeMachineCatalog({
+      machine,
+      request: mutationJSON,
+      removed: (machineID) => {
+        setSelectedMachines((current) => current.filter((id) => id !== machineID));
+      },
+      refreshMachines,
+      refreshMachineStatuses,
+      refreshSubdirectories,
+      reportCatalogRefreshFailures: reportMachineCatalogRefreshFailures,
+    });
   };
   const testMachineConnection = async (machine: Machine) => {
     if (machineActionInFlight()[machine.id]) return;
@@ -701,7 +879,13 @@ export default function App() {
         `/api/machines/${machine.id}/refresh`,
         { method: "POST", body: "{}" },
       ),
-      refetch: () => Promise.all([refreshMachineStatuses(), refreshPeriod(), refreshCostSeries(), refreshBudget()]),
+      refetch: () => Promise.all([
+        refreshMachineStatuses(),
+        refreshPeriod(),
+        refreshCostSeries(),
+        refreshBudget(),
+        refreshSubdirectories(),
+      ]),
       setDiagnostic: (diagnostic) => {
         setMachineActions((current) => ({ ...current, [machine.id]: diagnostic }));
       },
@@ -760,7 +944,7 @@ export default function App() {
     const key = `${loadStatusPath()}:${status.completed}/${status.total}:${status.isLoading}`;
     if (key === lastVisibleRangeProgress) return;
     lastVisibleRangeProgress = key;
-    void Promise.all([refreshPeriod(), refreshCostSeries()]);
+    void Promise.all([refreshPeriod(), refreshCostSeries(), refreshSubdirectories()]);
   });
   let lastTerminalRecovery = "";
   createEffect(() => {
@@ -776,12 +960,13 @@ export default function App() {
       refreshCostSeries(),
       refreshBudget(),
       refreshMachineStatuses(),
+      refreshSubdirectories(),
     ]);
   });
   onMount(() => {
-    void getJSON<DashboardUIStateResponse>("/api/dashboard-state")
-      .then(({ state }) => {
-        if (!state) return;
+    void initializeDashboardState({
+      load: () => getJSON<DashboardUIStateResponse>("/api/dashboard-state"),
+      apply: (state) => {
         setRange(state.range);
         setCustomStart(state.customStart);
         setCustomEnd(state.customEnd);
@@ -791,10 +976,11 @@ export default function App() {
         setSelectedMachines(state.selectedMachines);
         setGranularity(state.granularity);
         setChartMetric(state.chartMetric);
-        setStackBy(state.stackBy);
-      })
-      .catch(() => undefined)
-      .finally(() => setIsDashboardStateLoaded(true));
+        setStackBy(restoredStackBy(state.stackBy));
+      },
+      setLoaded: setIsDashboardStateLoaded,
+      setPersistenceEnabled: setIsDashboardStatePersistenceEnabled,
+    });
     onCleanup(() => {
       if (machineRenderStartFrame != null) window.cancelAnimationFrame(machineRenderStartFrame);
       if (machineRenderApplyFrame != null) window.cancelAnimationFrame(machineRenderApplyFrame);
@@ -811,7 +997,7 @@ export default function App() {
   });
   let dashboardStateSave = Promise.resolve<unknown>(undefined);
   createEffect(() => {
-    if (!isDashboardStateLoaded()) return;
+    if (!isDashboardStateLoaded() || !isDashboardStatePersistenceEnabled()) return;
     const state: DashboardUIState = {
       range: range(),
       customStart: appliedCustomRange().start,
@@ -866,17 +1052,104 @@ export default function App() {
           ><span>All machines</span></button>
           <div class="model-list">
             <For each={visibleMachines()} fallback={<p class="muted">{machines.loading ? "Loading machines…" : "No enabled machines."}</p>}>{(machine) => (
-              <label classList={{ "model-choice": true, active: selectedMachineIDs().has(machine.id) }} title={`${machine.displayName} (${machine.id})`}>
-                <input type="checkbox" checked={selectedMachineIDs().has(machine.id)} onChange={() => toggleSelectedMachine(machine.id)} />
-                <span>{machine.displayName}</span>
-                <Show when={statusByMachine().get(machine.id)?.collectionState === "error"
-                  || statusByMachine().get(machine.id)?.collectionState === "stale"}>
-                  <svg class="machine-warning-icon" viewBox="0 0 24 24" role="img" aria-label={`${machine.displayName} collection warning`}>
-                    <path d="M12 3 2.7 20h18.6L12 3Z" />
-                    <path d="M12 9v5M12 17.5v.5" />
-                  </svg>
-                </Show>
-              </label>
+              <div class="machine-directory-group">
+                <label classList={{ "model-choice": true, active: selectedMachineIDs().has(machine.id) }} title={`${machine.displayName} (${machine.id})`}>
+                  <input type="checkbox" checked={selectedMachineIDs().has(machine.id)} onChange={() => toggleSelectedMachine(machine.id)} />
+                  <span>{machine.displayName}</span>
+                  <Show when={statusByMachine().get(machine.id)?.collectionState === "error"
+                    || statusByMachine().get(machine.id)?.collectionState === "stale"}>
+                    <svg class="machine-warning-icon" viewBox="0 0 24 24" role="img" aria-label={`${machine.displayName} collection warning`}>
+                      <path d="M12 3 2.7 20h18.6L12 3Z" />
+                      <path d="M12 9v5M12 17.5v.5" />
+                    </svg>
+                  </Show>
+                </label>
+                <Show when={visibleDirectoryChoices(
+                  requestedMachineScope(),
+                  machine.id,
+                  directoriesByMachine().get(machine.id) ?? [],
+                )}>{(directories) =>
+                  <div class="directory-filter-list">
+                    <For each={directories()}>{(directory) => {
+                      const label = () =>
+                        directoryLabelsByMachine().get(machine.id)?.get(directory) ?? "Directory";
+                      return (
+                        <div classList={{ "directory-choice": true, active: selectedDirectories()[machine.id]?.includes(directory) }}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Filter by ${label()}`}
+                            checked={selectedDirectories()[machine.id]?.includes(directory) ?? false}
+                            onChange={() => toggleDirectory(machine.id, directory)}
+                          />
+                          <Show
+                            when={directoryEditorFor(machine.id, directory)}
+                            fallback={
+                              <>
+                                <span class="directory-label">{label()}</span>
+                                <button
+                                  type="button"
+                                  class="directory-rename-button"
+                                  aria-label={`Rename ${label()}`}
+                                  onClick={() => startDirectoryRename(machine.id, directory)}
+                                >Rename</button>
+                              </>
+                            }
+                          >{(editor) => (
+                            <div class="directory-rename-editor">
+                              <input
+                                class="directory-rename-input"
+                                aria-label={`Display name for ${label()}`}
+                                value={editor().value}
+                                disabled={editor().saving}
+                                autofocus
+                                onInput={(event) => setDirectoryRenameEditor({
+                                  ...editor(),
+                                  value: event.currentTarget.value,
+                                  error: undefined,
+                                })}
+                                onBlur={() => handleDirectoryRenameInteraction(
+                                  machine.id,
+                                  directory,
+                                  { type: "blur" },
+                                )}
+                                onKeyDown={(event) => {
+                                  const intent = directoryRenameIntent({
+                                    type: "keydown",
+                                    key: event.key,
+                                  });
+                                  if (intent != null) {
+                                    event.preventDefault();
+                                    handleDirectoryRenameInteraction(
+                                      machine.id,
+                                      directory,
+                                      { type: "keydown", key: event.key },
+                                    );
+                                  }
+                                }}
+                              />
+                              <button
+                                type="button"
+                                disabled={editor().saving}
+                                onMouseDown={(event) => {
+                                  event.preventDefault();
+                                  handleDirectoryRenameInteraction(
+                                    machine.id,
+                                    directory,
+                                    { type: "cancel" },
+                                  );
+                                }}
+                              >Cancel</button>
+                              <Show when={editor().error}>{(message) =>
+                                <small class="directory-rename-error">{message()}</small>
+                              }</Show>
+                            </div>
+                          )}</Show>
+                        </div>
+                      );
+                    }}</For>
+                  </div>
+                }</Show>
+              </div>
             )}</For>
           </div>
           <Show when={selectableMachines().length > initialMachineLimit}>
@@ -885,6 +1158,12 @@ export default function App() {
             </button>
           </Show>
           <small>Selected: {machineScopeLabel()}</small>
+          <Show when={directoryCatalogWarning()}>{(message) =>
+            <small class="machine-warning" role="alert">{message()}</small>
+          }</Show>
+          <Show when={metadataCleanupWarning()}>{(message) =>
+            <small class="machine-warning">{message()}</small>
+          }</Show>
           <Show when={(period()?.scope.staleMachineIds.length ?? 0) > 0}><small class="machine-warning">Stale: {period()!.scope.staleMachineIds.join(", ")}</small></Show>
           <Show when={(period()?.scope.unavailableMachineIds.length ?? 0) > 0}><small class="machine-warning">Unavailable: {period()!.scope.unavailableMachineIds.join(", ")}</small></Show>
         </div>
@@ -1027,6 +1306,7 @@ export default function App() {
                   <span>Stack by</span>
                   <button classList={{ active: stackBy() === "model" }} onClick={() => setStackBy("model")}>Model</button>
                   <button classList={{ active: stackBy() === "machine" }} onClick={() => setStackBy("machine")}>Machine</button>
+                  <button classList={{ active: stackBy() === "subdirectory" }} onClick={() => setStackBy("subdirectory")}>Subdirectory</button>
                 </div>
                 <strong>{formattedChartTotal()}</strong>
               </div>
@@ -1041,7 +1321,10 @@ export default function App() {
               onLazyLoadingChange={setIsGraphLazyLoading}
               stackBy={stackBy()}
               colorScheme={colorScheme()}
-              colorOverrides={stackBy() === "machine" ? activeChartColors()?.machines : activeChartColors()?.models}
+              colorOverrides={stackBy() === "machine"
+                ? activeChartColors()?.machines
+                : stackBy() === "model" ? activeChartColors()?.models : undefined}
+              subdirectoryLabel={subdirectorySeriesLabel}
               markers={latestEventMarkers()}
               gaps={visibleDataGaps()}
               evaluatedAt={costSeries()?.scope.evaluatedAt}

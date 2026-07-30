@@ -223,8 +223,11 @@ the next attempt without requiring a registry edit or process restart.
 
 Local collection supplies all selected Codex scan scopes to
 `CodexUsageEventLoader` and all selected Claude scan scopes to
-`ClaudeUsageEventLoader`. Their existing identity maps merge recent timestamped
-events across roots before snapshot reconciliation.
+`ClaudeUsageEventLoader`. Their identity maps merge timestamped events across
+roots before snapshot reconciliation. The project-directory contract in
+`architecture.md` extends this loading across every materialized local
+dashboard range and records per-day provenance coverage; it does not change
+source-root planning or event-identity deduplication.
 
 Historical and fallback aggregates use a multi-source command coordinator for
 both local and SSH machines. It executes `ccusage` once per agent source for

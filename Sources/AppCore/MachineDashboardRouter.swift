@@ -6,8 +6,9 @@ public struct MachineDashboardRouter: Sendable {
   let mutationOwner: MachineRegistryMutationOwner
   private let cacheCoordinator: MachineCacheClearCoordinator
   private let paths: AppPaths
-  private let queryService: DashboardQueryService
+  let queryService: DashboardQueryService
   private let dashboardStateStore: DashboardStateStore
+  let directoryNameStore: DashboardDirectoryNameStore
   private let chartColors: ChartColorConfiguration
 
   public init(
@@ -18,6 +19,7 @@ public struct MachineDashboardRouter: Sendable {
     queryService: DashboardQueryService = DashboardQueryService(),
     cacheCoordinator: MachineCacheClearCoordinator = MachineCacheClearCoordinator(),
     dashboardStateStore: DashboardStateStore? = nil,
+    directoryNameStore: DashboardDirectoryNameStore? = nil,
     chartColors: ChartColorConfiguration = ChartColorConfiguration()
   ) {
     self.store = store
@@ -27,6 +29,8 @@ public struct MachineDashboardRouter: Sendable {
     self.queryService = queryService
     self.cacheCoordinator = cacheCoordinator
     self.dashboardStateStore = dashboardStateStore ?? DashboardStateStore(fileURL: paths.dashboardStateFile)
+    self.directoryNameStore = directoryNameStore
+      ?? DashboardDirectoryNameStore(fileURL: paths.dashboardStateFile)
     self.chartColors = chartColors
   }
 
@@ -48,8 +52,26 @@ public struct MachineDashboardRouter: Sendable {
       guard method == "GET" else { return methodNotAllowed("GET") }
       return json(chartColors)
     }
-    if method == "OPTIONS", path == "/api/refresh" || path == "/api/cache" || path == "/api/machines" || path.hasPrefix("/api/machines/") {
+    if method == "OPTIONS",
+       path == "/api/refresh"
+         || path == "/api/cache"
+         || path == "/api/subdirectories/name"
+         || path == "/api/machines"
+         || path.hasPrefix("/api/machines/") {
       return originRejected()
+    }
+    if path == "/api/subdirectories/name" {
+      guard method == "PUT" else { return methodNotAllowed("PUT") }
+      guard mutationAllowed(headers: headers, listenerPort: listenerPort) else {
+        return originRejected()
+      }
+      let descriptors = await store.descriptors()
+      let allowedMachineIDs = Set(descriptors.map(\.id))
+      return await dashboardDirectoryNameMutationResponse(
+        store: directoryNameStore,
+        body: body,
+        allowedMachineIDs: allowedMachineIDs
+      )
     }
     if path == "/api/machines" || path.hasPrefix("/api/machines/") {
       return await machineRoute(path: path, components: components, method: method, headers: headers, body: body, listenerPort: listenerPort)
@@ -101,6 +123,19 @@ public struct MachineDashboardRouter: Sendable {
     let requested: String
     do { requested = try machineSelection(components) }
     catch { return selectionError(error) }
+    let directoryRequest: DashboardDirectoryRequest
+    do {
+      directoryRequest = try dashboardDirectoryRequest(
+        components,
+        descriptors: await store.descriptors(),
+        requestedMachines: requested,
+        acceptsBreakdown: path == "/api/cost-series"
+      )
+    } catch DashboardDirectoryRequestError.machineNotFound {
+      return error(status: 404, code: "machine_not_found", message: "Machine not found")
+    } catch {
+      return self.error(status: 400, code: "invalid_directory", message: "Invalid directory selection")
+    }
     let coverage = requestedCoverage(path: path, components: components, queryService: queryService)
     if let coverage {
       await collector.expand(
@@ -211,7 +246,8 @@ public struct MachineDashboardRouter: Sendable {
           range: range,
           components: components,
           scope: selection.scope,
-          rangeProgress: rangeProgress
+          rangeProgress: rangeProgress,
+          directorySelections: directoryRequest.selections
         )
       case "/api/cost-series":
         let range = queryValue("range", components) ?? "today"
@@ -223,10 +259,24 @@ public struct MachineDashboardRouter: Sendable {
           components: components,
           scope: selection.scope,
           machineLatestEvents: selection.machineLatestEvents,
-          rangeProgress: rangeProgress
+          rangeProgress: rangeProgress,
+          directorySelections: directoryRequest.selections,
+          directoryBreakdown: directoryRequest.breakdown
         )
       case "/api/budget":
-        return jsonWithScope(queryService.budget(snapshot: snapshot), scope: selection.scope)
+        return jsonWithScope(
+          queryService.budget(snapshot: snapshot, directorySelections: directoryRequest.selections),
+          scope: selection.scope
+        )
+      case "/api/subdirectories":
+        let names = try await directoryNameStore.names(
+          machineIDs: selection.scope.includedMachineIds
+        )
+        return json(subdirectoriesResponse(
+          snapshot: snapshot,
+          machineIDs: selection.scope.includedMachineIds,
+          namesByMachine: names
+        ))
       default:
         return error(status: 404, code: "not_found", message: "API route not found")
       }
@@ -236,61 +286,15 @@ public struct MachineDashboardRouter: Sendable {
       return error(status: 400, code: "invalid_custom_range", message: "Invalid custom range")
     } catch DashboardQueryError.invalidGranularity {
       return error(status: 400, code: "invalid_granularity", message: "Invalid granularity")
+    } catch DashboardDirectoryNameError.databaseUnavailable {
+      return error(
+        status: 503,
+        code: "directory_name_unavailable",
+        message: "Directory name storage is unavailable"
+      )
     } catch {
       return self.error(status: 500, code: "internal_error", message: "Request failed")
     }
-  }
-
-  private func metricsResponse(
-    snapshot: CostSnapshot,
-    range: String,
-    components: URLComponents,
-    scope: DashboardScope,
-    rangeProgress: DashboardRangeLoadProgress?
-  ) throws -> HTTPResponse {
-    if range == "custom" {
-      guard let start = queryValue("start", components).flatMap(queryService.parseDay),
-            let end = queryValue("end", components).flatMap(queryService.parseDay) else {
-        return error(status: 400, code: "invalid_custom_range", message: "Invalid custom range")
-      }
-      var response = try queryService.metrics(snapshot: snapshot, range: range, startDate: start, endDate: end)
-      response.rangeLoad = rangeProgress
-      return jsonWithScope(response, scope: scope)
-    }
-    var response = try queryService.metrics(snapshot: snapshot, range: range)
-    response.rangeLoad = rangeProgress
-    return jsonWithScope(response, scope: scope)
-  }
-
-  private func costResponse(
-    snapshot: CostSnapshot,
-    range: String,
-    granularity: String,
-    components: URLComponents,
-    scope: DashboardScope,
-    machineLatestEvents: [MachineLatestEvent],
-    rangeProgress: DashboardRangeLoadProgress?
-  ) throws -> HTTPResponse {
-    var response: DashboardCostResponse
-    if range == "custom" {
-      guard let start = queryValue("start", components).flatMap(queryService.parseDay),
-            let end = queryValue("end", components).flatMap(queryService.parseDay) else {
-        return error(status: 400, code: "invalid_custom_range", message: "Invalid custom range")
-      }
-      response = try queryService.costSeries(
-        snapshot: snapshot,
-        granularity: granularity,
-        range: range,
-        startDate: start,
-        endDate: end
-      )
-    } else {
-      response = try queryService.costSeries(snapshot: snapshot, granularity: granularity, range: range)
-    }
-    response.scope = scope
-    response.machineLatestEvents = machineLatestEvents
-    response.rangeLoad = rangeProgress
-    return json(response, dateMilliseconds: true)
   }
 
   private func statusRoute(_ components: URLComponents) async -> HTTPResponse {
@@ -464,8 +468,15 @@ public struct MachineDashboardRouter: Sendable {
       )
     }
     if method == "GET" {
+      if collection {
+        let pendingMetadataCleanupMachineIDs = await mutationOwner.retryPendingMetadataCleanup()
+        let registry = await mutationOwner.current()
+        return json(MachinesResponse(
+          machines: registry.machines,
+          metadataCleanupPendingMachineIds: pendingMetadataCleanupMachineIDs
+        ))
+      }
       let registry = await mutationOwner.current()
-      if collection { return json(MachinesResponse(machines: registry.machines)) }
       guard let descriptor = id.flatMap({ registry.machine(id: $0) }) else {
         return error(status: 404, code: "machine_not_found", message: "Machine not found")
       }
@@ -555,6 +566,12 @@ public struct MachineDashboardRouter: Sendable {
       return error(status: 409, code: "machine_conflict", message: "Machine conflict")
     } catch MachineRegistryMutationError.notFound {
       return error(status: 404, code: "machine_not_found", message: "Machine not found")
+    } catch DashboardDirectoryNameError.databaseUnavailable {
+      return error(
+        status: 503,
+        code: "directory_name_unavailable",
+        message: "Directory name storage is unavailable"
+      )
     } catch MachineRegistryTransactionError.reconciliationRequired {
       return error(
         status: 503,
@@ -867,11 +884,11 @@ public struct MachineDashboardRouter: Sendable {
     dashboardMutationAllowed(headers: headers, listenerPort: listenerPort)
   }
 
-  private func queryValue(_ name: String, _ components: URLComponents) -> String? {
+  func queryValue(_ name: String, _ components: URLComponents) -> String? {
     components.queryItems?.first(where: { $0.name == name })?.value
   }
 
-  private func jsonWithScope<T: Encodable & ScopedDashboardResponse>(_ value: T, scope: DashboardScope) -> HTTPResponse {
+  func jsonWithScope<T: Encodable & ScopedDashboardResponse>(_ value: T, scope: DashboardScope) -> HTTPResponse {
     // Single-pass encoding: attach `scope` to the DTO and let `JSONEncoder` emit it as a sibling
     // key, avoiding the earlier encode -> JSONSerialization -> re-serialize round-trip.
     var value = value
@@ -879,7 +896,7 @@ public struct MachineDashboardRouter: Sendable {
     return json(value)
   }
 
-  private func json<T: Encodable>(
+  func json<T: Encodable>(
     _ value: T,
     status: Int = 200,
     headers: [String: String] = [:],
@@ -895,7 +912,7 @@ public struct MachineDashboardRouter: Sendable {
     return HTTPResponse(status: status, contentType: "application/json", body: body, headers: headers)
   }
 
-  private func error(
+  func error(
     status: Int,
     code: String,
     message: String,
