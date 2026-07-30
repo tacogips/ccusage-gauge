@@ -98,7 +98,9 @@ tasks:
     desc: Verify dashboard routes, shutdown, and same-port restart
     deps: [frontend:build]
     cmds:
-      - scripts/smoke-dashboard.sh --port 18081 --assets frontend/dist
+      # Not 18081: that is the product default, so a dashboard a developer
+      # already has running would answer the smoke assertions with real data.
+      - scripts/smoke-dashboard.sh --port 18181 --assets frontend/dist
 
   emulation:config:
     desc: Validate the standalone Docker Compose remote-machine topology

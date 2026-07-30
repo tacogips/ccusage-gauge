@@ -33,6 +33,13 @@ JSON
 chmod 0600 "$root/config/ccusage-gauge/ccusage-config.json"
 export CCUSAGE_GAUGE_CONFIG_HOME="$root/config" CCUSAGE_GAUGE_STATE_HOME="$root/state"
 
+# Another dashboard on this port would answer the probes below instead of the
+# staged layout, so refuse to run rather than report its behaviour.
+if (exec 3<>/dev/tcp/127.0.0.1/18082) 2>/dev/null; then
+  echo "port 18082 is already serving; stop that process before running this smoke" >&2
+  exit 1
+fi
+
 probe() {
   local name="$1" binary="$2" asset_root="$3"
   if ! $missing; then mkdir -p "$asset_root"; cp -R "$source_assets"/. "$asset_root"/; else rm -rf "$asset_root"; fi
