@@ -32,14 +32,18 @@ import { changingProxyKind, draftFromMachine, emptyMachineDraft, machineDraftErr
 import { BreakdownBars, LoadingState, MachineHealthPanel } from "./DashboardComponents";
 import { MachineAdminPanel } from "./MachineAdminPanel";
 import {
+  allDirectoryItemsSelected,
   clearUncheckedDirectorySelections,
   directoryLabels,
+  initialDirectoryLimit,
   initialMachineLimit,
   machineProgressDetail,
   machineQuery,
   requestedMachineIDs,
   toggledMachineSelection,
+  visibleDirectoryItems,
   visibleMachineItems,
+  wholeMachineSelected,
 } from "./machineScope";
 import { type ColorScheme, seriesColor } from "./seriesColors";
 import { alignedBucketStart, axisCurrency, bucketMilliseconds, chartDateLabel, clippedInterval, nextBucket, niceChartMaximum } from "./usageChartGeometry";
@@ -380,6 +384,8 @@ export default function App() {
   const [confirmedSubdirectories, setConfirmedSubdirectories] = createSignal<SubdirectoriesResponse>();
   const [directoryCatalogWarning, setDirectoryCatalogWarning] = createSignal<string>();
   const [areAllMachinesVisible, setAreAllMachinesVisible] = createSignal(false);
+  const [expandedDirectoryMachines, setExpandedDirectoryMachines] = createSignal<string[]>([]);
+  const [expandedDirectoryLists, setExpandedDirectoryLists] = createSignal<string[]>([]);
   const [isMachineGraphRendering, setIsMachineGraphRendering] = createSignal(false);
   const [machineFormOpen, setMachineFormOpen] = createSignal(false);
   const [machineDraft, setMachineDraft] = createSignal<MachineDraft>(emptyMachineDraft());
@@ -477,11 +483,17 @@ export default function App() {
   ));
   const directoryLabelsByMachine = createMemo(() =>
     directoryLabels(subdirectories()?.machines ?? []));
+  const selectedDirectoryCount = createMemo(() =>
+    Object.values(selectedDirectories()).reduce((total, directories) => total + directories.length, 0));
   const allMachinesSelected = createMemo(() =>
-    selectableMachines().length > 0 && requestedMachineScope().length === selectableMachines().length);
+    selectableMachines().length > 0
+      && requestedMachineScope().length === selectableMachines().length
+      && selectedDirectoryCount() === 0);
   const machineScopeLabel = createMemo(() => allMachinesSelected()
     ? "All available machines"
-    : requestedMachineScope().map((id) => selectableMachines().find((machine) => machine.id === id)?.displayName ?? id).join(", "));
+    : `${requestedMachineScope()
+      .map((id) => selectableMachines().find((machine) => machine.id === id)?.displayName ?? id)
+      .join(", ")}${selectedDirectoryCount() > 0 ? ` (${selectedDirectoryCount()} selected directories)` : ""}`);
   const machineFilteredRows = createMemo(() => (period()?.rows ?? [])
     .filter((row) => requestedMachineScope().includes(row.machine)));
   const machineFilteredCostRows = createMemo(() => (costSeries()?.rows ?? [])
@@ -642,7 +654,48 @@ export default function App() {
     const next = toggledMachineSelection(effective, machine);
     return next.length === 0 ? effective : next;
   });
+  const selectWholeMachine = (machine: string) => {
+    const isWholeMachineSelected = wholeMachineSelected(
+      requestedMachineScope(),
+      selectedDirectories(),
+      machine,
+    );
+    setSelectedDirectories((current) =>
+      Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine)));
+    if (!isWholeMachineSelected && selectedMachineIDs().has(machine)) return;
+    toggleSelectedMachine(machine);
+  };
+  const selectAllMachines = () => {
+    setSelectedDirectories({});
+    updateMachineSelection(() => selectableMachines().map((machine) => machine.id));
+  };
+  const toggleDirectoryExpansion = (machine: string) => {
+    setExpandedDirectoryMachines((current) => current.includes(machine)
+      ? current.filter((id) => id !== machine)
+      : [...current, machine]);
+  };
+  const toggleDirectoryListExpansion = (machine: string) => {
+    setExpandedDirectoryLists((current) => current.includes(machine)
+      ? current.filter((id) => id !== machine)
+      : [...current, machine]);
+  };
+  const selectAllDirectories = (machine: string, directories: readonly string[]) => {
+    if (!selectedMachineIDs().has(machine)) {
+      updateMachineSelection((current) => [...current, machine]);
+    }
+    setSelectedDirectories((current) => ({
+      ...current,
+      [machine]: [...new Set(directories)],
+    }));
+  };
+  const clearAllDirectories = (machine: string) => {
+    setSelectedDirectories((current) =>
+      Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine)));
+  };
   const toggleDirectory = (machine: string, directory: string) => {
+    if (!selectedMachineIDs().has(machine)) {
+      updateMachineSelection((current) => [...current, machine]);
+    }
     setSelectedDirectories((current) => {
       const selected = current[machine] ?? [];
       const next = selected.includes(directory)
@@ -1048,29 +1101,84 @@ export default function App() {
           <div><p class="eyebrow">MACHINE SCOPE</p><h2>Machines</h2></div>
           <button
             classList={{ "model-choice": true, active: allMachinesSelected() }}
-            onClick={() => updateMachineSelection(() => selectableMachines().map((machine) => machine.id))}
+            onClick={selectAllMachines}
           ><span>All machines</span></button>
           <div class="model-list">
             <For each={visibleMachines()} fallback={<p class="muted">{machines.loading ? "Loading machines…" : "No enabled machines."}</p>}>{(machine) => (
               <div class="machine-directory-group">
-                <label classList={{ "model-choice": true, active: selectedMachineIDs().has(machine.id) }} title={`${machine.displayName} (${machine.id})`}>
-                  <input type="checkbox" checked={selectedMachineIDs().has(machine.id)} onChange={() => toggleSelectedMachine(machine.id)} />
-                  <span>{machine.displayName}</span>
-                  <Show when={statusByMachine().get(machine.id)?.collectionState === "error"
-                    || statusByMachine().get(machine.id)?.collectionState === "stale"}>
-                    <svg class="machine-warning-icon" viewBox="0 0 24 24" role="img" aria-label={`${machine.displayName} collection warning`}>
-                      <path d="M12 3 2.7 20h18.6L12 3Z" />
-                      <path d="M12 9v5M12 17.5v.5" />
-                    </svg>
+                <div class="machine-choice-row">
+                  <label
+                    classList={{
+                      "model-choice": true,
+                      active: wholeMachineSelected(requestedMachineScope(), selectedDirectories(), machine.id),
+                      partial: (selectedDirectories()[machine.id]?.length ?? 0) > 0,
+                    }}
+                    title={`Include all directories from ${machine.displayName} (${machine.id})`}
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={`Include all directories from ${machine.displayName}`}
+                      checked={wholeMachineSelected(requestedMachineScope(), selectedDirectories(), machine.id)}
+                      onChange={() => selectWholeMachine(machine.id)}
+                    />
+                    <span class="machine-choice-copy">
+                      <span>{machine.displayName}</span>
+                      <small>{(selectedDirectories()[machine.id]?.length ?? 0) > 0
+                        ? `${selectedDirectories()[machine.id].length} selected directories`
+                        : wholeMachineSelected(requestedMachineScope(), selectedDirectories(), machine.id)
+                          ? "All directories"
+                          : "Not included"}</small>
+                    </span>
+                    <Show when={statusByMachine().get(machine.id)?.collectionState === "error"
+                      || statusByMachine().get(machine.id)?.collectionState === "stale"}>
+                      <svg class="machine-warning-icon" viewBox="0 0 24 24" role="img" aria-label={`${machine.displayName} collection warning`}>
+                        <path d="M12 3 2.7 20h18.6L12 3Z" />
+                        <path d="M12 9v5M12 17.5v.5" />
+                      </svg>
+                    </Show>
+                  </label>
+                  <Show when={(directoriesByMachine().get(machine.id)?.length ?? 0) > 0}>
+                    <button
+                      type="button"
+                      classList={{
+                        "directory-disclosure": true,
+                        expanded: expandedDirectoryMachines().includes(machine.id),
+                      }}
+                      aria-label={`${expandedDirectoryMachines().includes(machine.id) ? "Collapse" : "Expand"} directories for ${machine.displayName}`}
+                      aria-expanded={expandedDirectoryMachines().includes(machine.id)}
+                      aria-controls={`directories-${machine.id}`}
+                      onClick={() => toggleDirectoryExpansion(machine.id)}
+                    >
+                      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg>
+                    </button>
                   </Show>
-                </label>
+                </div>
                 <Show when={visibleDirectoryChoices(
-                  requestedMachineScope(),
-                  machine.id,
+                  expandedDirectoryMachines().includes(machine.id),
                   directoriesByMachine().get(machine.id) ?? [],
                 )}>{(directories) =>
-                  <div class="directory-filter-list">
-                    <For each={directories()}>{(directory) => {
+                  <div class="directory-filter-list" id={`directories-${machine.id}`}>
+                    <div class="directory-bulk-actions" aria-label={`Directory selection actions for ${machine.displayName}`}>
+                      <button
+                        type="button"
+                        disabled={(selectedDirectories()[machine.id]?.length ?? 0) === 0}
+                        onClick={() => clearAllDirectories(machine.id)}
+                      >Clear all</button>
+                      <button
+                        type="button"
+                        disabled={allDirectoryItemsSelected(
+                          directories(),
+                          selectedDirectories()[machine.id] ?? [],
+                        )}
+                        onClick={() => selectAllDirectories(machine.id, directories())}
+                      >Select all</button>
+                    </div>
+                    <For each={visibleDirectoryItems(
+                      directories(),
+                      selectedDirectories()[machine.id] ?? [],
+                      expandedDirectoryLists().includes(machine.id),
+                      directoryLabelsByMachine().get(machine.id),
+                    )}>{(directory) => {
                       const label = () =>
                         directoryLabelsByMachine().get(machine.id)?.get(directory) ?? "Directory";
                       return (
@@ -1147,6 +1255,24 @@ export default function App() {
                         </div>
                       );
                     }}</For>
+                    <Show when={directories().length > initialDirectoryLimit}>
+                      <button
+                        type="button"
+                        class="directory-more"
+                        aria-expanded={expandedDirectoryLists().includes(machine.id)}
+                        aria-label={expandedDirectoryLists().includes(machine.id)
+                          ? `Show fewer directories for ${machine.displayName}`
+                          : `Show ${directories().length - initialDirectoryLimit} more directories for ${machine.displayName}`}
+                        title={expandedDirectoryLists().includes(machine.id) ? "Show less" : "Show more"}
+                        onClick={() => toggleDirectoryListExpansion(machine.id)}
+                      >
+                        <svg
+                          classList={{ expanded: expandedDirectoryLists().includes(machine.id) }}
+                          viewBox="0 0 20 20"
+                          aria-hidden="true"
+                        ><path d="m5 7 5 5 5-5" /></svg>
+                      </button>
+                    </Show>
                   </div>
                 }</Show>
               </div>

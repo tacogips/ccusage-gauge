@@ -1,16 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import {
+  allDirectoryItemsSelected,
   clearUncheckedDirectorySelections,
   directoryFiltersVisible,
   directoryLabels,
   directoryQuery,
+  initialDirectoryLimit,
   initialMachineLimit,
   machineProgressDetail,
   machineQuery,
   matchesMachineSelection,
+  orderedDirectoryItems,
   requestedMachineIDs,
   toggledMachineSelection,
+  visibleDirectoryItems,
   visibleMachineItems,
+  wholeMachineSelected,
 } from "../src/machineScope";
 import type { LoadStatusResponse, Machine } from "../src/api";
 
@@ -21,6 +26,35 @@ describe("machine scope", () => {
     expect(initialMachineLimit).toBe(5);
     expect(visibleMachineItems(machines, false)).toEqual(machines.slice(0, 5));
     expect(visibleMachineItems(machines, true)).toEqual(machines);
+  });
+
+  test("puts checked directories first and limits long directory lists", () => {
+    const directories = [
+      "/work/a", "/work/b", "/work/c", "/work/d", "/work/e", "/work/f",
+      "/work/g", "/work/h", "/work/i", "/work/j", "/work/k",
+    ];
+    const labels = new Map(directories.map((directory) => [
+      directory,
+      directory.split("/").at(-1) ?? directory,
+    ]));
+    labels.set("/work/a", "Zulu");
+    labels.set("/work/b", "Alpha");
+
+    expect(initialDirectoryLimit).toBe(10);
+    expect(orderedDirectoryItems(directories, ["/work/f", "/work/c"], labels)).toEqual([
+      "/work/c", "/work/f", "/work/b", "/work/d", "/work/e", "/work/g",
+      "/work/h", "/work/i", "/work/j", "/work/k", "/work/a",
+    ]);
+    expect(visibleDirectoryItems(directories, ["/work/f"], false, labels)).toEqual([
+      "/work/f", "/work/b", "/work/c", "/work/d", "/work/e",
+      "/work/g", "/work/h", "/work/i", "/work/j", "/work/k",
+    ]);
+    expect(visibleDirectoryItems(directories, ["/work/f"], true, labels)).toEqual([
+      "/work/f", "/work/b", "/work/c", "/work/d", "/work/e", "/work/g",
+      "/work/h", "/work/i", "/work/j", "/work/k", "/work/a",
+    ]);
+    expect(allDirectoryItemsSelected(directories, directories)).toBe(true);
+    expect(allDirectoryItemsSelected(directories, ["/work/a", "/work/stale"])).toBe(false);
   });
 
   test("an empty selection means all machines", () => {
@@ -35,6 +69,12 @@ describe("machine scope", () => {
     expect(matchesMachineSelection(localAndGCE, "local")).toBe(true);
     expect(matchesMachineSelection(localAndGCE, "another-machine")).toBe(false);
     expect(toggledMachineSelection(localAndGCE, "local")).toEqual(["gce"]);
+  });
+
+  test("distinguishes whole-machine selection from directory-only selection", () => {
+    expect(wholeMachineSelected(["local"], {}, "local")).toBe(true);
+    expect(wholeMachineSelected(["local"], { local: ["/work/project"] }, "local")).toBe(false);
+    expect(wholeMachineSelected([], {}, "local")).toBe(false);
   });
 
   test("builds repeated query parameters for exactly the selected enabled machines", () => {

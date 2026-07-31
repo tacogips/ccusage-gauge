@@ -53,12 +53,12 @@ describe("dashboard directory integration state", () => {
       .toBe(`${base}&directoryBreakdown=true&machine=local`);
   });
 
-  test("hides empty or unchecked inventories and clears unchecked selections", () => {
-    expect(visibleDirectoryChoices(["local"], "local", ["/work/a"]))
+  test("shows only expanded nonempty inventories and clears unchecked selections", () => {
+    expect(visibleDirectoryChoices(true, ["/work/a"]))
       .toEqual(["/work/a"]);
-    expect(visibleDirectoryChoices(["local"], "remote", ["/srv/remote"]))
+    expect(visibleDirectoryChoices(false, ["/srv/remote"]))
       .toBeUndefined();
-    expect(visibleDirectoryChoices(["local"], "local", []))
+    expect(visibleDirectoryChoices(true, []))
       .toBeUndefined();
     expect(clearUncheckedDirectorySelections(selections, ["local"]))
       .toEqual({ local: ["/work/b", "/work/a"] });

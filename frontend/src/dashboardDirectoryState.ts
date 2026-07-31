@@ -5,7 +5,7 @@ import type {
 } from "./api";
 import { DashboardRequestError } from "./api";
 import type { DirectorySelections } from "./machineScope";
-import { directoryFiltersVisible, directoryQuery, machineQuery } from "./machineScope";
+import { directoryQuery, machineQuery } from "./machineScope";
 import type { StackBy } from "./usageChartSeries";
 
 export const defaultStackBy: StackBy = "model";
@@ -46,11 +46,10 @@ export function restoredStackBy(value: unknown): StackBy {
 }
 
 export function visibleDirectoryChoices(
-  activeMachineIDs: string[],
-  machine: string,
+  expanded: boolean,
   directories: readonly string[],
 ): readonly string[] | undefined {
-  return directoryFiltersVisible(activeMachineIDs, machine) && directories.length > 0
+  return expanded && directories.length > 0
     ? directories
     : undefined;
 }

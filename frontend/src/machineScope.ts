@@ -1,9 +1,43 @@
 import type { LoadStatusResponse, Machine, MachineSubdirectories } from "./api";
 
 export const initialMachineLimit = 5;
+export const initialDirectoryLimit = 10;
 
 export function visibleMachineItems<Item>(items: Item[], expanded: boolean): Item[] {
   return expanded ? items : items.slice(0, initialMachineLimit);
+}
+
+export function orderedDirectoryItems(
+  directories: readonly string[],
+  selectedDirectories: readonly string[],
+  labels: ReadonlyMap<string, string> = new Map(),
+): string[] {
+  const selected = new Set(selectedDirectories);
+  return [...new Set(directories)].sort((left, right) => {
+    const selectionOrder = Number(selected.has(right)) - Number(selected.has(left));
+    if (selectionOrder !== 0) return selectionOrder;
+    const nameOrder = (labels.get(left) ?? left).localeCompare(labels.get(right) ?? right);
+    return nameOrder !== 0 ? nameOrder : left.localeCompare(right);
+  });
+}
+
+export function allDirectoryItemsSelected(
+  directories: readonly string[],
+  selectedDirectories: readonly string[],
+): boolean {
+  const items = [...new Set(directories)];
+  const selected = new Set(selectedDirectories);
+  return items.length > 0 && items.every((directory) => selected.has(directory));
+}
+
+export function visibleDirectoryItems(
+  directories: readonly string[],
+  selectedDirectories: readonly string[],
+  expanded: boolean,
+  labels: ReadonlyMap<string, string> = new Map(),
+): string[] {
+  const ordered = orderedDirectoryItems(directories, selectedDirectories, labels);
+  return expanded ? ordered : ordered.slice(0, initialDirectoryLimit);
 }
 
 export function matchesMachineSelection(selectedMachines: string[], machine: string): boolean {
@@ -31,6 +65,14 @@ export function machineQuery(ids: string[]): string {
 }
 
 export type DirectorySelections = Readonly<Record<string, readonly string[]>>;
+
+export function wholeMachineSelected(
+  activeMachineIDs: readonly string[],
+  selections: DirectorySelections,
+  machine: string,
+): boolean {
+  return activeMachineIDs.includes(machine) && (selections[machine]?.length ?? 0) === 0;
+}
 
 export function directoryQuery(selections: DirectorySelections, activeMachineIDs: string[]): string {
   const active = new Set(activeMachineIDs);
