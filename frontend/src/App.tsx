@@ -34,12 +34,14 @@ import { MachineAdminPanel } from "./MachineAdminPanel";
 import {
   allDirectoryItemsSelected,
   clearUncheckedDirectorySelections,
+  directoryItemSelected,
   directoryLabels,
   initialDirectoryLimit,
   initialMachineLimit,
   machineProgressDetail,
   machineQuery,
   requestedMachineIDs,
+  toggledDirectoryItems,
   toggledMachineSelection,
   visibleDirectoryItems,
   visibleMachineItems,
@@ -489,11 +491,6 @@ export default function App() {
     selectableMachines().length > 0
       && requestedMachineScope().length === selectableMachines().length
       && selectedDirectoryCount() === 0);
-  const machineScopeLabel = createMemo(() => allMachinesSelected()
-    ? "All available machines"
-    : `${requestedMachineScope()
-      .map((id) => selectableMachines().find((machine) => machine.id === id)?.displayName ?? id)
-      .join(", ")}${selectedDirectoryCount() > 0 ? ` (${selectedDirectoryCount()} selected directories)` : ""}`);
   const machineFilteredRows = createMemo(() => (period()?.rows ?? [])
     .filter((row) => requestedMachineScope().includes(row.machine)));
   const machineFilteredCostRows = createMemo(() => (costSeries()?.rows ?? [])
@@ -679,30 +676,49 @@ export default function App() {
       ? current.filter((id) => id !== machine)
       : [...current, machine]);
   };
-  const selectAllDirectories = (machine: string, directories: readonly string[]) => {
+  const selectAllDirectories = (machine: string) => {
     if (!selectedMachineIDs().has(machine)) {
       updateMachineSelection((current) => [...current, machine]);
     }
-    setSelectedDirectories((current) => ({
-      ...current,
-      [machine]: [...new Set(directories)],
-    }));
+    setSelectedDirectories((current) =>
+      Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine)));
   };
   const clearAllDirectories = (machine: string) => {
     setSelectedDirectories((current) =>
       Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine)));
+    if (selectedMachineIDs().has(machine)) toggleSelectedMachine(machine);
   };
-  const toggleDirectory = (machine: string, directory: string) => {
-    if (!selectedMachineIDs().has(machine)) {
+  const toggleDirectory = (
+    machine: string,
+    directory: string,
+    directories: readonly string[],
+  ) => {
+    const machineIsSelected = selectedMachineIDs().has(machine);
+    const wholeMachineIsSelected = wholeMachineSelected(
+      requestedMachineScope(),
+      selectedDirectories(),
+      machine,
+    );
+    if (!machineIsSelected) {
       updateMachineSelection((current) => [...current, machine]);
     }
     setSelectedDirectories((current) => {
-      const selected = current[machine] ?? [];
-      const next = selected.includes(directory)
-        ? selected.filter((item) => item !== directory)
-        : [...selected, directory];
+      const next = toggledDirectoryItems(
+        directories,
+        current[machine] ?? [],
+        directory,
+        wholeMachineIsSelected,
+      );
       if (next.length === 0) {
-        return Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine));
+        if (machineIsSelected) toggleSelectedMachine(machine);
+        return Object.fromEntries(
+          Object.entries(current).filter(([id]) => id !== machine),
+        );
+      }
+      if (next.length === new Set(directories).size) {
+        return Object.fromEntries(
+          Object.entries(current).filter(([id]) => id !== machine),
+        );
       }
       return { ...current, [machine]: next };
     });
@@ -1161,16 +1177,21 @@ export default function App() {
                     <div class="directory-bulk-actions" aria-label={`Directory selection actions for ${machine.displayName}`}>
                       <button
                         type="button"
-                        disabled={(selectedDirectories()[machine.id]?.length ?? 0) === 0}
+                        disabled={!selectedMachineIDs().has(machine.id)
+                          || requestedMachineScope().length <= 1}
                         onClick={() => clearAllDirectories(machine.id)}
                       >Clear all</button>
                       <button
                         type="button"
-                        disabled={allDirectoryItemsSelected(
+                        disabled={wholeMachineSelected(
+                          requestedMachineScope(),
+                          selectedDirectories(),
+                          machine.id,
+                        ) || allDirectoryItemsSelected(
                           directories(),
                           selectedDirectories()[machine.id] ?? [],
                         )}
-                        onClick={() => selectAllDirectories(machine.id, directories())}
+                        onClick={() => selectAllDirectories(machine.id)}
                       >Select all</button>
                     </div>
                     <For each={visibleDirectoryItems(
@@ -1182,12 +1203,35 @@ export default function App() {
                       const label = () =>
                         directoryLabelsByMachine().get(machine.id)?.get(directory) ?? "Directory";
                       return (
-                        <div classList={{ "directory-choice": true, active: selectedDirectories()[machine.id]?.includes(directory) }}>
+                        <div classList={{
+                          "directory-choice": true,
+                          active: directoryItemSelected(
+                            selectedDirectories()[machine.id] ?? [],
+                            directory,
+                            wholeMachineSelected(
+                              requestedMachineScope(),
+                              selectedDirectories(),
+                              machine.id,
+                            ),
+                          ),
+                        }}>
                           <input
                             type="checkbox"
                             aria-label={`Filter by ${label()}`}
-                            checked={selectedDirectories()[machine.id]?.includes(directory) ?? false}
-                            onChange={() => toggleDirectory(machine.id, directory)}
+                            checked={directoryItemSelected(
+                              selectedDirectories()[machine.id] ?? [],
+                              directory,
+                              wholeMachineSelected(
+                                requestedMachineScope(),
+                                selectedDirectories(),
+                                machine.id,
+                              ),
+                            )}
+                            onChange={() => toggleDirectory(
+                              machine.id,
+                              directory,
+                              directories(),
+                            )}
                           />
                           <Show
                             when={directoryEditorFor(machine.id, directory)}
@@ -1283,7 +1327,6 @@ export default function App() {
               {areAllMachinesVisible() ? "Show less" : `More (${selectableMachines().length - initialMachineLimit})`}
             </button>
           </Show>
-          <small>Selected: {machineScopeLabel()}</small>
           <Show when={directoryCatalogWarning()}>{(message) =>
             <small class="machine-warning" role="alert">{message()}</small>
           }</Show>

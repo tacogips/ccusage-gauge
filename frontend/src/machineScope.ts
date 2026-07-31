@@ -30,6 +30,29 @@ export function allDirectoryItemsSelected(
   return items.length > 0 && items.every((directory) => selected.has(directory));
 }
 
+export function directoryItemSelected(
+  selectedDirectories: readonly string[],
+  directory: string,
+  wholeMachineIsSelected: boolean,
+): boolean {
+  return wholeMachineIsSelected || selectedDirectories.includes(directory);
+}
+
+export function toggledDirectoryItems(
+  directories: readonly string[],
+  selectedDirectories: readonly string[],
+  directory: string,
+  wholeMachineIsSelected: boolean,
+): string[] {
+  const selected = new Set(wholeMachineIsSelected ? directories : selectedDirectories);
+  if (selected.has(directory)) {
+    selected.delete(directory);
+  } else {
+    selected.add(directory);
+  }
+  return [...new Set(directories)].filter((item) => selected.has(item));
+}
+
 export function visibleDirectoryItems(
   directories: readonly string[],
   selectedDirectories: readonly string[],

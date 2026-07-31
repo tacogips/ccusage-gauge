@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   allDirectoryItemsSelected,
   clearUncheckedDirectorySelections,
+  directoryItemSelected,
   directoryFiltersVisible,
   directoryLabels,
   directoryQuery,
@@ -12,6 +13,7 @@ import {
   matchesMachineSelection,
   orderedDirectoryItems,
   requestedMachineIDs,
+  toggledDirectoryItems,
   toggledMachineSelection,
   visibleDirectoryItems,
   visibleMachineItems,
@@ -75,6 +77,21 @@ describe("machine scope", () => {
     expect(wholeMachineSelected(["local"], {}, "local")).toBe(true);
     expect(wholeMachineSelected(["local"], { local: ["/work/project"] }, "local")).toBe(false);
     expect(wholeMachineSelected([], {}, "local")).toBe(false);
+  });
+
+  test("shows every directory checked for a whole machine and toggles from that full set", () => {
+    const directories = ["/work/a", "/work/b", "/work/c"];
+
+    expect(directoryItemSelected([], "/work/a", true)).toBe(true);
+    expect(directoryItemSelected(["/work/a"], "/work/b", false)).toBe(false);
+    expect(toggledDirectoryItems(directories, [], "/work/b", true)).toEqual([
+      "/work/a",
+      "/work/c",
+    ]);
+    expect(toggledDirectoryItems(directories, ["/work/a"], "/work/b", false)).toEqual([
+      "/work/a",
+      "/work/b",
+    ]);
   });
 
   test("builds repeated query parameters for exactly the selected enabled machines", () => {
