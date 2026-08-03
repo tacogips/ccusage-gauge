@@ -105,7 +105,7 @@ public struct CCUsageProcessRunner: CCUsageEnvironmentProcessRunning, Sendable {
     environment: [String: String]?,
     timeoutSeconds: TimeInterval
   ) async throws -> ProcessResult {
-    try await Task.detached(priority: .utility) {
+    let worker = Task.detached(priority: .utility) {
       let process = Process()
       let stdout = Pipe()
       let stderr = Pipe()
@@ -124,9 +124,13 @@ public struct CCUsageProcessRunner: CCUsageEnvironmentProcessRunning, Sendable {
       async let errData = readPipe(errHandle)
 
       let deadline = Date().addingTimeInterval(timeoutSeconds)
-      while process.isRunning && Date() < deadline {
-        try await Task.sleep(for: .milliseconds(20))
+      while process.isRunning && !Task.isCancelled && Date() < deadline {
+        // Cancellation must flow through the termination path below. Letting
+        // sleep throw here abandons a live subprocess, and the pipe readers
+        // then keep the cancelled task (and registry deletion) suspended.
+        try? await Task.sleep(for: .milliseconds(20))
       }
+      let wasCancelled = Task.isCancelled
       if process.isRunning {
         signalProcess(processID, signal: SIGTERM, processGroup: ownsProcessGroup)
         let terminationDeadline = Date().addingTimeInterval(0.25)
@@ -139,15 +143,22 @@ public struct CCUsageProcessRunner: CCUsageEnvironmentProcessRunning, Sendable {
         process.waitUntilExit()
         _ = await outData
         _ = await errData
+        if wasCancelled { throw CancellationError() }
         throw ProcessExecutionFailure.timedOut
       }
+      if wasCancelled { throw CancellationError() }
       return ProcessResult(
         stdout: await outData,
         stderr: await errData,
         exitStatus: process.terminationStatus,
         terminationReason: process.terminationReason == .uncaughtSignal ? .uncaughtSignal : .exit
       )
-    }.value
+    }
+    return try await withTaskCancellationHandler {
+      try await worker.value
+    } onCancel: {
+      worker.cancel()
+    }
   }
 
   private func readPipe(_ handle: FileHandle) async -> Data {
@@ -374,7 +385,7 @@ public struct SSHCCUsageCommandRunner:
 
   public func run(arguments: [String], timeoutSeconds: TimeInterval = 30) async throws -> ProcessResult {
     try MachineValidation.validate(connection: connection, requireReadableIdentity: true)
-    let arguments = try sshArguments(ccusageArguments: arguments)
+    let arguments = try sshArguments(ccusageArguments: arguments, timeoutSeconds: timeoutSeconds)
     do {
       let result = try await processRunner.run(
         executable: sshExecutable,
@@ -396,7 +407,11 @@ public struct SSHCCUsageCommandRunner:
     timeoutSeconds: TimeInterval = 30
   ) async throws -> ProcessResult {
     try MachineValidation.validate(connection: connection, requireReadableIdentity: true)
-    let arguments = try sourceSSHArguments(ccusageArguments: arguments, source: source)
+    let arguments = try sourceSSHArguments(
+      ccusageArguments: arguments,
+      source: source,
+      timeoutSeconds: timeoutSeconds
+    )
     do {
       let result = try await processRunner.run(
         executable: sshExecutable,
@@ -425,7 +440,7 @@ public struct SSHCCUsageCommandRunner:
       return MachineSessionSourcePlan(descriptor: descriptor, remote: true)
     }
     try MachineValidation.validate(connection: connection, requireReadableIdentity: true)
-    let arguments = sourceProbeSSHArguments(descriptor: descriptor)
+    let arguments = sourceProbeSSHArguments(descriptor: descriptor, timeoutSeconds: timeoutSeconds)
     do {
       let result = try await processRunner.run(
         executable: sshExecutable,
@@ -441,21 +456,12 @@ public struct SSHCCUsageCommandRunner:
     }
   }
 
-  public func sshArguments(ccusageArguments: [String]) throws -> [String] {
+  public func sshArguments(
+    ccusageArguments: [String],
+    timeoutSeconds: TimeInterval = TimeInterval(AppConfiguration.defaultRemoteTimeoutSeconds)
+  ) throws -> [String] {
     try MachineValidation.validate(connection: connection, requireReadableIdentity: false)
-    var result = ["-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes"]
-    if let identityFile = connection.identityFile {
-      result += ["-i", identityFile]
-    }
-    result += ["-p", String(connection.port)]
-    for option in connection.extraOptions {
-      if option == "-4" || option == "-6" {
-        result.append(option)
-      } else {
-        result += ["-o", String(option.dropFirst(3))]
-      }
-    }
-    result += proxyArguments()
+    var result = transportArguments(timeoutSeconds: timeoutSeconds)
     result += ["--", MachineValidation.destination(connection)]
     result.append(Self.quoteRemoteToken(connection.remoteCcusagePath))
     result += ccusageArguments.map(Self.quoteRemoteToken)
@@ -464,10 +470,11 @@ public struct SSHCCUsageCommandRunner:
 
   public func sourceSSHArguments(
     ccusageArguments: [String],
-    source: MachineSessionSource
+    source: MachineSessionSource,
+    timeoutSeconds: TimeInterval = TimeInterval(AppConfiguration.defaultRemoteTimeoutSeconds)
   ) throws -> [String] {
     try MachineValidation.validate(connection: connection, requireReadableIdentity: false)
-    var result = transportArguments()
+    var result = transportArguments(timeoutSeconds: timeoutSeconds)
     result += ["--", MachineValidation.destination(connection)]
     let sourceKind: String
     let sourceValue: String
@@ -493,8 +500,11 @@ public struct SSHCCUsageCommandRunner:
     return result
   }
 
-  private func sourceProbeSSHArguments(descriptor: MachineDescriptor) -> [String] {
-    var result = transportArguments()
+  private func sourceProbeSSHArguments(
+    descriptor: MachineDescriptor,
+    timeoutSeconds: TimeInterval
+  ) -> [String] {
+    var result = transportArguments(timeoutSeconds: timeoutSeconds)
     result += ["--", MachineValidation.destination(connection)]
     let remoteTokens = [
       "sh",
@@ -510,7 +520,7 @@ public struct SSHCCUsageCommandRunner:
     return result
   }
 
-  private func transportArguments() -> [String] {
+  private func transportArguments(timeoutSeconds: TimeInterval) -> [String] {
     var result = ["-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes"]
     if let identityFile = connection.identityFile {
       result += ["-i", identityFile]
@@ -522,6 +532,10 @@ public struct SSHCCUsageCommandRunner:
       } else {
         result += ["-o", String(option.dropFirst(3))]
       }
+    }
+    if !connection.extraOptions.contains(where: { $0.hasPrefix("-o ConnectTimeout=") }) {
+      let connectTimeout = max(1, min(600, Int(ceil(timeoutSeconds))))
+      result += ["-o", "ConnectTimeout=\(connectTimeout)"]
     }
     result += proxyArguments()
     return result

@@ -388,6 +388,16 @@ public enum CCUsageDecoder {
   }
 }
 
+private func valuePropagatingCancellation<Value: Sendable>(
+  of task: Task<Value, Error>
+) async throws -> Value {
+  try await withTaskCancellationHandler {
+    try await task.value
+  } onCancel: {
+    task.cancel()
+  }
+}
+
 private actor CCUsageDetailedUsageLoader {
   private enum ArgumentMode {
     case flagFree
@@ -426,14 +436,16 @@ private actor CCUsageDetailedUsageLoader {
     if let cached = cachedUsage[key], now.timeIntervalSince(cached.loadedAt) <= maxAgeSeconds {
       return cached.usage
     }
-    if let existing = inFlight[key] { return try await existing.value.usage }
+    if let existing = inFlight[key] {
+      return try await valuePropagatingCancellation(of: existing).usage
+    }
     let preferredMode = argumentMode
     let task = Task {
       try await Self.load(runner: runner, since: since, until: until, timezone: timezone, preferredMode: preferredMode)
     }
     inFlight[key] = task
     do {
-      let loaded = try await task.value
+      let loaded = try await valuePropagatingCancellation(of: task)
       // Only lock in the detected argument mode when the response actually contained rows.
       // A scoped range with no usage decodes successfully via the flag-free path without ever
       // exercising the per-row `agents` field, so caching `.flagFree` from an empty response
@@ -534,7 +546,7 @@ private actor CCUsageBlocksLoader {
       return cached.records
     }
     if let inFlight, inFlight.since == since, inFlight.until == until, inFlight.timezone == timezone {
-      return try await inFlight.task.value
+      return try await valuePropagatingCancellation(of: inFlight.task)
     }
     let task = Task {
       var arguments = ["blocks", "--json"]
@@ -546,7 +558,7 @@ private actor CCUsageBlocksLoader {
     }
     inFlight = InFlightBlocks(since: since, until: until, timezone: timezone, task: task)
     do {
-      let records = try await task.value
+      let records = try await valuePropagatingCancellation(of: task)
       cached = CachedBlocks(since: since, until: until, timezone: timezone, records: records, loadedAt: Date())
       inFlight = nil
       return records

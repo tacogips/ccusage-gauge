@@ -77,6 +77,24 @@ private actor SequencedCCUsageRunner: CCUsageCommandRunner {
     #expect(Date().timeIntervalSince(startedAt) < 3)
   }
 
+  @Test func cancellationTerminatesAndReapsRunningProcess() async {
+    let startedAt = Date()
+    let task = Task {
+      try await CCUsageProcessRunner().run(
+        executable: URL(fileURLWithPath: "/bin/sh"),
+        arguments: ["-c", "trap '' TERM; while :; do sleep 1; done"],
+        timeoutSeconds: 30
+      )
+    }
+    try? await Task.sleep(for: .milliseconds(100))
+    task.cancel()
+
+    await #expect(throws: CancellationError.self) {
+      _ = try await task.value
+    }
+    #expect(Date().timeIntervalSince(startedAt) < 2)
+  }
+
   @Test func usesSystemSSHExecutable() throws {
     let runner = try SSHCCUsageCommandRunner(connection: SSHConnection(host: "localhost", port: 22, user: "user"))
     #expect(runner.sshExecutable.path == "/usr/bin/ssh")
@@ -97,6 +115,17 @@ private actor SequencedCCUsageRunner: CCUsageCommandRunner {
       "-i", "/tmp/id_ed25519", "-p", "2222", "-4", "-o", "ConnectTimeout=10",
       "-o", "LogLevel=ERROR", "--", "ccusage@[2001:db8::1]",
       "'/usr/local/bin/ccusage'", "'blocks'", "'--json'", "'a'\\''b'"
+    ])
+  }
+
+  @Test func suppliesBoundedSSHConnectTimeoutWhenNotExplicitlyConfigured() throws {
+    let runner = try SSHCCUsageCommandRunner(
+      connection: SSHConnection(host: "localhost", port: 22, user: "user")
+    )
+
+    #expect(try runner.sshArguments(ccusageArguments: [], timeoutSeconds: 2.2).prefix(10) == [
+      "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+      "-p", "22", "-o", "ConnectTimeout=3"
     ])
   }
 
