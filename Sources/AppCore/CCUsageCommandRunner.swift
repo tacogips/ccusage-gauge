@@ -205,16 +205,40 @@ public struct RetryingCCUsageCommandRunner:
   MachineSessionSourcePlanResolving,
   Sendable {
   private let runner: any CCUsageCommandRunner
+  private let sleep: @Sendable (TimeInterval) async throws -> Void
   public let retryCount: Int
+  public let retryDelaySeconds: TimeInterval
   public let timeoutSeconds: TimeInterval
 
   public init(
     runner: any CCUsageCommandRunner,
     retryCount: Int = AppConfiguration.defaultRemoteRetryCount,
-    timeoutSeconds: TimeInterval = TimeInterval(AppConfiguration.defaultRemoteTimeoutSeconds)
+    timeoutSeconds: TimeInterval = TimeInterval(AppConfiguration.defaultRemoteTimeoutSeconds),
+    retryDelaySeconds: TimeInterval = TimeInterval(AppConfiguration.defaultRemoteRetryDelaySeconds)
+  ) {
+    self.init(
+      runner: runner,
+      retryCount: retryCount,
+      timeoutSeconds: timeoutSeconds,
+      retryDelaySeconds: retryDelaySeconds
+    ) { delay in
+      try await Task.sleep(for: .seconds(delay))
+    }
+  }
+
+  init(
+    runner: any CCUsageCommandRunner,
+    retryCount: Int,
+    timeoutSeconds: TimeInterval,
+    retryDelaySeconds: TimeInterval,
+    sleep: @escaping @Sendable (TimeInterval) async throws -> Void
   ) {
     self.runner = runner
+    self.sleep = sleep
     self.retryCount = max(0, retryCount)
+    self.retryDelaySeconds = retryDelaySeconds.isFinite
+      ? max(0, retryDelaySeconds)
+      : TimeInterval(AppConfiguration.defaultRemoteRetryDelaySeconds)
     self.timeoutSeconds = max(1, timeoutSeconds)
   }
 
@@ -257,6 +281,7 @@ public struct RetryingCCUsageCommandRunner:
       } catch {
         if error is CancellationError || remainingRetries == 0 { throw error }
         remainingRetries -= 1
+        try await waitBeforeRetry()
       }
     }
   }
@@ -272,8 +297,14 @@ public struct RetryingCCUsageCommandRunner:
       } catch {
         if error is CancellationError || remainingRetries == 0 { throw error }
         remainingRetries -= 1
+        try await waitBeforeRetry()
       }
     }
+  }
+
+  private func waitBeforeRetry() async throws {
+    try Task.checkCancellation()
+    try await sleep(retryDelaySeconds)
   }
 }
 

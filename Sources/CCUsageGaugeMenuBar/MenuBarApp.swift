@@ -693,7 +693,8 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     RetryingCCUsageCommandRunner(
       runner: try SSHCCUsageCommandRunner(connection: connection),
       retryCount: configuration.remoteRetryCount,
-      timeoutSeconds: TimeInterval(configuration.remoteTimeoutSeconds)
+      timeoutSeconds: TimeInterval(configuration.remoteTimeoutSeconds),
+      retryDelaySeconds: TimeInterval(configuration.remoteRetryDelaySeconds)
     )
   }
 

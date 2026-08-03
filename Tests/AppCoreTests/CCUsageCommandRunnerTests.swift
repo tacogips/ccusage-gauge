@@ -30,6 +30,16 @@ private actor SequencedCCUsageRunner: CCUsageCommandRunner {
   func observations() -> [TimeInterval] { observedTimeouts }
 }
 
+private actor RetryDelayRecorder {
+  private var values: [TimeInterval] = []
+
+  func sleep(seconds: TimeInterval) {
+    values.append(seconds)
+  }
+
+  func recorded() -> [TimeInterval] { values }
+}
+
 @Suite("SSHCommandRunnerTests") struct SSHCommandRunnerTests {
   @Test func processTimeoutForceKillsCommandsThatIgnoreTermination() async {
     let startedAt = Date()
@@ -181,24 +191,60 @@ private actor SequencedCCUsageRunner: CCUsageCommandRunner {
     }
   }
 
-  @Test func remoteRetryDefaultsUseThreeRetriesAndFifteenSecondAttempts() async throws {
+  @Test func remoteRetryDefaultsUseThreeRetriesTwoSecondBackoffAndFifteenSecondAttempts() async throws {
     let underlying = SequencedCCUsageRunner(failures: 3)
-    let runner = RetryingCCUsageCommandRunner(runner: underlying)
+    let defaults = RetryingCCUsageCommandRunner(runner: underlying)
+    let delays = RetryDelayRecorder()
+    let runner = RetryingCCUsageCommandRunner(
+      runner: underlying,
+      retryCount: AppConfiguration.defaultRemoteRetryCount,
+      timeoutSeconds: TimeInterval(AppConfiguration.defaultRemoteTimeoutSeconds),
+      retryDelaySeconds: TimeInterval(AppConfiguration.defaultRemoteRetryDelaySeconds)
+    ) { seconds in
+      await delays.sleep(seconds: seconds)
+    }
 
     _ = try await runner.run(arguments: ["daily"], timeoutSeconds: 30)
 
-    #expect(runner.retryCount == 3)
-    #expect(runner.timeoutSeconds == 15)
+    #expect(defaults.retryCount == 3)
+    #expect(defaults.retryDelaySeconds == 2)
+    #expect(defaults.timeoutSeconds == 15)
     #expect(await underlying.observations() == [15, 15, 15, 15])
+    #expect(await delays.recorded() == [2, 2, 2])
   }
 
   @Test func remoteRetryStopsAfterConfiguredRetryCount() async {
     let underlying = SequencedCCUsageRunner(failures: 4)
-    let runner = RetryingCCUsageCommandRunner(runner: underlying, retryCount: 3, timeoutSeconds: 15)
+    let runner = RetryingCCUsageCommandRunner(
+      runner: underlying,
+      retryCount: 3,
+      timeoutSeconds: 15,
+      retryDelaySeconds: 0
+    )
 
     await #expect(throws: CCUsageCommandFailure.self) {
       _ = try await runner.run(arguments: ["daily"], timeoutSeconds: 30)
     }
     #expect(await underlying.observations() == [15, 15, 15, 15])
+  }
+
+  @Test func cancellationInterruptsRetryBackoff() async {
+    let underlying = SequencedCCUsageRunner(failures: 2)
+    let runner = RetryingCCUsageCommandRunner(
+      runner: underlying,
+      retryCount: 3,
+      timeoutSeconds: 15,
+      retryDelaySeconds: 30
+    )
+    let task = Task {
+      try await runner.run(arguments: ["daily"], timeoutSeconds: 30)
+    }
+    try? await Task.sleep(for: .milliseconds(50))
+    task.cancel()
+
+    await #expect(throws: CancellationError.self) {
+      _ = try await task.value
+    }
+    #expect(await underlying.observations() == [15])
   }
 }

@@ -19,6 +19,7 @@ import Testing
     #expect(value.pollIntervalSeconds == 20)
     #expect(value.cacheRetentionDays == 365)
     #expect(value.remoteRetryCount == 3)
+    #expect(value.remoteRetryDelaySeconds == 2)
     #expect(value.remoteTimeoutSeconds == 15)
     #expect(value.chartColors == ChartColorConfiguration())
     let original = try Data(contentsOf: file)
@@ -40,6 +41,7 @@ import Testing
     let value = try JSONDecoder().decode(AppConfiguration.self, from: Data(json.utf8))
     #expect(value.cacheRetentionDays == 365)
     #expect(value.remoteRetryCount == 3)
+    #expect(value.remoteRetryDelaySeconds == 2)
     #expect(value.remoteTimeoutSeconds == 15)
     #expect(value.chartColors == ChartColorConfiguration())
   }
@@ -50,13 +52,34 @@ import Testing
     }
   }
 
-  @Test func rejectsInvalidRemoteRetryAndTimeoutSettings() {
+  @Test func rejectsInvalidRemoteRetryDelayAndTimeoutSettings() {
     #expect(throws: ConfigurationError.invalidRemoteRetryCount(11)) {
       try AppConfiguration(remoteRetryCount: 11).validate()
+    }
+    #expect(throws: ConfigurationError.invalidRemoteRetryDelay(-1)) {
+      try AppConfiguration(remoteRetryDelaySeconds: -1).validate()
+    }
+    #expect(throws: ConfigurationError.invalidRemoteRetryDelay(601)) {
+      try AppConfiguration(remoteRetryDelaySeconds: 601).validate()
     }
     #expect(throws: ConfigurationError.invalidRemoteTimeout(0)) {
       try AppConfiguration(remoteTimeoutSeconds: 0).validate()
     }
+  }
+
+  @Test func roundTripsConfiguredRemoteRetrySettings() throws {
+    let configuration = AppConfiguration(
+      remoteRetryCount: 5,
+      remoteRetryDelaySeconds: 7,
+      remoteTimeoutSeconds: 45
+    )
+
+    let encoded = try JSONEncoder().encode(configuration)
+    let decoded = try JSONDecoder().decode(AppConfiguration.self, from: encoded)
+
+    #expect(decoded.remoteRetryCount == 5)
+    #expect(decoded.remoteRetryDelaySeconds == 7)
+    #expect(decoded.remoteTimeoutSeconds == 45)
   }
 
   @Test func decodesAndValidatesChartColorOverrides() throws {

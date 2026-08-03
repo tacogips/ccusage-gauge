@@ -144,6 +144,7 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
   public static let defaultPollIntervalSeconds = 20
   public static let defaultCacheRetentionDays = 365
   public static let defaultRemoteRetryCount = 3
+  public static let defaultRemoteRetryDelaySeconds = 2
   public static let defaultRemoteTimeoutSeconds = 15
 
   public var ccusagePath: String?
@@ -153,6 +154,7 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
   public var pollIntervalSeconds: Int
   public var cacheRetentionDays: Int
   public var remoteRetryCount: Int
+  public var remoteRetryDelaySeconds: Int
   public var remoteTimeoutSeconds: Int
   public var chartColors: ChartColorConfiguration
 
@@ -164,6 +166,7 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     pollIntervalSeconds: Int = AppConfiguration.defaultPollIntervalSeconds,
     cacheRetentionDays: Int = AppConfiguration.defaultCacheRetentionDays,
     remoteRetryCount: Int = AppConfiguration.defaultRemoteRetryCount,
+    remoteRetryDelaySeconds: Int = AppConfiguration.defaultRemoteRetryDelaySeconds,
     remoteTimeoutSeconds: Int = AppConfiguration.defaultRemoteTimeoutSeconds,
     chartColors: ChartColorConfiguration = ChartColorConfiguration()
   ) {
@@ -174,13 +177,15 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     self.pollIntervalSeconds = pollIntervalSeconds
     self.cacheRetentionDays = cacheRetentionDays
     self.remoteRetryCount = remoteRetryCount
+    self.remoteRetryDelaySeconds = remoteRetryDelaySeconds
     self.remoteTimeoutSeconds = remoteTimeoutSeconds
     self.chartColors = chartColors
   }
 
   private enum CodingKeys: String, CodingKey {
     case ccusagePath, defaultResetTerm, dashboardPort, dashboardAutostart
-    case pollIntervalSeconds, cacheRetentionDays, remoteRetryCount, remoteTimeoutSeconds, chartColors
+    case pollIntervalSeconds, cacheRetentionDays, remoteRetryCount, remoteRetryDelaySeconds
+    case remoteTimeoutSeconds, chartColors
   }
 
   public init(from decoder: Decoder) throws {
@@ -194,6 +199,8 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
       ?? AppConfiguration.defaultCacheRetentionDays
     remoteRetryCount = try container.decodeIfPresent(Int.self, forKey: .remoteRetryCount)
       ?? AppConfiguration.defaultRemoteRetryCount
+    remoteRetryDelaySeconds = try container.decodeIfPresent(Int.self, forKey: .remoteRetryDelaySeconds)
+      ?? AppConfiguration.defaultRemoteRetryDelaySeconds
     remoteTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .remoteTimeoutSeconds)
       ?? AppConfiguration.defaultRemoteTimeoutSeconds
     chartColors = try container.decodeIfPresent(ChartColorConfiguration.self, forKey: .chartColors)
@@ -207,6 +214,9 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     guard cacheRetentionDays > 0 else { throw ConfigurationError.invalidCacheRetention(cacheRetentionDays) }
     guard (0...10).contains(remoteRetryCount) else {
       throw ConfigurationError.invalidRemoteRetryCount(remoteRetryCount)
+    }
+    guard (0...600).contains(remoteRetryDelaySeconds) else {
+      throw ConfigurationError.invalidRemoteRetryDelay(remoteRetryDelaySeconds)
     }
     guard (1...600).contains(remoteTimeoutSeconds) else {
       throw ConfigurationError.invalidRemoteTimeout(remoteTimeoutSeconds)
@@ -222,6 +232,7 @@ public enum ConfigurationError: Error, Equatable, CustomStringConvertible, Senda
   case invalidPollInterval(Int)
   case invalidCacheRetention(Int)
   case invalidRemoteRetryCount(Int)
+  case invalidRemoteRetryDelay(Int)
   case invalidRemoteTimeout(Int)
   case invalidChartColorKey(section: String, key: String)
   case invalidChartColor(section: String, key: String, value: String)
@@ -234,6 +245,7 @@ public enum ConfigurationError: Error, Equatable, CustomStringConvertible, Senda
     case .invalidPollInterval(let value): "Poll interval must be positive (received \(value))"
     case .invalidCacheRetention(let value): "Cache retention days must be positive (received \(value))"
     case .invalidRemoteRetryCount(let value): "Remote retry count must be between 0 and 10 (received \(value))"
+    case .invalidRemoteRetryDelay(let value): "Remote retry delay must be between 0 and 600 seconds (received \(value))"
     case .invalidRemoteTimeout(let value): "Remote timeout must be between 1 and 600 seconds (received \(value))"
     case .invalidChartColorKey(let section, let key): "Chart color key in \(section) is invalid: \(key.debugDescription)"
     case .invalidChartColor(let section, let key, let value): "Chart color for \(section).\(key) must use #RRGGBB (received \(value))"
