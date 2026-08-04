@@ -471,6 +471,19 @@ struct DirectoryRouteRegressionTests {
       now: now
     )
 
+    let inventory = await router.route(
+      target: "/api/subdirectories?machine=all",
+      method: "GET",
+      headers: [:],
+      body: Data(),
+      listenerPort: 18_081
+    )
+    let inventoryPayload = try JSONDecoder().decode(SubdirectoriesResponse.self, from: inventory.body)
+    #expect(inventory.status == 200)
+    #expect(inventoryPayload.machines.first(where: { $0.machine == "remote" })?.directories == [
+      "/srv/remote"
+    ])
+
     let stale = await router.route(
       target: "/api/cost-series?range=all&granularity=hourly&machine=local"
         + "&directory=remote%3A%2Fsrv%2Fremote",

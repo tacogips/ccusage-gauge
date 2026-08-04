@@ -63,6 +63,18 @@ export function visibleDirectoryItems(
   return expanded ? ordered : ordered.slice(0, initialDirectoryLimit);
 }
 
+export function filteredDirectoryItems(
+  directories: readonly string[],
+  query: string,
+  labels: ReadonlyMap<string, string> = new Map(),
+): string[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (normalizedQuery.length === 0) return [...directories];
+  return directories.filter((directory) =>
+    directory.toLocaleLowerCase().includes(normalizedQuery)
+      || labels.get(directory)?.toLocaleLowerCase().includes(normalizedQuery) === true);
+}
+
 export function matchesMachineSelection(selectedMachines: string[], machine: string): boolean {
   return selectedMachines.length === 0 || selectedMachines.includes(machine);
 }
@@ -115,6 +127,13 @@ export function clearUncheckedDirectorySelections(
   return Object.fromEntries(Object.entries(selections)
     .filter(([machine, directories]) => checked.has(machine) && directories.length > 0)
     .map(([machine, directories]) => [machine, [...directories]]));
+}
+
+export function directorySelectionMachineScope(
+  requestedMachineIDs: readonly string[],
+  pendingMachineIDs?: readonly string[],
+): string[] {
+  return [...(pendingMachineIDs ?? requestedMachineIDs)];
 }
 
 export function directoryFiltersVisible(checkedMachineIDs: string[], machine: string): boolean {

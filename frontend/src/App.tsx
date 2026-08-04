@@ -36,6 +36,8 @@ import {
   clearUncheckedDirectorySelections,
   directoryItemSelected,
   directoryLabels,
+  directorySelectionMachineScope,
+  filteredDirectoryItems,
   initialDirectoryLimit,
   initialMachineLimit,
   machineProgressDetail,
@@ -381,6 +383,7 @@ export default function App() {
   const [isDashboardStatePersistenceEnabled, setIsDashboardStatePersistenceEnabled] =
     createSignal(false);
   const [selectedMachines, setSelectedMachines] = createSignal<string[]>([]);
+  const [pendingMachineSelection, setPendingMachineSelection] = createSignal<string[]>();
   const [selectedDirectories, setSelectedDirectories] = createSignal<Record<string, string[]>>({});
   const [directoryRenameEditor, setDirectoryRenameEditor] = createSignal<DirectoryRenameEditor>();
   const [confirmedSubdirectories, setConfirmedSubdirectories] = createSignal<SubdirectoriesResponse>();
@@ -388,6 +391,7 @@ export default function App() {
   const [areAllMachinesVisible, setAreAllMachinesVisible] = createSignal(false);
   const [expandedDirectoryMachines, setExpandedDirectoryMachines] = createSignal<string[]>([]);
   const [expandedDirectoryLists, setExpandedDirectoryLists] = createSignal<string[]>([]);
+  const [directoryFilterQueries, setDirectoryFilterQueries] = createSignal<Record<string, string>>({});
   const [isMachineGraphRendering, setIsMachineGraphRendering] = createSignal(false);
   const [machineFormOpen, setMachineFormOpen] = createSignal(false);
   const [machineDraft, setMachineDraft] = createSignal<MachineDraft>(emptyMachineDraft());
@@ -537,7 +541,10 @@ export default function App() {
     setSelectedMachines(replacement);
   });
   createEffect(() => {
-    const checked = requestedMachineScope();
+    const checked = directorySelectionMachineScope(
+      requestedMachineScope(),
+      pendingMachineSelection(),
+    );
     setSelectedDirectories((current) => {
       const next = clearUncheckedDirectorySelections(current, checked);
       return JSON.stringify(next) === JSON.stringify(current) ? current : next;
@@ -628,20 +635,19 @@ export default function App() {
   let machineRenderStartFrame: number | undefined;
   let machineRenderApplyFrame: number | undefined;
   let machineRenderEndFrame: number | undefined;
-  let pendingMachineSelection: string[] | undefined;
   const updateMachineSelection = (update: (current: string[]) => string[]) => {
-    const current = pendingMachineSelection ?? selectedMachines();
+    const current = pendingMachineSelection() ?? selectedMachines();
     const next = update(current);
     if (next.length === current.length && next.every((item, index) => item === current[index])) return;
-    pendingMachineSelection = next;
+    setPendingMachineSelection(next);
     if (machineRenderStartFrame != null) window.cancelAnimationFrame(machineRenderStartFrame);
     if (machineRenderApplyFrame != null) window.cancelAnimationFrame(machineRenderApplyFrame);
     if (machineRenderEndFrame != null) window.cancelAnimationFrame(machineRenderEndFrame);
     setIsMachineGraphRendering(true);
     machineRenderStartFrame = window.requestAnimationFrame(() => {
       machineRenderApplyFrame = window.requestAnimationFrame(() => {
-        setSelectedMachines(pendingMachineSelection ?? []);
-        pendingMachineSelection = undefined;
+        setSelectedMachines(pendingMachineSelection() ?? []);
+        setPendingMachineSelection(undefined);
         machineRenderEndFrame = window.requestAnimationFrame(() => setIsMachineGraphRendering(false));
       });
     });
@@ -675,6 +681,11 @@ export default function App() {
     setExpandedDirectoryLists((current) => current.includes(machine)
       ? current.filter((id) => id !== machine)
       : [...current, machine]);
+  };
+  const updateDirectoryFilterQuery = (machine: string, query: string) => {
+    setDirectoryFilterQueries((current) => query.length === 0
+      ? Object.fromEntries(Object.entries(current).filter(([id]) => id !== machine))
+      : { ...current, [machine]: query });
   };
   const selectAllDirectories = (machine: string) => {
     if (!selectedMachineIDs().has(machine)) {
@@ -1174,6 +1185,17 @@ export default function App() {
                   directoriesByMachine().get(machine.id) ?? [],
                 )}>{(directories) =>
                   <div class="directory-filter-list" id={`directories-${machine.id}`}>
+                    <input
+                      type="search"
+                      class="directory-filter-input"
+                      aria-label={`Filter directories for ${machine.displayName}`}
+                      placeholder="Filter directories…"
+                      value={directoryFilterQueries()[machine.id] ?? ""}
+                      onInput={(event) => updateDirectoryFilterQuery(
+                        machine.id,
+                        event.currentTarget.value,
+                      )}
+                    />
                     <div class="directory-bulk-actions" aria-label={`Directory selection actions for ${machine.displayName}`}>
                       <button
                         type="button"
@@ -1195,11 +1217,16 @@ export default function App() {
                       >Select all</button>
                     </div>
                     <For each={visibleDirectoryItems(
-                      directories(),
+                      filteredDirectoryItems(
+                        directories(),
+                        directoryFilterQueries()[machine.id] ?? "",
+                        directoryLabelsByMachine().get(machine.id),
+                      ),
                       selectedDirectories()[machine.id] ?? [],
-                      expandedDirectoryLists().includes(machine.id),
+                      expandedDirectoryLists().includes(machine.id)
+                        || (directoryFilterQueries()[machine.id]?.trim().length ?? 0) > 0,
                       directoryLabelsByMachine().get(machine.id),
-                    )}>{(directory) => {
+                    )} fallback={<small class="directory-filter-empty">No matching directories.</small>}>{(directory) => {
                       const label = () =>
                         directoryLabelsByMachine().get(machine.id)?.get(directory) ?? "Directory";
                       return (
@@ -1299,7 +1326,8 @@ export default function App() {
                         </div>
                       );
                     }}</For>
-                    <Show when={directories().length > initialDirectoryLimit}>
+                    <Show when={(directoryFilterQueries()[machine.id]?.trim().length ?? 0) === 0
+                      && directories().length > initialDirectoryLimit}>
                       <button
                         type="button"
                         class="directory-more"

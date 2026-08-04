@@ -6,6 +6,8 @@ import {
   directoryFiltersVisible,
   directoryLabels,
   directoryQuery,
+  directorySelectionMachineScope,
+  filteredDirectoryItems,
   initialDirectoryLimit,
   initialMachineLimit,
   machineProgressDetail,
@@ -57,6 +59,22 @@ describe("machine scope", () => {
     ]);
     expect(allDirectoryItemsSelected(directories, directories)).toBe(true);
     expect(allDirectoryItemsSelected(directories, ["/work/a", "/work/stale"])).toBe(false);
+  });
+
+  test("filters directories by partial path or display-label matches", () => {
+    const directories = ["/srv/Alpha Project", "/srv/billing-api", "/opt/tools"];
+    const labels = new Map([["/opt/tools", "Remote Utilities"]]);
+
+    expect(filteredDirectoryItems(directories, "BILL", labels)).toEqual([
+      "/srv/billing-api",
+    ]);
+    expect(filteredDirectoryItems(directories, "pha pro", labels)).toEqual([
+      "/srv/Alpha Project",
+    ]);
+    expect(filteredDirectoryItems(directories, "utilities", labels)).toEqual([
+      "/opt/tools",
+    ]);
+    expect(filteredDirectoryItems(directories, "   ", labels)).toEqual(directories);
   });
 
   test("an empty selection means all machines", () => {
@@ -141,6 +159,15 @@ describe("machine scope", () => {
     expect(selections).toEqual({ local: ["/work/a"] });
     expect(directoryFiltersVisible(["local"], "local")).toBe(true);
     expect(directoryFiltersVisible(["local"], "remote")).toBe(false);
+  });
+
+  test("preserves a remote directory while its machine selection is pending", () => {
+    const effectiveScope = directorySelectionMachineScope(["local"], ["local", "remote"]);
+    const selections = clearUncheckedDirectorySelections({
+      remote: ["/srv/project"],
+    }, effectiveScope);
+
+    expect(selections).toEqual({ remote: ["/srv/project"] });
   });
 
   test("derives ten-code-point labels with deterministic collision suffixes", () => {

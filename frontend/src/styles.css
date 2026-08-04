@@ -37,6 +37,8 @@ button.model-choice { grid-template-columns: minmax(0, 1fr); }
 .directory-disclosure.expanded svg { transform: rotate(90deg); }
 .machine-directory-group { min-width: 0; }
 .directory-filter-list { display: grid; gap: 4px; margin: 3px 0 5px 22px; padding-left: 9px; border-left: 2px solid #d5e5da; }
+.directory-filter-input { min-width: 0; width: 100%; border: 1px solid #bfd0c4; border-radius: 7px; padding: 5px 7px; background: #fff; color: inherit; font-size: .68rem; }
+.directory-filter-empty { padding: 5px 7px; }
 .directory-bulk-actions { display: flex; justify-content: flex-end; gap: 4px; padding: 1px 4px 2px; }
 .directory-bulk-actions button { padding: 3px 5px; border-radius: 6px; background: transparent; color: #527264; font-size: .62rem; font-weight: 700; }
 .directory-bulk-actions button:hover:not(:disabled), .directory-more:hover { background: #e2eee5; color: #174c33; }
@@ -248,6 +250,7 @@ input[type="date"] { border: 1px solid #bfd0c4; background: white; color: #17312
 :root[data-color-scheme="dark"] .directory-bulk-actions button:hover:not(:disabled), :root[data-color-scheme="dark"] .directory-more:hover { background: #294638; color: #c9efd6; }
 :root[data-color-scheme="dark"] .directory-choice:hover, :root[data-color-scheme="dark"] .directory-choice.active { background: #294638; color: #c9efd6; }
 :root[data-color-scheme="dark"] .directory-rename-input { background: #17251d; border-color: #52705e; }
+:root[data-color-scheme="dark"] .directory-filter-input { background: #17251d; border-color: #52705e; }
 :root[data-color-scheme="dark"] .range-buttons button, :root[data-color-scheme="dark"] .agent-buttons button { background: #294a39; color: #c5e7d2; }
 :root[data-color-scheme="dark"] .refresh-icon, :root[data-color-scheme="dark"] .config-menu summary { background: rgba(25,44,35,.84); border-color: #42624f; color: #c5e7d2; }
 :root[data-color-scheme="dark"] .refresh-icon:hover, :root[data-color-scheme="dark"] .config-menu summary:hover, :root[data-color-scheme="dark"] .config-menu[open] summary { background: #294a39; color: white; }
