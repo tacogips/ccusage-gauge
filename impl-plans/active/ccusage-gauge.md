@@ -333,13 +333,13 @@ case is exercised directly rather than inferred from release-script `--help`.
 
 - `nix develop --command bun --version`
 - `cd frontend && bun run check`
-- `task frontend:build`
+- `mise run frontend:build`
 - `swift test --filter StaticAssetResolverTests`
 - `scripts/smoke-packaged-assets.sh --layout swiftpm`
 - `scripts/smoke-packaged-assets.sh --layout formula`
 - `scripts/smoke-packaged-assets.sh --layout cask`
 - `scripts/smoke-packaged-assets.sh --layout all --expect-missing-diagnostics`
-- `task build`
+- `mise run build`
 - `scripts/build-homebrew-release.sh --help`
 - `scripts/build-homebrew-cask-release.sh --help`
 
@@ -393,8 +393,8 @@ screenshot loop.
 
 **Verification**:
 
-- `task smoke:isolated-runtime`
-- `task smoke:dashboard`
+- `mise run smoke:isolated-runtime`
+- `mise run smoke:dashboard`
 - `scripts/smoke-isolated-runtime.sh`
 - `scripts/smoke-dashboard.sh --port 18081 --assets frontend/dist`
 - `CCUSAGE_GAUGE_LIVE_SMOKE=1 scripts/smoke-isolated-runtime.sh --live-ccusage`
@@ -426,13 +426,13 @@ criterion is met; otherwise leave it active with explicit blockers.
 **Verification**:
 
 - `cd frontend && bun run check`
-- `task frontend:build`
-- `task build`
-- `task test`
-- `task lint`
-- `task smoke:assets`
-- `task smoke:isolated-runtime`
-- `task smoke:dashboard`
+- `mise run frontend:build`
+- `mise run build`
+- `mise run test`
+- `mise run lint`
+- `mise run smoke:assets`
+- `mise run smoke:isolated-runtime`
+- `mise run smoke:dashboard`
 - `git diff --check`
 - `git status --short`
 - `git diff -- design-docs impl-plans`
@@ -512,7 +512,7 @@ criterion is met; otherwise leave it active with explicit blockers.
   management, shutdown/wait, same-port restart/final release, temporary path
   injection, explicit invalid-path exit 1, PATH-fallback rejection, and proof
   that operator config/state are unchanged. TASK-012 retains explicit frontend
-  typechecking, full task checks, documentation sync, and dated evidence.
+  typechecking, full mise run checks, documentation sync, and dated evidence.
 
 Future entries must use: `YYYY-MM-DD — TASK-NNN — status — changed deliverables
 — commands/results — blockers or next task`.

@@ -170,7 +170,7 @@ task is parallelizable.
 - `swift test list | rg 'Directory(DisplayName|Feature)'`
 - `swift test --filter DirectoryDisplayNameStoreTests`
 - `swift test --filter DirectoryFeature`
-- `task lint`
+- `mise run lint`
 - `git diff --check -- Sources/AppCore/DashboardStateStore.swift Sources/AppCore/DashboardDirectoryNameStore.swift Sources/AppCore/DashboardDirectoryAPI.swift Tests/AppCoreTests`
 
 ## TASK-002: Add Guarded Rename Routes on Both Router Surfaces
@@ -242,7 +242,7 @@ task is parallelizable.
 - `swift test --filter DirectoryDisplayNameRouteTests`
 - `swift test --filter DirectoryRouteRegressionTests`
 - `swift test --filter DirectoryFeature`
-- `task lint`
+- `mise run lint`
 - `find Sources Tests -name '*.swift' -type f -exec wc -l {} + | sort -nr | head`
 - `git diff --check -- Sources/AppCore Sources/AppCLI Sources/CCUsageGaugeMenuBar Tests/AppCoreTests`
 
@@ -303,7 +303,7 @@ task is parallelizable.
 **Verification**:
 
 - `cd frontend && bun test tests/api.test.ts tests/machineScope.test.ts tests/usageChart.test.ts tests/seriesColors.test.ts`
-- `task frontend:check`
+- `mise run frontend:check`
 - `git diff --check -- frontend/src/api.ts frontend/src/machineScope.ts frontend/src/usageChartSeries.ts frontend/src/seriesColors.ts frontend/tests`
 
 ## TASK-004: Integrate Inline Rename and Shared Labels in the Dashboard
@@ -366,8 +366,8 @@ task is parallelizable.
 **Verification**:
 
 - `cd frontend && bun test`
-- `task frontend:check`
-- `task frontend:build`
+- `mise run frontend:check`
+- `mise run frontend:build`
 - `git diff --check -- frontend/src frontend/tests Sources/AppCore/Resources/Web`
 
 ## TASK-005: Complete Integrated Verification, Assets, and Handoff
@@ -411,8 +411,8 @@ task is parallelizable.
 - [x] `swift build`, `swift test`, and `cd frontend && bun test` pass.
 - [x] Focused persistence, endpoint parity, explicit-name, cross-machine, and
   rename UI tests pass.
-- [x] `task frontend:check`, `task frontend:build`, `task smoke:assets`, and
-  `task lint` pass or an exact environment limitation is recorded.
+- [x] `mise run frontend:check`, `mise run frontend:build`, `mise run smoke:assets`, and
+  `mise run lint` pass or an exact environment limitation is recorded.
 - [x] Embedded assets match frontend source.
 - [x] No untrusted name/path enters errors or persistent logs.
 - [x] Both mutation surfaces prove pre-decoding guard parity.
@@ -428,12 +428,12 @@ task is parallelizable.
 - `swift test --filter DirectoryDisplayNameRouteTests`
 - `swift build`
 - `swift test`
-- `task lint`
+- `mise run lint`
 - `cd frontend && bun test tests/machineScope.test.ts tests/api.test.ts tests/usageChart.test.ts`
 - `cd frontend && bun test`
-- `task frontend:check`
-- `task frontend:build`
-- `task smoke:assets`
+- `mise run frontend:check`
+- `mise run frontend:build`
+- `mise run smoke:assets`
 - `find Sources Tests -name '*.swift' -type f -exec wc -l {} + | sort -nr | head`
 - `rg -n 'directory_name|invalid_directory_name|subdirectories/name|X-CCUsage-Gauge-Mutation' Sources Tests frontend`
 - `git diff --check`
@@ -658,9 +658,9 @@ task is parallelizable.
   full `bun test` passed 62 tests with 145 expectations and frontend typecheck
   passed — next TASK-005.
 - 2026-07-29 — TASK-005 — complete — `swift build`, full `swift test` (235
-  tests), full `bun test` (62 tests), `bun run check`, `task frontend:build`,
-  `task smoke:assets`, `git diff --check`, embedded-asset byte comparisons,
-  and line-count checks passed; `task lint` exited zero with warnings, then the
+  tests), full `bun test` (62 tests), `bun run check`, `mise run frontend:build`,
+  `mise run smoke:assets`, `git diff --check`, embedded-asset byte comparisons,
+  and line-count checks passed; `mise run lint` exited zero with warnings, then the
   new test warning was removed and focused lint on all new Swift files reported
   zero violations —
   synchronized `index-CQCw7eat.css` and `index-BCx7ObJE.js` — preserved the
@@ -674,11 +674,11 @@ task is parallelizable.
   identity/color, persisted-catalog refetch, and failed-save recovery —
   targeted `bun test tests/dashboardDirectoryState.test.ts` passed 9 tests,
   full `bun test` passed 65 tests with 163 expectations,
-  `task frontend:check`, `task frontend:build`, `swift build`, full
-  `swift test` (235 tests), `task lint`, and `git diff --check` passed;
+  `mise run frontend:check`, `mise run frontend:build`, `swift build`, full
+  `swift test` (235 tests), `mise run lint`, and `git diff --check` passed;
   both direct packaged-asset smoke commands exited zero and synchronized
   assets matched frontend output byte-for-byte — the combined
-  `task smoke:assets` wrapper exceeded its 60-second orchestration limit only
+  `mise run smoke:assets` wrapper exceeded its 60-second orchestration limit only
   after both smoke commands printed their pass results, so the two commands
   were rerun directly — next step is the repeated test-integrity gate.
 - 2026-07-29 — STEP-7-ADVERSARIAL-REVISION — complete — made
@@ -735,7 +735,7 @@ task is parallelizable.
   tests in 2 suites, full `swift test` passed 238 tests in 55 suites, focused
   frontend tests passed 27 tests with 81 expectations, full `bun test` passed
   71 tests with 184 expectations, and TypeScript emitted no errors before the
-  environment wrapper timeout; `task frontend:build`, both packaged-asset
+  environment wrapper timeout; `mise run frontend:build`, both packaged-asset
   smoke modes, `diff -qr frontend/dist Sources/AppCore/Resources/Web`, and
   `git diff --check` passed; focused SwiftLint emitted no findings before the
   wrapper timeout; synchronized `index-CQCw7eat.css` and
@@ -814,7 +814,7 @@ task is parallelizable.
   targeted frontend tests passed 43 tests with 132 expectations; full `swift
   test` passed 248 tests in 55 suites before the command wrapper timeout; full
   `bun test` passed 75 tests with 201 expectations; `bun run check`, `swift
-  build`, `task frontend:build`, both packaged-asset smoke modes, `diff -qr
+  build`, `mise run frontend:build`, both packaged-asset smoke modes, `diff -qr
   frontend/dist Sources/AppCore/Resources/Web`, and `git diff --check` passed;
   full SwiftLint completed with the existing 35 warnings and 0 serious
   violations; touched production Swift files remain below 1000 lines —
@@ -878,7 +878,7 @@ task is parallelizable.
   Swift tests passed 29 tests in 3 suites; targeted frontend tests passed 47
   tests with 144 expectations; `swift build` and full `swift test` passed 255
   tests in 55 suites; full `bun test` passed 79 tests with 213 expectations;
-  `bun run check`, `task frontend:build`, both packaged-asset smoke modes,
+  `bun run check`, `mise run frontend:build`, both packaged-asset smoke modes,
   embedded-asset comparison, and `git diff --check` passed; focused SwiftLint
   found 0 violations and full SwiftLint completed with 35 pre-existing warnings
   and 0 serious violations; production Swift files remain below 1000 lines;
@@ -895,7 +895,7 @@ task is parallelizable.
   warning contract — focused frontend tests passed 14 tests with 59
   expectations; full frontend tests passed 80 tests with 220 expectations;
   the direct TypeScript compiler check passed with 0 errors after the `bun run
-  check` wrapper timed out; `task frontend:build`, both packaged-asset smoke
+  check` wrapper timed out; `mise run frontend:build`, both packaged-asset smoke
   modes, embedded-asset comparison, and `git diff --check` passed; synchronized
   `index-CQCw7eat.css` and `index-Dfav_8ML.js` — the Step 6 self-review `mid`
   finding is addressed; mounted Solid DOM rename ordering, timer-driven cleanup

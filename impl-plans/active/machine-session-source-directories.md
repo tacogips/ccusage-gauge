@@ -76,7 +76,7 @@ fencing.
   responsibility before adding behavior; create new focused test files instead
   of extending near-limit test files.
 - Use existing SwiftPM targets and injected process/filesystem seams.
-- After each Swift task, run the narrowest relevant tests and `task lint`.
+- After each Swift task, run the narrowest relevant tests and `mise run lint`.
 - A focused suite must appear in `swift test list` before an exact
   `swift test --filter <SuiteName>` result is accepted; a zero-test match fails
   verification.
@@ -170,7 +170,7 @@ every later task.
 - `swift test list | rg "MachineSessionSourceRegistryTests|Machine registry transaction"`
 - `swift test --filter MachineSessionSourceRegistryTests`
 - `swift test --filter MachineRegistryTransactionTests`
-- `task lint`
+- `mise run lint`
 
 ## TASK-002: Build Per-attempt Source Plans and Local Multi-root Loading
 
@@ -231,7 +231,7 @@ collection and cache fencing.
 - `swift test list | rg "MachineSessionSourcePlanTests|MultiRootUsageEventTests"`
 - `swift test --filter MachineSessionSourcePlanTests`
 - `swift test --filter MultiRootUsageEventTests`
-- `task lint`
+- `mise run lint`
 
 ## TASK-003: Add Isolated Multi-source Commands, Cache Fingerprints, and Fencing
 
@@ -315,7 +315,7 @@ must be completed as one coherent collection contract.
 - `swift test --filter MultiSourceCommandTests`
 - `swift test --filter SourceFingerprintCacheTests`
 - `swift test --filter CCUsageCommandRunnerTests`
-- `task lint`
+- `mise run lint`
 
 ## TASK-004: Extend Machine HTTP Contracts and Runtime Mutation
 
@@ -379,7 +379,7 @@ by CLI and frontend work.
 - `swift test list | rg "MachineSessionSourceAPITests|Machine registry transaction"`
 - `swift test --filter MachineSessionSourceAPITests`
 - `swift test --filter MachineRegistryTransactionTests`
-- `task lint`
+- `mise run lint`
 
 ## TASK-005: Add CLI Source Creation, Update, and Rendering
 
@@ -425,7 +425,7 @@ by CLI and frontend work.
 - `swift test --filter RendererTests`
 - `swift test --filter ClientServerRoundTripTests`
 - `swift run ccusage-gauge client machines update --help`
-- `task lint`
+- `mise run lint`
 
 ## TASK-006: Add Dashboard Source Editors and Error Mapping
 
@@ -447,7 +447,7 @@ by CLI and frontend work.
 - `frontend/tests/machineActions.test.ts`
 - `frontend/tests/machineAdminPanel.test.ts`
 - generated `Sources/AppCore/Resources/Web/` assets only through
-  `task frontend:build`
+  `mise run frontend:build`
 
 **Parallelizable**: Yes, with TASK-005 after TASK-004.
 
@@ -476,9 +476,9 @@ by CLI and frontend work.
 
 **Verification**:
 
-- `task frontend:check`
-- `task frontend:test`
-- `task frontend:build`
+- `mise run frontend:check`
+- `mise run frontend:test`
+- `mise run frontend:build`
 - `git diff --check`
 
 ## TASK-007: Complete Cross-boundary Verification and Documentation
@@ -534,12 +534,12 @@ by CLI and frontend work.
 
 **Verification**:
 
-- `task lint`
+- `mise run lint`
 - `swift build`
 - `swift test`
-- `task frontend:check`
-- `task frontend:test`
-- `task frontend:build`
+- `mise run frontend:check`
+- `mise run frontend:test`
+- `mise run frontend:build`
 - `find Sources Tests -name '*.swift' -type f -exec wc -l {} + | sort -nr | head`
 - `rg -n "CODEX_HOME|CLAUDE_CONFIG_DIR|remoteCcusagePath|stderr" Sources frontend/src`
 - `git diff --check`
@@ -580,9 +580,9 @@ by CLI and frontend work.
 - 2026-07-27: TASK-007 verification completed. `swift build` passed;
   `swift test --skip-build` passed 199 tests in 44 suites; focused
   `swift test --filter MultiSourceCommandTests` passed 5 tests after the final
-  multi-directory assertion update; `task frontend:check` passed;
-  `task frontend:test` passed 30 tests; `task frontend:build` passed and
-  synchronized packaged assets; `task lint` passed with 0 serious violations
+  multi-directory assertion update; `mise run frontend:check` passed;
+  `mise run frontend:test` passed 30 tests; `mise run frontend:build` passed and
+  synchronized packaged assets; `mise run lint` passed with 0 serious violations
   and 32 warnings; CLI update help, `git diff --check`, line-count audit, and
   version-diff audit passed. API create/patch/read is covered by
   `MachineSessionSourceAPITests`; no live server or SSH host was required.

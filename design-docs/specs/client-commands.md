@@ -210,6 +210,6 @@ custom entry point maps parse/validation failures to the established exit code
 - server/client round trip for add, update, list, and representative dashboard
   reads;
 - renderer tests for machine and dashboard text output;
-- `task lint`, `swift test`, `swift build`, `task frontend:check`,
-  `task frontend:test`, `task frontend:build`, and executable help/smoke
+- `mise run lint`, `swift test`, `swift build`, `mise run frontend:check`,
+  `mise run frontend:test`, `mise run frontend:build`, and executable help/smoke
   commands.

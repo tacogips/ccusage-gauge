@@ -77,7 +77,7 @@ default chart path.
   existing response and rendering paths.
 - Use injected clocks, calendars, loaders, caches, and stores for deterministic
   range, backfill, rollback, and retry coverage.
-- After Swift edits, run the narrowest relevant test and `task lint` when
+- After Swift edits, run the narrowest relevant test and `mise run lint` when
   available. Confirm a focused suite appears in `swift test list` before
   accepting an exact `swift test --filter <SuiteName>` result.
 - After every task, append a dated Progress Log entry containing task status,
@@ -156,7 +156,7 @@ snapshot, cache, query, API, and frontend work.
 
 - `swift test list | rg 'UsageDirectoryEventTests'`
 - `swift test --filter UsageDirectoryEventTests`
-- `task lint`
+- `mise run lint`
 - `git diff --check -- Sources/AppCore/CCUsage.swift Sources/AppCore/ClaudeUsageEvents.swift Sources/AppCore/CodexUsageEvents.swift Tests/AppCoreTests/UsageDirectoryEventTests.swift`
 
 ## TASK-002: Thread Provenance through Snapshots, Range Loading, and Cache
@@ -231,7 +231,7 @@ TypeScript/test write scopes are disjoint.
 - `swift test --filter DirectorySnapshotTests`
 - `swift test --filter DirectoryCacheMigrationTests`
 - `swift test --filter DirectoryRangeLoadingTests`
-- `task lint`
+- `mise run lint`
 - `find Sources Tests -name '*.swift' -type f -exec wc -l {} + | sort -nr | head`
 - `git diff --check -- Sources/AppCore Tests/AppCoreTests`
 
@@ -312,7 +312,7 @@ defines the server contract used by UI integration.
 - `swift test --filter DashboardDirectoryQueryTests`
 - `swift test --filter MachineDirectoryAPITests`
 - `swift test --filter LegacyDirectoryAPITests`
-- `task lint`
+- `mise run lint`
 - `rg -n 'directory|directoryBreakdown|subdirectories' Sources/AppCore Tests/AppCoreTests`
 - `git diff --check -- Sources/AppCore Tests/AppCoreTests`
 
@@ -372,7 +372,7 @@ in scope.
 **Verification**:
 
 - `cd frontend && bun test tests/api.test.ts tests/machineScope.test.ts tests/seriesColors.test.ts`
-- `task frontend:check`
+- `mise run frontend:check`
 - `git diff --check -- frontend/src frontend/tests`
 
 ## TASK-005: Integrate Nested Filters and Subdirectory Chart Mode
@@ -437,8 +437,8 @@ in scope.
 **Verification**:
 
 - `cd frontend && bun test`
-- `task frontend:check`
-- `task frontend:build`
+- `mise run frontend:check`
+- `mise run frontend:build`
 - `git diff --check -- frontend/src frontend/tests Sources/AppCore/Resources/Web`
 
 ## TASK-006: Complete Integrated Verification and Documentation
@@ -479,7 +479,7 @@ in scope.
 6. Update design documentation only when implementation reveals a
    behavior-preserving clarification. Escalate any contract change for design
    review rather than silently editing the accepted behavior.
-7. Complete all task checkboxes and record exact command outcomes, unavailable
+7. Complete all mise run checkboxes and record exact command outcomes, unavailable
    tooling, residual risks, and implementation handoff in the Progress Log.
 
 **Completion Criteria**:
@@ -497,12 +497,12 @@ in scope.
 
 - `swift build`
 - `swift test`
-- `task lint`
-- `task test:coverage`
+- `mise run lint`
+- `mise run test:coverage`
 - `cd frontend && bun test`
-- `task frontend:check`
-- `task frontend:build`
-- `task smoke:assets`
+- `mise run frontend:check`
+- `mise run frontend:build`
+- `mise run smoke:assets`
 - `find Sources Tests -name '*.swift' -type f -exec wc -l {} + | sort -nr | head`
 - `git diff --check`
 - `git diff --stat`
@@ -593,11 +593,11 @@ in scope.
   filters, clear-on-uncheck behavior, consistent metrics/cost/budget filtering,
   default-off subdirectory stacking, persisted-state fallback, unattributed
   series, and machine-qualified multi-machine labels — `cd frontend && bun
-  test` passed 52 tests in 11 files; `task frontend:build` and `task
+  test` passed 52 tests in 11 files; `mise run frontend:build` and `task
   smoke:assets` passed — TASK-006 followed.
 - 2026-07-28 — TASK-006 — complete — `swift build` passed; full `swift test`
-  and coverage execution passed 227 tests in 53 suites; `task test:coverage`
-  reported 82.78% executable line coverage (10059/12151); `task lint` completed
+  and coverage execution passed 227 tests in 53 suites; `mise run test:coverage`
+  reported 82.78% executable line coverage (10059/12151); `mise run lint` completed
   with 35 warnings and 0 serious violations; frontend
   typecheck, build, tests, packaged-asset smoke checks, privacy search, and
   `git diff --check` passed — touched non-generated Swift source files remain
@@ -620,8 +620,8 @@ in scope.
   rollback/retry regression now supplies a conflicting incoming daily metric
   and proves the authoritative daily row and total remain unchanged after both
   failure and successful retry — focused SQLite regressions, `swift build`,
-  full `swift test` (227 tests in 53 suites), `task test:coverage` (82.78%,
-  10059/12151), `task lint` (35 warnings, 0 serious violations), frontend tests
+  full `swift test` (227 tests in 53 suites), `mise run test:coverage` (82.78%,
+  10059/12151), `mise run lint` (35 warnings, 0 serious violations), frontend tests
   (52 tests), typecheck, asset build/smoke, and diff checks passed — the
   remaining mid finding is resolved; independent Step 7 review is next.
 - 2026-07-28 — IMPLEMENTATION-TEST-INTEGRITY-REVISION — complete — addressed
@@ -631,10 +631,10 @@ in scope.
   integration-state coverage plus legacy and machine-aware HTTP route
   regressions for filtered metrics, daily cost, budget, active selections, and
   stale out-of-scope selections — `swift build` passed; `swift test` passed 229
-  tests in 53 suites; `task test:coverage` passed at 82.74% (10054/12151);
-  `task lint` completed with 35 warnings and 0 serious violations; `cd frontend
+  tests in 53 suites; `mise run test:coverage` passed at 82.74% (10054/12151);
+  `mise run lint` completed with 35 warnings and 0 serious violations; `cd frontend
   && bun test` passed 56 tests in 12 files; direct TypeScript checking and
-  `task frontend:build` passed; both packaged-asset smoke modes reported
+  `mise run frontend:build` passed; both packaged-asset smoke modes reported
   passed, although the task wrapper remained open until the external timeout
   after emitting both success results; diff and line-count checks passed — the
   Step 6 test-integrity mid finding is resolved; independent review is next.

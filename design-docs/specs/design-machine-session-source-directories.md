@@ -357,12 +357,12 @@ Required automated coverage includes:
 Verification commands:
 
 ```text
-task lint
+mise run lint
 swift build
 swift test
-task frontend:check
-task frontend:test
-task frontend:build
+mise run frontend:check
+mise run frontend:test
+mise run frontend:build
 git status --short
 ```
 

@@ -1,0 +1,206 @@
+min_version = "2026.8.3"
+
+[[hooks.enter]]
+shell = "bash"
+script = '''
+if command -v kinko >/dev/null 2>&1 && kinko hook --help >/dev/null 2>&1; then
+  eval "$(kinko --path "$MISE_PROJECT_ROOT" hook enter bash)"
+fi
+'''
+
+[[hooks.leave]]
+shell = "bash"
+script = '''
+if command -v kinko >/dev/null 2>&1 && kinko hook --help >/dev/null 2>&1; then
+  eval "$(kinko hook leave bash)"
+fi
+'''
+
+[tools]
+swift = "6.3.3"
+swiftlint = "latest"
+gitleaks = "latest"
+bun = "latest"
+github-cli = "latest"
+
+[tasks."default"]
+description = "Show available tasks"
+run = '''
+mise tasks ls
+'''
+
+[tasks."build"]
+description = "Build the Swift package"
+depends = ["frontend:build"]
+run = '''
+swift build
+'''
+
+[tasks."run"]
+description = "Run the executable"
+run = '''
+swift run ccusage-gauge "$@"
+'''
+
+[tasks."app:build"]
+description = "Build an ad-hoc signed local macOS app bundle with the application icon"
+depends = ["frontend:build"]
+run = '''
+scripts/build-local-app.sh
+'''
+
+[tasks."app:run"]
+description = "Build and launch the local macOS menu-bar app bundle"
+depends = ["app:build"]
+run = '''
+open .build/CCUsageGauge.app
+'''
+
+[tasks."test"]
+description = "Run Swift tests"
+run = '''
+swift test
+'''
+
+[tasks."test:coverage"]
+description = "Enforce at least 80 percent executable line coverage for AppCore and AppCLI"
+run = '''
+scripts/test-coverage.sh
+'''
+
+[tasks."clean"]
+description = "Clean SwiftPM and release artifacts"
+run = '''
+rm -rf .build dist release
+'''
+
+[tasks."lint"]
+description = "Run SwiftLint when available"
+run = '''
+swiftlint
+'''
+
+[tasks."frontend:install"]
+description = "Install pinned dashboard dependencies"
+dir = "frontend"
+run = '''
+bun install --frozen-lockfile
+'''
+
+[tasks."frontend:check"]
+description = "Typecheck the SolidJS dashboard"
+depends = ["frontend:install"]
+dir = "frontend"
+run = '''
+bun run check
+'''
+
+[tasks."frontend:test"]
+description = "Run deterministic dashboard unit tests"
+depends = ["frontend:install"]
+dir = "frontend"
+run = '''
+bun test
+'''
+
+[tasks."frontend:build"]
+description = "Build and synchronize the SolidJS dashboard assets"
+depends = ["frontend:install"]
+dir = "frontend"
+run = '''
+bun run build
+../scripts/sync-frontend-assets.sh
+'''
+
+[tasks."smoke:assets"]
+description = "Verify supported packaged dashboard asset layouts"
+depends = ["frontend:build"]
+run = '''
+scripts/smoke-packaged-assets.sh --layout all
+scripts/smoke-packaged-assets.sh --layout all --expect-missing-diagnostics
+'''
+
+[tasks."smoke:isolated-runtime"]
+description = "Verify isolated config/state and invalid explicit ccusage behavior"
+run = '''
+scripts/smoke-isolated-runtime.sh
+'''
+
+[tasks."smoke:dashboard"]
+description = "Verify dashboard routes, shutdown, and same-port restart"
+depends = ["frontend:build"]
+run = '''
+scripts/smoke-dashboard.sh --port 18181 --assets frontend/dist
+'''
+
+[tasks."emulation:config"]
+description = "Validate the standalone Docker Compose remote-machine topology"
+run = '''
+docker compose -f deploy/emulation/compose.yaml config
+'''
+
+[tasks."smoke:remote-machines"]
+description = "Verify remote-machine collection and ephemeral credential isolation under Colima"
+run = '''
+scripts/smoke-remote-machines.sh
+'''
+
+[tasks."e2e:build"]
+description = "Build an isolated macOS app bundle for fixture, missing, or unreachable E2E testing"
+run = '''
+scripts/build-e2e-app.sh "$@"
+'''
+
+[tasks."build:homebrew"]
+description = "Build standalone Homebrew formula archives for the current platform, or pass targets after --"
+run = '''
+scripts/build-homebrew-release.sh "$@"
+'''
+
+[tasks."homebrew:formula"]
+description = "Render Formula/ccusage-gauge.rb from dist/homebrew checksums"
+run = '''
+scripts/render-homebrew-formula.sh "$@"
+'''
+
+[tasks."homebrew:tap-formula"]
+description = "Render the formula into the default sibling Homebrew tap checkout"
+run = '''
+set -euo pipefail
+if [ -z "$*" ]; then
+  echo "usage: mise run homebrew:tap-formula -- <version>" >&2
+  exit 2
+fi
+scripts/render-homebrew-formula.sh "$*" "../homebrew-tap/Formula/ccusage-gauge.rb"
+
+'''
+
+[tasks."build:homebrew-cask"]
+description = "Build signed and notarized Homebrew Cask app archives, or pass targets after --"
+run = '''
+scripts/build-homebrew-cask-release.sh "$@"
+'''
+
+[tasks."homebrew:cask"]
+description = "Render Casks/ccusage-gauge.rb from dist/homebrew-cask checksums"
+run = '''
+scripts/render-homebrew-cask.sh "$@"
+'''
+
+[tasks."homebrew:tap-cask"]
+description = "Render the cask into the default sibling Homebrew tap checkout"
+run = '''
+set -euo pipefail
+if [ -z "$*" ]; then
+  echo "usage: mise run homebrew:tap-cask -- <version>" >&2
+  exit 2
+fi
+scripts/render-homebrew-cask.sh "$*" "../homebrew-tap/Casks/ccusage-gauge.rb"
+
+'''
+
+[tasks."release:homebrew-cask-local"]
+description = "Build, notarize, upload, and render the sibling tap cask for a v<version> tag"
+run = '''
+scripts/release-homebrew-cask-local.sh "$@"
+'''

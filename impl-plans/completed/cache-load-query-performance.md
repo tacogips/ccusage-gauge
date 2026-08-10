@@ -138,7 +138,7 @@ when `beginRangeLoad`/`refresh`/`clearCache` start.
 
 **Parallelizable**: No (final)
 
-- Run `task test` (Swift) and frontend tests; run `swiftlint` on touched files.
+- Run `mise run test` (Swift) and frontend tests; run `swiftlint` on touched files.
 - Manual timing note in the Progress Log: measure `/api/cost-series?range=month&machine=all`
   latency before/after on a warm cache, and a range switch with all coverage
   already loaded (expect no ccusage spawn; verify via absence of collection

@@ -194,7 +194,7 @@ for SSH descriptors.
 
 - `cd frontend && bun test tests/machineActions.test.ts`
 - `cd frontend && bun test`
-- `task frontend:check`
+- `mise run frontend:check`
 
 ## TASK-003: Preserve Unavailable Cost-Series State and Render Graph Overlays
 
@@ -257,7 +257,7 @@ disjoint after TASK-002.
 - `swift test --filter MachineUnavailableResponseTests`
 - `cd frontend && bun test tests/costSeriesState.test.ts`
 - `cd frontend && bun test tests/usageChart.test.tsx`
-- `task frontend:check`
+- `mise run frontend:check`
 - `swiftlint Sources Tests` when backend Swift changes
 
 ## TASK-004: Add Complete Existing-Machine SSH and Proxy Editing
@@ -311,7 +311,7 @@ disjoint after TASK-002.
 
 - `cd frontend && bun test tests/machineForm.test.ts`
 - `cd frontend && bun test tests/machineAdminPanel.test.tsx`
-- `task frontend:check`
+- `mise run frontend:check`
 
 ## TASK-005: Integrate, Package, and Close the Four Findings
 
@@ -374,16 +374,16 @@ disjoint after TASK-002.
 
 **Verification**:
 
-- `task test`
-- `task test:coverage`
-- `task lint`
-- `task frontend:test`
-- `task frontend:check`
-- `task frontend:build`
+- `mise run test`
+- `mise run test:coverage`
+- `mise run lint`
+- `mise run frontend:test`
+- `mise run frontend:check`
+- `mise run frontend:build`
 - `nix flake check`
-- `task smoke:isolated-runtime`
-- `task smoke:dashboard`
-- `task smoke:remote-machines`
+- `mise run smoke:isolated-runtime`
+- `mise run smoke:dashboard`
+- `mise run smoke:remote-machines`
 - `git diff --check`
 - `rg --files -g '*.swift' | xargs wc -l | sort -nr`
 - `git status --short`
@@ -447,11 +447,11 @@ and requires serial execution.
 - 2026-07-24: Plan created for workflow session 629. Status is Ready for
   Implementation. No implementation code, commit, or push performed.
 - 2026-07-24: F-001 through F-004 implemented and independently reverified.
-  `task test` passed 151 tests in 36 suites; `task frontend:test` passed 22
-  tests; `task frontend:check`, `task frontend:build`, `task build`,
-  `nix flake check`, `nix develop -c task lint`, `task smoke:assets`,
-  `task smoke:isolated-runtime`, `task smoke:dashboard`,
-  `task smoke:remote-machines`, and `git diff --check` passed. SwiftLint
+  `mise run test` passed 151 tests in 36 suites; `mise run frontend:test` passed 22
+  tests; `mise run frontend:check`, `mise run frontend:build`, `mise run build`,
+  `nix flake check`, `nix develop -c mise run lint`, `mise run smoke:assets`,
+  `mise run smoke:isolated-runtime`, `mise run smoke:dashboard`,
+  `mise run smoke:remote-machines`, and `git diff --check` passed. SwiftLint
   reported 29 warnings and zero serious violations. All source Swift files and
   `frontend/src/App.tsx` remain below 1000 lines. The implementation remains
   provider-neutral; GCE/IAP occur only as motivating documentation examples and
@@ -462,8 +462,8 @@ and requires serial execution.
 - 2026-07-24: Closeout completed after Swift 6.3 coverage compatibility,
   cache-lifecycle and mutation-policy coverage, unavailable-scope regression
   tests, all-unavailable UI handling, and hardened bootstrap-log fallback/write
-  behavior were added. `task test` passed 164 tests in 37 suites;
-  `task test:coverage` passed at 80.22% (7124/8881); frontend tests passed 24
+  behavior were added. `mise run test` passed 164 tests in 37 suites;
+  `mise run test:coverage` passed at 80.22% (7124/8881); frontend tests passed 24
   tests; frontend typecheck/build, Swift build, Nix-shell SwiftLint (32
   warnings, zero serious), `nix flake check`, all asset/isolated/dashboard/remote
   smoke tests, Formula and Cask dry runs, and `git diff --check` passed. Riela

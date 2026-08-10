@@ -45,7 +45,7 @@ nonexistent path; a directory that exists but has an empty `sessions/` /
 `projects/` substructure yields empty data with exit 0. Make the stub exit 1
 on nonexistent dirs too — a lenient stub hid exactly this integration break
 once. After API-level checks pass, also launch the real menu-bar app
-(`task app:run`) against the real ccusage at least once.
+(`mise run app:run`) against the real ccusage at least once.
 
 ## Useful endpoints
 
