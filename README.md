@@ -171,17 +171,17 @@ below; it is not the application installation package.
 ## Development
 
 ```bash
-nix develop
-task build
-task test
-task app:build
-task app:run
+mise install
+mise run build
+mise run test
+mise run app:build
+mise run app:run
 swift run ccusage-gauge --help
 swift run ccusage-gauge-menubar
 ```
 
-`task app:build` creates an ad-hoc signed `.build/CCUsageGauge.app` bundle with
-`Resources/AppIcon.icns`. `task app:run` builds and launches that menu-bar app.
+`mise run app:build` creates an ad-hoc signed `.build/CCUsageGauge.app` bundle with
+`Resources/AppIcon.icns`. `mise run app:run` builds and launches that menu-bar app.
 Because it is an `LSUIElement` utility, it uses the icon in Finder and launch
 surfaces but intentionally does not remain in the Dock.
 
@@ -330,9 +330,9 @@ and host private keys live only in service-scoped tmpfs mounts and are transferr
 through non-logging pipes; the collector HTTP port is not published.
 
 ```bash
-task emulation:config
-task smoke:remote-machines
-task test:coverage
+mise run emulation:config
+mise run smoke:remote-machines
+mise run test:coverage
 ```
 
 If Colima, Docker, Compose, host-gateway, or tmpfs support is unavailable, the
@@ -449,14 +449,14 @@ into public reports.
 Build an isolated app bundle with a deterministic `ccusage` fixture:
 
 ```bash
-task e2e:build -- fixture
+mise run e2e:build -- fixture
 ```
 
 Build the partial-success scenario with the same local fixture and a registered
 SSH machine at the reserved non-routable address `192.0.2.1`:
 
 ```bash
-task e2e:build -- unreachable
+mise run e2e:build -- unreachable
 ```
 
 The Computer Use scenarios and recorded evidence are under
@@ -468,19 +468,19 @@ not touch the operator's production files.
 Build local formula archives:
 
 ```bash
-task build:homebrew -- darwin-arm64 darwin-x64
+mise run build:homebrew -- darwin-arm64 darwin-x64
 ```
 
 Render a formula after both platform archives exist:
 
 ```bash
-task homebrew:formula -- 0.1.8
+mise run homebrew:formula -- 0.1.8
 ```
 
 Render directly into the default sibling tap checkout:
 
 ```bash
-task homebrew:tap-formula -- 0.1.8
+mise run homebrew:tap-formula -- 0.1.8
 ```
 
 Install from the tap after the formula is published:
@@ -500,27 +500,27 @@ Apple signing credentials must stay local and must not be committed.
 Check the build plan:
 
 ```bash
-task build:homebrew-cask -- --dry-run darwin-arm64 darwin-x64
+mise run build:homebrew-cask -- --dry-run darwin-arm64 darwin-x64
 ```
 
 Build with local signing credentials:
 
 ```bash
 kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID -- \
-  task build:homebrew-cask -- darwin-arm64 darwin-x64
+  mise run build:homebrew-cask -- darwin-arm64 darwin-x64
 ```
 
 Render a Cask:
 
 ```bash
-task homebrew:cask -- 0.1.8
+mise run homebrew:cask -- 0.1.8
 ```
 
 For a tagged release, build, upload, and render the tap Cask:
 
 ```bash
 kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID -- \
-  task release:homebrew-cask-local -- v0.1.8
+  mise run release:homebrew-cask-local -- v0.1.8
 ```
 
 See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.

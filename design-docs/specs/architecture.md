@@ -576,7 +576,7 @@ Implementation proceeds in dependency order: documentation; `AppCore` contracts
 and tests; menu-bar integration; web service and API; frontend and packaging;
 then full verification and documentation synchronization. Narrow target builds
 and tests run after each Swift milestone, followed by `swiftlint`. The final gate
-includes `task frontend:build`, `task build`, `task test`, CLI smoke checks,
+includes `mise run frontend:build`, `mise run build`, `mise run test`, CLI smoke checks,
 loopback HTTP checks, and release-scaffolding checks.
 
 The feature must not disturb existing Homebrew formula or Cask scripts. Built
@@ -584,8 +584,8 @@ frontend assets must have an explicit packaged-resource location for both releas
 forms. No commit or push is implied by this design.
 
 Remote-machine rollout additionally requires `swift build`, `swift test`,
-`task test:coverage`, a clean `cd frontend && bun install && bun run build`,
-and `bash scripts/smoke-remote-machines.sh`. `task test:coverage` is the single
+`mise run test:coverage`, a clean `cd frontend && bun install && bun run build`,
+and `bash scripts/smoke-remote-machines.sh`. `mise run test:coverage` is the single
 repository-supported unit-coverage command: it runs SwiftPM with coverage,
 reports executable line coverage for `Sources/AppCore` and `Sources/AppCLI`
 while excluding tests, generated code, and copied web resources, and fails

@@ -1,6 +1,6 @@
 ---
 name: homebrew-release
-description: Use when building, validating, publishing, or tap-rendering Homebrew formula tarball releases for this Swift project, including scripts/build-homebrew-release.sh, scripts/render-homebrew-formula.sh, and task build:homebrew or homebrew:formula commands.
+description: Use when building, validating, publishing, or tap-rendering Homebrew formula tarball releases for this Swift project, including scripts/build-homebrew-release.sh, scripts/render-homebrew-formula.sh, and mise run build:homebrew or homebrew:formula commands.
 ---
 
 # Homebrew Release
@@ -39,23 +39,23 @@ contract.
 Build:
 
 ```bash
-task build
-task test
-task build:homebrew -- darwin-arm64 darwin-x64
+mise run build
+mise run test
+mise run build:homebrew -- darwin-arm64 darwin-x64
 ```
 
 Render locally:
 
 ```bash
 version="$(tr -d '[:space:]' < VERSION)"
-task homebrew:formula -- "$version"
+mise run homebrew:formula -- "$version"
 ```
 
 Render into the default sibling tap:
 
 ```bash
 version="$(tr -d '[:space:]' < VERSION)"
-task homebrew:tap-formula -- "$version"
+mise run homebrew:tap-formula -- "$version"
 ```
 
 For a custom tap path:
@@ -100,3 +100,13 @@ brew test user/tap/ccusage-gauge
 
 If online audit fails because of local GitHub credentials or rate limits, run a
 non-online audit and report the limitation.
+
+## Tap API Metadata Gate
+
+After pushing the tap Formula, require the tap's `update-api-metadata.yml`
+workflow to succeed for that commit. Derive the GitHub tap repository from
+`user/tap`, wait for the matching workflow run, then
+verify `api/formula/ccusage-gauge.json` from
+GitHub Raw. The JSON release is incomplete unless `.versions.stable` equals the
+release version and `.ruby_source_checksum.sha256` equals the SHA-256 of the
+committed Formula Ruby file.

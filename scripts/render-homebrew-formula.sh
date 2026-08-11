@@ -87,7 +87,6 @@ class App < Formula
 
   def install
     bin.install "bin/$product"
-    share.install "share/ccusage-gauge"
   end
 
   test do
