@@ -19,7 +19,6 @@ node_modules/
 frontend/.bun/
 
 # Local environment files
-.pre-commit-config.yaml
 **/.env
 **/*.private*
 
