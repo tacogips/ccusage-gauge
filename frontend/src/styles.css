@@ -128,14 +128,17 @@ input[type="date"] { border: 1px solid #bfd0c4; background: white; color: #17312
 .stats strong { font-size: 1.48rem; }
 .machine-health-panel { display: grid; gap: 8px; margin: 4px 0 10px; }
 .machine-health-item { padding: 13px 15px; border: 1px solid #e4b47d; border-left: 5px solid #bf681e; border-radius: 13px; background: #fff8ed; display: grid; grid-template-columns: minmax(180px, 1fr) minmax(320px, 1.7fr); gap: 14px; }
+.machine-health-item.collecting { border-color: #9ac8ad; border-left-color: #2f7a55; background: #f1faf4; }
 .machine-health-item.error { border-color: #df9a91; border-left-color: #a83b2d; background: #fff1ee; }
 .machine-health-item.disabled { border-color: #bdc9c1; border-left-color: #74877b; background: #f2f5f2; }
 .machine-health-item > div { display: grid; align-content: start; gap: 4px; }
 .machine-health-heading { display: flex; align-items: center; gap: 7px; }
+.machine-collecting-icon { width: 17px; height: 17px; flex: 0 0 auto; fill: none; stroke: #2f7a55; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .machine-health-item span, .machine-health-item dt, .machine-health-item dd, .excluded-machines { color: #688076; font-size: .72rem; }
 .machine-health-detail, .machine-health-remediation, .machine-health-exclusion { margin: 2px 0 0; color: #536b61; font-size: .72rem; line-height: 1.45; }
 .machine-health-remediation { padding: 7px 9px; border-radius: 8px; background: rgba(191,104,30,.09); color: #7f4218; }
 .machine-health-exclusion { font-weight: 700; color: #8c4a19; }
+.machine-health-collection { margin: 2px 0 0; color: #2f6b4b; font-size: .72rem; font-weight: 700; line-height: 1.45; }
 .machine-health-item dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 8px; }
 .machine-health-item dt { font-weight: 800; }
 .machine-health-item dd { margin: 0; }
@@ -260,6 +263,7 @@ input[type="date"] { border: 1px solid #bfd0c4; background: white; color: #17312
 :root[data-color-scheme="dark"] .axis-backdrop { fill: rgba(25,44,35,.96); }
 :root[data-color-scheme="dark"] input[type="date"], :root[data-color-scheme="dark"] .metric-selector select, :root[data-color-scheme="dark"] .machine-filter select, :root[data-color-scheme="dark"] .machine-form input, :root[data-color-scheme="dark"] .machine-form select { background: #183126; border-color: #42624f; color: white; }
 :root[data-color-scheme="dark"] .machine-health-item { background: #3a2b1d; border-color: #78532d; }
+:root[data-color-scheme="dark"] .machine-health-item.collecting { background: #20372a; border-color: #426f54; }
 :root[data-color-scheme="dark"] .machine-health-item.error { background: #3a211e; border-color: #744039; }
 :root[data-color-scheme="dark"] .machine-health-item.disabled { background: #26342b; border-color: #465b4d; }
 :root[data-color-scheme="dark"] .machine-event-marker, :root[data-color-scheme="dark"] .machine-gap-marker { background: #263a2e; border-color: #42624f; color: #c5e7d2; }

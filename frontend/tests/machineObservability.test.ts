@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { actionRefetchTargets, isMachineExcluded, machineHealthDiagnosticContent, machineHealthSummary } from "../src/machineObservability";
+import {
+  actionRefetchTargets,
+  isMachineExcluded,
+  machineHealthDiagnosticContent,
+  machineHealthSummary,
+  reportableExcludedMachineIDs,
+} from "../src/machineObservability";
 import type { MachineStatus } from "../src/api";
 
 const status = (collectionState: MachineStatus["collectionState"]): MachineStatus => ({
@@ -50,7 +56,30 @@ describe("machine observability", () => {
       remediation: "Verify the trusted host identity for the configured endpoint.",
       unavailableSince: "2026-07-24T00:20:00.000Z",
       excluded: true,
+      collecting: false,
     });
+  });
+
+  test("presents an active initial collection as progress instead of failure", () => {
+    const value = { ...status("neverCollected"), collectionInProgress: true };
+
+    expect(machineHealthSummary(value)).toBe("Collecting");
+    expect(machineHealthDiagnosticContent(value)).toEqual({
+      message: "Reading ccusage metrics and preparing the first snapshot.",
+      detail: undefined,
+      remediation: undefined,
+      unavailableSince: undefined,
+      excluded: true,
+      collecting: true,
+    });
+    expect(reportableExcludedMachineIDs(["remote-a"], [value])).toEqual([]);
+  });
+
+  test("continues reporting machines that are unavailable after collection stops", () => {
+    const value = status("neverCollected");
+
+    expect(machineHealthSummary(value)).toBe("No successful collection");
+    expect(reportableExcludedMachineIDs(["remote-a"], [value])).toEqual(["remote-a"]);
   });
 
   test("refresh refetches every mutable dashboard surface", () => {

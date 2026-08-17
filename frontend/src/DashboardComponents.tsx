@@ -1,6 +1,10 @@
 import { For, Show, createMemo } from "solid-js";
 import type { LoadStatusResponse, MachineStatus, MetricKey, MetricRow } from "./api";
-import { machineHealthDiagnosticContent, machineHealthSummary } from "./machineObservability";
+import {
+  machineHealthDiagnosticContent,
+  machineHealthSummary,
+  reportableExcludedMachineIDs,
+} from "./machineObservability";
 
 export type { MetricKey } from "./api";
 
@@ -43,18 +47,33 @@ export function MachineHealthPanel(props: {
   statuses: MachineStatus[];
   excludedMachineIDs: string[];
 }) {
+  const excludedMachineIDs = () => reportableExcludedMachineIDs(props.excludedMachineIDs, props.statuses);
   return (
     <section class="machine-health-panel" aria-label="Remote machine data health">
       <For each={props.statuses}>{(status) => (
         (() => {
           const diagnostic = machineHealthDiagnosticContent(status);
-          return <article classList={{ "machine-health-item": true, [status.collectionState]: true }}>
+          return <article classList={{
+            "machine-health-item": true,
+            [status.collectionState]: true,
+            collecting: diagnostic.collecting,
+          }}>
             <div>
               <strong class="machine-health-heading">
-                <svg class="machine-warning-icon" viewBox="0 0 24 24" role="img" aria-label="Machine collection warning">
-                  <path d="M12 3 2.7 20h18.6L12 3Z" />
-                  <path d="M12 9v5M12 17.5v.5" />
-                </svg>
+                <Show
+                  when={diagnostic.collecting}
+                  fallback={(
+                    <svg class="machine-warning-icon" viewBox="0 0 24 24" role="img" aria-label="Machine collection warning">
+                      <path d="M12 3 2.7 20h18.6L12 3Z" />
+                      <path d="M12 9v5M12 17.5v.5" />
+                    </svg>
+                  )}
+                >
+                  <svg class="machine-collecting-icon" viewBox="0 0 24 24" role="img" aria-label="Machine collection in progress">
+                    <circle cx="12" cy="12" r="8" />
+                    <path d="M12 7v5l3 2" />
+                  </svg>
+                </Show>
                 {status.displayName}: {machineHealthSummary(status)}
               </strong>
               <span>{diagnostic.message}</span>
@@ -64,23 +83,35 @@ export function MachineHealthPanel(props: {
               <Show when={diagnostic.remediation}>{(remediation) => (
                 <p class="machine-health-remediation"><b>Suggested action:</b> {remediation()}</p>
               )}</Show>
-              <Show when={diagnostic.excluded}>
+              <Show when={diagnostic.excluded && !diagnostic.collecting}>
                 <p class="machine-health-exclusion">
                   No current data since {timestampLabel(diagnostic.unavailableSince)}.
                   This machine is excluded from current rows, totals, budgets, and summaries.
                 </p>
               </Show>
+              <Show when={diagnostic.collecting}>
+                <p class="machine-health-collection">
+                  Current data will appear automatically when collection completes.
+                </p>
+              </Show>
             </div>
             <dl>
-              <dt>Last success</dt><dd>{timestampLabel(status.lastSuccessAt)}</dd>
-              <dt>Unavailable since</dt><dd>{timestampLabel(diagnostic.unavailableSince)}</dd>
-              <dt>Last-hour gap</dt><dd>{status.lastHourDataGap == null ? "none" : `${timestampLabel(status.lastHourDataGap.startAt)} – ${timestampLabel(status.lastHourDataGap.endAt)}`}</dd>
+              <Show when={diagnostic.collecting} fallback={(
+                <>
+                  <dt>Last success</dt><dd>{timestampLabel(status.lastSuccessAt)}</dd>
+                  <dt>Unavailable since</dt><dd>{timestampLabel(diagnostic.unavailableSince)}</dd>
+                  <dt>Last-hour gap</dt><dd>{status.lastHourDataGap == null ? "none" : `${timestampLabel(status.lastHourDataGap.startAt)} – ${timestampLabel(status.lastHourDataGap.endAt)}`}</dd>
+                </>
+              )}>
+                <dt>Status</dt><dd>Initial snapshot in progress</dd>
+                <dt>Refresh interval</dt><dd>{status.refreshIntervalSeconds} seconds</dd>
+              </Show>
             </dl>
           </article>;
         })()
       )}</For>
-      <Show when={props.excludedMachineIDs.length > 0}>
-        <p class="excluded-machines">Excluded from current rows, totals, budgets, and summaries: {props.excludedMachineIDs.join(", ")}.</p>
+      <Show when={excludedMachineIDs().length > 0}>
+        <p class="excluded-machines">Excluded from current rows, totals, budgets, and summaries: {excludedMachineIDs().join(", ")}.</p>
       </Show>
     </section>
   );
