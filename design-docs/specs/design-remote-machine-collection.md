@@ -1654,13 +1654,13 @@ absence, and cleanup checks pass.
   responsibilities before additions would cross the repository's
   maintainability limits. Every non-generated Swift file finishes below 1000
   lines.
-- Required verification is `task test`, `task lint`, `task frontend:check`,
-  `task frontend:build`, `nix flake check`, `task smoke:isolated-runtime`,
-  `task smoke:dashboard`, and `task smoke:remote-machines`, plus focused Swift
+- Required verification is `mise run test`, `mise run lint`, `mise run frontend:check`,
+  `mise run frontend:build`, `nix flake check`, `mise run smoke:isolated-runtime`,
+  `mise run smoke:dashboard`, and `mise run smoke:remote-machines`, plus focused Swift
   tests for log rotation/retention, SSH diagnostic fixtures, current-total
   exclusion, staleness/data-gap derivation, and action routes and focused
   frontend tests for stale panels, exclusions, actions, and event markers.
-  `task test:coverage` remains the repository-supported coverage
+  `mise run test:coverage` remains the repository-supported coverage
   entry point. It runs `swift test --enable-code-coverage`, derives the coverage
   artifact and test binary from SwiftPM rather than hard-coding an architecture
   path, and uses the active Swift toolchain's `llvm-cov` to measure executable

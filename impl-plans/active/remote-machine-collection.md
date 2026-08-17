@@ -585,8 +585,8 @@ are complete.
 **Verification**:
 
 - `cd frontend && bun test`
-- `task frontend:check`
-- `task frontend:build`
+- `mise run frontend:check`
+- `mise run frontend:build`
 
 ## TASK-008: Complete Cross-Layer Regression, Smoke, and Documentation Coverage
 
@@ -646,7 +646,7 @@ are complete.
 7. Audit added code-facing text for GCE/IAP/GCP/provider-specific branching,
    unsafe host-key advice, raw stderr exposure, fixed machine ids, and secret or
    machine-local path leakage.
-8. Run the repository-supported `task test:coverage` path and retain its
+8. Run the repository-supported `mise run test:coverage` path and retain its
    architecture-independent SwiftPM/`llvm-cov` discovery. It must measure
    executable lines in `Sources/AppCore` and `Sources/AppCLI`, exclude tests,
    generated code, and copied web resources, and fail below 80.0%. Missing
@@ -671,19 +671,19 @@ are complete.
 - [x] Smoke failures report exact environment limitations without claiming
   unexecuted runtime or credential-isolation proof.
 - [x] Documentation and plan status match the implemented behavior.
-- [x] `task test:coverage` reports at least 80.0% executable-line coverage for
+- [x] `mise run test:coverage` reports at least 80.0% executable-line coverage for
   AppCore and AppCLI; missing tools or artifacts remain verification failures.
 
 **Verification**:
 
-- `task test`
-- `task test:coverage`
-- `task lint`
-- `task frontend:test`
-- `task frontend:check`
-- `task frontend:build`
+- `mise run test`
+- `mise run test:coverage`
+- `mise run lint`
+- `mise run frontend:test`
+- `mise run frontend:check`
+- `mise run frontend:build`
 - `bash -n scripts/smoke-remote-machines.sh`
-- `task smoke:remote-machines`
+- `mise run smoke:remote-machines`
 - `if rg -n -i 'gce|iap|gcp|google cloud' Sources frontend/src; then exit 1; fi`
 - `if rg -n 'StrictHostKeyChecking=no|UserKnownHostsFile=/dev/null' Sources frontend/src; then exit 1; fi`
 
@@ -716,7 +716,7 @@ are complete.
 5. Move this plan to `impl-plans/completed/` only after implementation review
    accepts and every non-environmental completion criterion passes.
 6. Exercise packaged resources and release scaffolding without publishing:
-   `task smoke:assets`, Formula archive dry runs, and Cask archive dry runs.
+   `mise run smoke:assets`, Formula archive dry runs, and Cask archive dry runs.
    The Cask dry run executes on macOS; a non-macOS runner records the exact
    platform limitation and leaves that check unverified rather than passing it.
 
@@ -726,25 +726,25 @@ are complete.
   limitation is exact and leaves the affected criterion visibly unverified.
 - [x] No non-generated Swift file is 1000 lines or longer.
 - [x] No commit or push was created.
-- [x] Coverage is at least 80.0%; `task build`, packaged-resource checks, and
+- [x] Coverage is at least 80.0%; `mise run build`, packaged-resource checks, and
   non-publishing Formula/Cask scaffolding checks have explicit results.
 - [x] Final progress evidence lists changed files, review decisions, addressed
   findings, verification results, limitations, TODOs, and residual risks.
 
 **Verification**:
 
-- `task test`
-- `task test:coverage`
-- `task lint`
-- `task frontend:test`
-- `task frontend:check`
-- `task frontend:build`
-- `task build`
+- `mise run test`
+- `mise run test:coverage`
+- `mise run lint`
+- `mise run frontend:test`
+- `mise run frontend:check`
+- `mise run frontend:build`
+- `mise run build`
 - `nix flake check`
-- `task smoke:assets`
-- `task smoke:isolated-runtime`
-- `task smoke:dashboard`
-- `task smoke:remote-machines`
+- `mise run smoke:assets`
+- `mise run smoke:isolated-runtime`
+- `mise run smoke:dashboard`
+- `mise run smoke:remote-machines`
 - `scripts/build-homebrew-release.sh --dry-run darwin-arm64 darwin-x64`
 - `scripts/build-homebrew-cask-release.sh --dry-run darwin-arm64 darwin-x64`
   on macOS; otherwise record the exact platform limitation as unverified
@@ -793,9 +793,9 @@ coordination boundaries. Generated web assets have one owner, TASK-007.
   10 MiB rotation, and 72-hour retention when logging is available.
 - [x] Required Swift/frontend/full/smoke commands pass or exact permitted
   environment limitations remain explicit.
-- [x] `task test:coverage` reports at least 80.0% AppCore/AppCLI executable-line
+- [x] `mise run test:coverage` reports at least 80.0% AppCore/AppCLI executable-line
   coverage; missing coverage tooling or artifacts are failures.
-- [x] `task build`, `task smoke:assets`, Formula dry runs, and the macOS Cask
+- [x] `mise run build`, `mise run smoke:assets`, Formula dry runs, and the macOS Cask
   dry runs pass without publishing; a non-macOS Cask limitation remains
   explicitly unverified.
 - [x] Every non-generated Swift file is below 1000 lines.
@@ -853,9 +853,9 @@ coordination boundaries. Generated web assets have one owner, TASK-007.
   `swift test list` zero-match protection — design revision remains unnecessary;
   independent Step 5 plan review is next.
 - 2026-07-23 — PLAN-SELF-REVIEW — revised — addressed both findings from
-  `comm-001498`: restored `task test:coverage` with the accepted 80.0%
+  `comm-001498`: restored `mise run test:coverage` with the accepted 80.0%
   AppCore/AppCLI threshold and non-skippable tooling/artifact failures; restored
-  `task build`, `task smoke:assets`, Formula dry-run, and macOS Cask dry-run
+  `mise run build`, `mise run smoke:assets`, Formula dry-run, and macOS Cask dry-run
   release-scaffolding gates without publishing, including the exact non-macOS
   unverified limitation — independent Step 5 plan review is next.
 - 2026-07-23 — STEP-5-REVISION — revised — addressed `comm-001501`: corrected
@@ -875,7 +875,7 @@ coordination boundaries. Generated web assets have one owner, TASK-007.
   JSONL logging, provider-neutral remote transports and diagnostics,
   transactional no-restart registry actions, stale/current-data exclusion,
   availability gaps and latest-event overlays, and complete SSH/proxy editing;
-  addressed review findings F-001 through F-004 — `task test` passed 151 tests
+  addressed review findings F-001 through F-004 — `mise run test` passed 151 tests
   in 36 suites; frontend tests passed 22 tests; frontend typecheck/build,
   Swift build, Nix flake evaluation, Nix-shell SwiftLint, packaged-assets,
   isolated-runtime, dashboard, and Docker remote-machine smoke tests passed;
@@ -885,8 +885,8 @@ coordination boundaries. Generated web assets have one owner, TASK-007.
   modified; no commit or push was performed.
 - 2026-07-24 — FINAL-VERIFY — complete — added Swift 6.3 coverage-tool
   compatibility and focused cache, router, logger, and all-unavailable UI
-  regressions; `task test` passed 164 tests in 37 suites and
-  `task test:coverage` passed at 80.22% (7124/8881); 24 frontend tests,
+  regressions; `mise run test` passed 164 tests in 37 suites and
+  `mise run test:coverage` passed at 80.22% (7124/8881); 24 frontend tests,
   typecheck/build, Swift build, Nix-shell SwiftLint (32 warnings, zero serious),
   `nix flake check`, packaged-assets, isolated-runtime, dashboard, Docker
   remote-machine smoke, Formula/Cask dry runs, and `git diff --check` passed;
