@@ -114,7 +114,11 @@ public struct CCUsageProcessRunner: CCUsageEnvironmentProcessRunning, Sendable {
       process.environment = environment
       process.standardOutput = stdout
       process.standardError = stderr
+      #if canImport(Glibc)
+      do { try Self.launchWithUnblockedSignals(process) } catch { throw ProcessExecutionFailure.spawnFailed }
+      #else
       do { try process.run() } catch { throw ProcessExecutionFailure.spawnFailed }
+      #endif
       let processID = process.processIdentifier
       let ownsProcessGroup = setpgid(processID, processID) == 0
 
@@ -174,6 +178,22 @@ public struct CCUsageProcessRunner: CCUsageEnvironmentProcessRunning, Sendable {
       worker.cancel()
     }
   }
+
+  #if canImport(Glibc)
+  /// Foundation's Linux spawn inherits this worker thread's blocked signals.
+  /// In particular, blocked SIGCHLD leaves a shell waiting forever for its children.
+  /// Keep mask changes on this thread with no suspension and restore them on error.
+  private static func launchWithUnblockedSignals(_ process: Process) throws {
+    var previous = sigset_t()
+    var unblocked = sigset_t()
+    sigemptyset(&unblocked)
+    guard pthread_sigmask(SIG_SETMASK, &unblocked, &previous) == 0 else {
+      throw ProcessExecutionFailure.spawnFailed
+    }
+    defer { pthread_sigmask(SIG_SETMASK, &previous, nil) }
+    try process.run()
+  }
+  #endif
 
   private func readPipe(_ descriptor: Int32) async -> Data {
     defer { close(descriptor) }
