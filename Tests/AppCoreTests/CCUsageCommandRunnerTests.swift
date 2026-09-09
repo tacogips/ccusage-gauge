@@ -92,8 +92,8 @@ private actor RetryDelayRecorder {
       executable: URL(fileURLWithPath: "/bin/sh"),
       arguments: [
         "-c",
-        "/usr/bin/yes o | /usr/bin/head -c 200000 & " +
-          "/usr/bin/yes e | /usr/bin/head -c 200000 >&2 & wait"
+        "/usr/bin/head -c 200000 /dev/zero & " +
+          "/usr/bin/head -c 200000 /dev/zero >&2 & wait"
       ],
       timeoutSeconds: 3
     )
