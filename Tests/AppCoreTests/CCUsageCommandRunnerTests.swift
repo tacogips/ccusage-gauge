@@ -95,7 +95,9 @@ private actor RetryDelayRecorder {
         "/usr/bin/head -c 200000 /dev/zero & " +
           "/usr/bin/head -c 200000 /dev/zero >&2 & wait"
       ],
-      timeoutSeconds: 3
+      // This checks complete output, not timeout latency. Shared CI runners
+      // execute the process-heavy suites concurrently; allow scheduling headroom.
+      timeoutSeconds: 30
     )
 
     #expect(result.stdout.count == 200_000)
