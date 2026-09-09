@@ -120,8 +120,16 @@ public struct CCUsageProcessRunner: CCUsageEnvironmentProcessRunning, Sendable {
 
       let outHandle = stdout.fileHandleForReading
       let errHandle = stderr.fileHandleForReading
-      async let outData = readPipe(outHandle)
-      async let errData = readPipe(errHandle)
+      let outDescriptor = dup(outHandle.fileDescriptor)
+      let errDescriptor = dup(errHandle.fileDescriptor)
+      guard outDescriptor >= 0, errDescriptor >= 0 else {
+        if outDescriptor >= 0 { close(outDescriptor) }
+        if errDescriptor >= 0 { close(errDescriptor) }
+        signalProcess(processID, signal: SIGKILL, processGroup: ownsProcessGroup)
+        throw ProcessExecutionFailure.spawnFailed
+      }
+      let outTask = Task.detached(priority: .utility) { await readPipe(outDescriptor) }
+      let errTask = Task.detached(priority: .utility) { await readPipe(errDescriptor) }
 
       let deadline = Date().addingTimeInterval(timeoutSeconds)
       while process.isRunning && !Task.isCancelled && Date() < deadline {
@@ -140,16 +148,22 @@ public struct CCUsageProcessRunner: CCUsageEnvironmentProcessRunning, Sendable {
         if process.isRunning {
           signalProcess(processID, signal: SIGKILL, processGroup: ownsProcessGroup)
         }
-        process.waitUntilExit()
-        _ = await outData
-        _ = await errData
+        // `Process.waitUntilExit()` can remain blocked on macOS even after the
+        // child has disappeared. A timeout must stay bounded so the collector
+        // can publish the failure and retry on its next polling interval.
+        outTask.cancel()
+        errTask.cancel()
         if wasCancelled { throw CancellationError() }
         throw ProcessExecutionFailure.timedOut
       }
-      if wasCancelled { throw CancellationError() }
+      if wasCancelled {
+        outTask.cancel()
+        errTask.cancel()
+        throw CancellationError()
+      }
       return ProcessResult(
-        stdout: await outData,
-        stderr: await errData,
+        stdout: await outTask.value,
+        stderr: await errTask.value,
         exitStatus: process.terminationStatus,
         terminationReason: process.terminationReason == .uncaughtSignal ? .uncaughtSignal : .exit
       )
@@ -161,12 +175,29 @@ public struct CCUsageProcessRunner: CCUsageEnvironmentProcessRunning, Sendable {
     }
   }
 
-  private func readPipe(_ handle: FileHandle) async -> Data {
-    await withCheckedContinuation { continuation in
-      DispatchQueue.global(qos: .utility).async {
-        continuation.resume(returning: handle.readDataToEndOfFile())
+  private func readPipe(_ descriptor: Int32) async -> Data {
+    defer { close(descriptor) }
+    let flags = fcntl(descriptor, F_GETFL)
+    guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else { return Data() }
+    var result = Data()
+    var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
+    while !Task.isCancelled {
+      let count = buffer.withUnsafeMutableBytes { bytes in
+        read(descriptor, bytes.baseAddress, bytes.count)
+      }
+      if count > 0 {
+        result.append(contentsOf: buffer.prefix(count))
+      } else if count == 0 {
+        break
+      } else if errno == EINTR {
+        continue
+      } else if errno == EAGAIN || errno == EWOULDBLOCK {
+        try? await Task.sleep(for: .milliseconds(10))
+      } else {
+        break
       }
     }
+    return result
   }
 
   private func signalProcess(
@@ -352,12 +383,25 @@ public struct LocalCCUsageCommandRunner: CCUsageSourceCommandRunner, Sendable {
           let environmentRunner = processRunner as? any CCUsageEnvironmentProcessRunning else {
       throw CCUsageCommandFailure(runnerKind: .local, phase: .spawnFailed)
     }
+    // ccusage scans the whole session history even for a bounded query, so a
+    // date-bounded command runs against a pruned mirror that keeps only files
+    // recent enough to hold events in range.
+    let sourceAgent = source.agent
+    let prunedRoot: URL? = if let cutoff = SessionScanPruning.mtimeCutoff(arguments: arguments) {
+      await Task.detached(priority: .utility) {
+        SessionScanPruning.prunedRoot(original: value, agent: sourceAgent, cutoff: cutoff)
+      }.value
+    } else {
+      nil
+    }
+    defer { if let prunedRoot { try? FileManager.default.removeItem(at: prunedRoot) } }
+    let sourceRoot = prunedRoot?.path ?? value
     var environment = ProcessInfo.processInfo.environment
     // ccusage hard-errors on a nonexistent agent dir, so the agent not covered
     // by this source is pointed at an empty directory with the expected
     // structure, which yields empty data instead of a CLI error.
-    environment["CODEX_HOME"] = source.agent == .codex ? value : Self.disabledAgentRoot(.codex)
-    environment["CLAUDE_CONFIG_DIR"] = source.agent == .claude ? value : Self.disabledAgentRoot(.claude)
+    environment["CODEX_HOME"] = source.agent == .codex ? sourceRoot : Self.disabledAgentRoot(.codex)
+    environment["CLAUDE_CONFIG_DIR"] = source.agent == .claude ? sourceRoot : Self.disabledAgentRoot(.claude)
     do {
       let result = try await environmentRunner.run(
         executable: executable,
@@ -525,6 +569,7 @@ public struct SSHCCUsageCommandRunner:
       source.agent.rawValue,
       sourceKind,
       sourceValue,
+      SessionScanPruning.mtimeCutoffToken(arguments: ccusageArguments) ?? "",
       connection.remoteCcusagePath
     ] + ccusageArguments
     result += remoteTokens.map(Self.quoteRemoteToken)
@@ -576,8 +621,9 @@ public struct SSHCCUsageCommandRunner:
     agent=$1
     source_kind=$2
     source_value=$3
-    executable=$4
-    shift 4
+    mtime_cutoff=$4
+    executable=$5
+    shift 5
     if [ "$source_kind" = default ]; then
       if [ "$agent" = codex ]; then
         source_value=${CODEX_HOME-"$HOME/.codex"}
@@ -592,10 +638,11 @@ public struct SSHCCUsageCommandRunner:
       source_value=$HOME/${source_value#~/}
     fi
     if [ "$agent" = codex ]; then
-      scan=$source_value/sessions
+      scan_name=sessions
     else
-      scan=$source_value/projects
+      scan_name=projects
     fi
+    scan=$source_value/$scan_name
     if [ ! -d "$scan" ]; then
       case "$1" in
         blocks) printf '{"blocks":[]}' ;;
@@ -610,6 +657,30 @@ public struct SSHCCUsageCommandRunner:
       esac
       exit 0
     fi
+    # ccusage scans the whole session history even for a bounded query; when a
+    # cutoff is provided, run it against a mirror of only the files modified
+    # recently enough to hold events in range (hard links, copy fallback).
+    prune_root=
+    if [ -n "$mtime_cutoff" ]; then
+      prune_root=$(mktemp -d "${TMPDIR:-/tmp}/ccusage-gauge-pruned.XXXXXX" 2>/dev/null) || prune_root=
+    fi
+    if [ -n "$prune_root" ] && touch -t "$mtime_cutoff" "$prune_root/cutoff" 2>/dev/null &&
+      mkdir -p "$prune_root/root/$scan_name"; then
+      if (
+        cd "$scan" &&
+          find . -name '*.jsonl' -type f -newer "$prune_root/cutoff" 2>/dev/null |
+          while IFS= read -r rel; do
+            rel=${rel#./}
+            case "$rel" in
+              */*) mkdir -p "$prune_root/root/$scan_name/${rel%/*}" || exit 1 ;;
+            esac
+            ln "$scan/$rel" "$prune_root/root/$scan_name/$rel" 2>/dev/null ||
+              cp "$scan/$rel" "$prune_root/root/$scan_name/$rel" || exit 1
+          done
+      ); then
+        source_value=$prune_root/root
+      fi
+    fi
     disabled_root=${TMPDIR:-/tmp}/ccusage-gauge-disabled
     mkdir -p "$disabled_root/codex/sessions" "$disabled_root/claude/projects"
     if [ "$agent" = codex ]; then
@@ -617,6 +688,11 @@ public struct SSHCCUsageCommandRunner:
     else
       CODEX_HOME=$disabled_root/codex CLAUDE_CONFIG_DIR=$source_value "$executable" "$@"
     fi
+    status=$?
+    if [ -n "$prune_root" ]; then
+      rm -rf "$prune_root"
+    fi
+    exit $status
     """
 
   private static let sourceProbeAdapter = """

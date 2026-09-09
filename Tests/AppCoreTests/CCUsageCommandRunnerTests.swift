@@ -87,6 +87,22 @@ private actor RetryDelayRecorder {
     #expect(Date().timeIntervalSince(startedAt) < 3)
   }
 
+  @Test func capturesLargeConcurrentStandardOutputAndError() async throws {
+    let result = try await CCUsageProcessRunner().run(
+      executable: URL(fileURLWithPath: "/bin/sh"),
+      arguments: [
+        "-c",
+        "/usr/bin/yes o | /usr/bin/head -c 200000 & " +
+          "/usr/bin/yes e | /usr/bin/head -c 200000 >&2 & wait"
+      ],
+      timeoutSeconds: 3
+    )
+
+    #expect(result.stdout.count == 200_000)
+    #expect(result.stderr.count == 200_000)
+    #expect(result.exitStatus == 0)
+  }
+
   @Test func cancellationTerminatesAndReapsRunningProcess() async {
     let startedAt = Date()
     let task = Task {
@@ -103,6 +119,26 @@ private actor RetryDelayRecorder {
       _ = try await task.value
     }
     #expect(Date().timeIntervalSince(startedAt) < 2)
+  }
+
+  @Test func timeoutDoesNotPreventTheNextCommandFromSucceeding() async throws {
+    let runner = CCUsageProcessRunner()
+    await #expect(throws: ProcessExecutionFailure.self) {
+      _ = try await runner.run(
+        executable: URL(fileURLWithPath: "/bin/sh"),
+        arguments: ["-c", "trap '' TERM; while :; do sleep 1; done"],
+        timeoutSeconds: 0.1
+      )
+    }
+
+    let result = try await runner.run(
+      executable: URL(fileURLWithPath: "/bin/echo"),
+      arguments: ["recovered"],
+      timeoutSeconds: 1
+    )
+
+    #expect(result.stdout == Data("recovered\n".utf8))
+    #expect(result.exitStatus == 0)
   }
 
   @Test func usesSystemSSHExecutable() throws {
