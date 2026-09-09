@@ -70,8 +70,7 @@ cask "ccusage-gauge" do
   sha256 arm:   "$darwin_arm64_sha",
          intel: "$darwin_x64_sha"
 
-  url "$release_base_url/$artifact_name-#{version}-#{arch}.dmg",
-      verified: "github.com/tacogips/ccusage-gauge/releases/download/"
+  url "$release_base_url/$artifact_name-#{version}-#{arch}.dmg"
   name "CCUsage Gauge"
   desc "Menu bar gauge and native dashboard for AI coding-agent usage costs"
   homepage "https://github.com/tacogips/ccusage-gauge"
