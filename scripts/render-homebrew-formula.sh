@@ -67,7 +67,6 @@ main() {
 class CcusageGauge < Formula
   desc "Native dashboard and CLI for AI coding-agent usage costs"
   homepage "https://github.com/tacogips/ccusage-gauge"
-  version "$version"
   license "MIT"
 
   livecheck do
