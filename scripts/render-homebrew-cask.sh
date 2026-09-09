@@ -64,10 +64,10 @@ main() {
   mkdir -p "$(dirname "$output")"
   cat > "$output" <<EOF
 cask "ccusage-gauge" do
-  version "$version"
   arch arm: "darwin-arm64", intel: "darwin-x64"
 
-  sha256 arm: "$darwin_arm64_sha",
+  version "$version"
+  sha256 arm:   "$darwin_arm64_sha",
          intel: "$darwin_x64_sha"
 
   url "$release_base_url/$artifact_name-#{version}-#{arch}.dmg",
@@ -85,7 +85,8 @@ cask "ccusage-gauge" do
 
   app "CCUsageGauge.app"
   binary "#{appdir}/CCUsageGauge.app/Contents/MacOS/$product", target: "$product"
-  binary "#{appdir}/CCUsageGauge.app/Contents/Helpers/CCUsageGaugeDashboard.app/Contents/MacOS/ccusage-gauge-dashboard",
+  binary "#{appdir}/CCUsageGauge.app/Contents/Helpers/" \\
+         "CCUsageGaugeDashboard.app/Contents/MacOS/ccusage-gauge-dashboard",
          target: "ccusage-gauge-dashboard"
 
   caveats do
