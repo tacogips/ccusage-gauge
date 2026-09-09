@@ -85,6 +85,8 @@ cask "ccusage-gauge" do
 
   app "CCUsageGauge.app"
   binary "#{appdir}/CCUsageGauge.app/Contents/MacOS/$product", target: "$product"
+  binary "#{appdir}/CCUsageGauge.app/Contents/Helpers/CCUsageGaugeDashboard.app/Contents/MacOS/ccusage-gauge-dashboard",
+         target: "ccusage-gauge-dashboard"
 
   caveats do
     <<~EOS
