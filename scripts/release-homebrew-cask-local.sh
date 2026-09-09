@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 artifact_name="ccusage-gauge"
-github_repository="user/repo"
+github_repository="tacogips/ccusage-gauge"
 
 usage() {
   cat <<EOF
@@ -77,7 +77,7 @@ if ! git ls-remote --exit-code --tags origin "refs/tags/$release_tag" >/dev/null
   exit 1
 fi
 
-scripts/build-homebrew-cask-release.sh darwin-arm64 darwin-x64
+mise run build:homebrew-cask -- darwin-arm64 darwin-x64
 
 release_dir="${CASK_RELEASE_DIR:-$repo_root/dist/homebrew-cask}"
 arm_dmg="$release_dir/$artifact_name-$version-darwin-arm64.dmg"
@@ -100,5 +100,5 @@ scripts/render-homebrew-cask.sh "$version" "$tap_cask_file"
 printf '\nRendered tap cask: %s\n' "$tap_cask_file"
 printf 'Review, commit, and push the tap change from the tap repository.\n'
 printf 'Then install with:\n'
-printf '  brew tap user/tap\n'
+printf '  brew tap tacogips/tap\n'
 printf '  brew install --cask ccusage-gauge\n'

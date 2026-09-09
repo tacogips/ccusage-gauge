@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CCUsage Gauge Dashboard",
+  "version": "0.2.0",
+  "identifier": "com.tacogips.ccusage-gauge.dashboard",
+  "build": { "frontendDist": "../frontend/dist" },
+  "app": {
+    "windows": [{ "label": "main", "title": "CCUsage Gauge", "width": 1480, "height": 920, "minWidth": 640, "minHeight": 480 }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": { "active": false, "icon": ["../Resources/DashboardIcon.png"] }
+}

@@ -69,7 +69,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var machineSnapshotStore: MachineSnapshotStore?
   private var machineCollector: MachineCollector?
   private var machineRouter: MachineDashboardRouter?
-  private var dashboardServer: DashboardHTTPServer?
+  private let desktopDashboard = DesktopDashboard()
   private var pollingTask: Task<Void, Never>?
   private var latestSnapshot: CostSnapshot?
   private var currentState: AppState?
@@ -110,11 +110,12 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   func applicationWillTerminate(_ notification: Notification) {
     pollingTask?.cancel()
-    dashboardServer?.stop()
+    desktopDashboard.stop()
     if let machineCollector { Task { await machineCollector.stop() } }
   }
 
   private func bootstrap() async {
+    desktopDashboard.stop()
     pollingTask?.cancel()
     if let machineCollector { await machineCollector.stop() }
     snapshotService = nil
@@ -382,7 +383,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     menu.addItem(settingsItem())
     menu.addItem(.separator())
     menu.addItem(withTitle: "Open dashboard", action: #selector(openDashboard), keyEquivalent: "d").target = self
-    let toggleTitle = dashboardServer?.isRunning == true ? "Stop dashboard" : "Start dashboard"
+    let toggleTitle = desktopDashboard.isRunning ? "Close dashboard" : "Open dashboard window"
     menu.addItem(withTitle: toggleTitle, action: #selector(toggleDashboard), keyEquivalent: "").target = self
     menu.addItem(withTitle: "Refresh", action: #selector(refreshAction), keyEquivalent: "f").target = self
     menu.addItem(.separator())
@@ -610,25 +611,23 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   @objc private func toggleDashboard() {
-    if dashboardServer?.isRunning == true { dashboardServer?.stop(); dashboardServer = nil } else { startDashboard() }
+    if desktopDashboard.isRunning { desktopDashboard.stop() } else { startDashboard() }
     refreshE2EWindow()
   }
 
   private func startDashboard() {
-    guard dashboardServer?.isRunning != true, let machineRouter, let configuration else { return }
-    let router = DashboardRouter(machineRouter: machineRouter, assetResolver: StaticAssetResolver())
-    let server = DashboardHTTPServer(router: router)
+    guard let machineRouter else { return }
     do {
-      try server.start(port: UInt16(configuration.dashboardPort))
-      dashboardServer = server
+      try desktopDashboard.start(router: machineRouter)
+      if let pid = desktopDashboard.processIdentifier {
+        NSRunningApplication(processIdentifier: pid)?.activate(options: [.activateAllWindows])
+      }
     } catch { errorMessage = "Dashboard could not start: \(error)" }
   }
 
   @objc private func openDashboard() {
     startDashboard()
-    guard let port = configuration?.dashboardPort,
-          let url = URL(string: "http://127.0.0.1:\(port)/") else { return }
-    NSWorkspace.shared.open(url)
+    refreshE2EWindow()
   }
 
   @objc private func quit() { NSApplication.shared.terminate(nil) }
@@ -832,7 +831,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     refreshIntervalButton.setAccessibilityLabel("Refresh interval")
     e2eRefreshIntervalButton = refreshIntervalButton
     let openDashboardButton = e2eButton(title: "Open dashboard", action: #selector(openDashboard))
-    let dashboardButton = e2eButton(title: "Start dashboard", action: #selector(toggleDashboard))
+    let dashboardButton = e2eButton(title: "Open dashboard window", action: #selector(toggleDashboard))
     e2eDashboardButton = dashboardButton
     let refreshButton = e2eButton(title: "Refresh", action: #selector(refreshAction))
     let quitButton = e2eButton(title: "Quit", action: #selector(quit))
@@ -895,7 +894,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     e2eErrorLabel?.stringValue = errorMessage ?? ""
     e2eCycleLabel?.stringValue = "Aggregation period: \((currentState?.resetCycle ?? defaultResetCycle).label)"
-    e2eDashboardButton?.title = dashboardServer?.isRunning == true ? "Stop dashboard" : "Start dashboard"
+    e2eDashboardButton?.title = desktopDashboard.isRunning ? "Close dashboard" : "Open dashboard window"
     e2eLaunchAtLoginButton?.title = "Launch at Login: \(launchAtLoginController.state.label)"
     e2eRefreshIntervalButton?.title = "Refresh interval: \(effectiveRefreshIntervalSeconds) seconds"
   }

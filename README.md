@@ -110,7 +110,31 @@ The Models menu omits models with no data in that period. If period data exists
 but the selected graph granularity has no usable timestamped source, the model
 remains visible but is disabled and struck through.
 
-## Dashboard server (macOS and Linux)
+## Native dashboard (Tauri)
+
+The menu-bar app's **Open dashboard** launches a Tauri 2 window. Swift owns
+collection, caches, machine management, and dashboard state; Tauri embeds the
+SolidJS assets and forwards requests over private stdin/stdout JSON pipes.
+No HTTP listener, browser, or Vite development server is needed.
+
+```bash
+mise run desktop:run
+```
+
+After `mise run desktop:build`, use `swift run ccusage-gauge dashboard`.
+The window executable must be beside the Swift executable, or supplied with
+`CCUSAGE_GAUGE_DESKTOP_EXECUTABLE=/absolute/path/to/ccusage-gauge-dashboard`.
+Closing the window ends the CLI host; closing it from the menu-bar app leaves
+the gauge running. **Open dashboard** focuses an existing window or opens a new one.
+`dashboardAutostart` now opens the native window at menu-bar startup; set it to
+`false` to open the dashboard only on demand.
+
+The desktop build requires Rust, Bun, Swift, and native Tauri prerequisites
+(Xcode on macOS; WebKitGTK 4.1 and other Tauri development libraries on Linux).
+Both the macOS app bundle and Formula release archives include the Tauri executable.
+The Cask installs the signed and notarized menu-bar app, dashboard, and CLI.
+
+## Optional dashboard server (macOS and Linux)
 
 The `ccusage-gauge` CLI runs the dashboard on both macOS and Linux. Only the
 menu-bar application is macOS-specific.
@@ -228,8 +252,8 @@ The generated defaults are:
 | --- | --- | --- |
 | `ccusagePath` | string or `null`; default `null` | An explicit value must be an absolute executable path. `null` searches `PATH`, `/opt/homebrew/bin`, and `/usr/local/bin`. An invalid explicit path is an error and does not fall back. |
 | `defaultResetTerm` | string; default `"daily"` | Initial aggregation period when mutable state has no selection. Supported values are `"hourly"`, `"daily"`, `"weekly"`, and `"monthly"`. |
-| `dashboardPort` | integer; default `18081` | Loopback port in the range `1` through `65535`. The dashboard binds to `127.0.0.1`, and **Open dashboard** opens `http://127.0.0.1:<dashboardPort>/`. |
-| `dashboardAutostart` | boolean; default `true` | Starts the local dashboard server when the menu-bar application starts. |
+| `dashboardPort` | integer; default `18081` | Loopback port in the range `1` through `65535` for the optional `serve` command. The native window does not use it. |
+| `dashboardAutostart` | boolean; default `true` | Opens the native Tauri dashboard when the menu-bar application starts. |
 | `pollIntervalSeconds` | integer; default `20` | Usage refresh interval in seconds. It must be positive. |
 | `cacheRetentionDays` | integer; default `365` | Retains the aggregate cache for this many days from its creation time. It must be positive. Expired cache data is purged during regular snapshot refreshes and rebuilt once. |
 | `remoteRetryCount` | integer; default `3` | Number of retries after a failed remote SSH command, from `0` through `10`. The default permits four total attempts. |
@@ -240,8 +264,8 @@ The generated defaults are:
 Configuration is loaded when the application starts. After changing any field,
 quit and relaunch `ccusage-gauge`; the menu's **Refresh** action refreshes usage
 data but does not reload configuration. For example, to use port `19090`, set
-`"dashboardPort": 19090`, relaunch the application, and choose **Open
-dashboard** to open `http://127.0.0.1:19090/`.
+`"dashboardPort": 19090`, restart `ccusage-gauge serve`, and visit
+`http://127.0.0.1:19090/`. This setting does not affect the native window.
 
 For example, fixed custom graph colors can be configured as follows:
 

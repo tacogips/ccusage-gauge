@@ -52,8 +52,12 @@ struct CommandParsingTests {
 
   @Test func rejectsUnknownCommand() {
     #expect(throws: (any Error).self) {
-      _ = try RootCommand.parseAsRoot(["dashboard"])
+      _ = try RootCommand.parseAsRoot(["unknown-command"])
     }
+  }
+
+  @Test func parsesNativeDashboard() throws {
+    #expect(try RootCommand.parseAsRoot(["dashboard"]) is DesktopDashboardCommand)
   }
 
   @Test func parsesMachinesAddWithDefaults() throws {

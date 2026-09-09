@@ -26,12 +26,19 @@ machines="$(dirname "$config")/machines.json"
 rm -rf "$output_root"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/Web" "$output_root/bin" \
   "$(dirname "$config")" "$(dirname "$state")" "$cache" "$claude_home" "$codex_home"
+mkdir -p "$claude_home/projects" "$codex_home/sessions"
+if [[ "$mode" == fixture ]]; then
+  event_timestamp="$(/bin/date -u -v-5M '+%Y-%m-%dT%H:%M:%SZ')"
+  printf '{"type":"assistant","timestamp":"%s","sessionId":"desktop-fixture","requestId":"request-1","cwd":"/work/desktop-fixture","message":{"id":"message-1","role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":20,"cache_creation_input_tokens":40,"cache_read_input_tokens":200}}}\n' \
+    "$event_timestamp" > "$claude_home/projects/desktop-fixture.jsonl"
+fi
 chmod 0700 "$output_root" "$home" "$home/config" "$(dirname "$config")" \
   "$home/state" "$(dirname "$state")" "$cache" "$claude_home" "$codex_home"
 
 swift build --package-path "$project_root" --product ccusage-gauge-menubar >/dev/null
 bin_dir="$(swift build --package-path "$project_root" --show-bin-path)"
 cp "$bin_dir/ccusage-gauge-menubar" "$app/Contents/MacOS/ccusage-gauge-menubar"
+bash "$project_root/scripts/stage-desktop-app.sh" "$app/Contents"
 chmod 0755 "$app/Contents/MacOS/ccusage-gauge-menubar"
 cp "$project_root/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cp -R "$project_root/Sources/AppCore/Resources/Web"/. "$app/Contents/Resources/Web"/

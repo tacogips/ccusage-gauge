@@ -49,6 +49,17 @@ struct ServeCommand: AsyncParsableCommand {
   }
 
   func run() async throws {
-    try await CommandRuntime.serve(port: port, assets: assets)
+    try await CommandRuntime.runDashboard(port: port, assets: assets)
+  }
+}
+
+struct DesktopDashboardCommand: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "dashboard",
+    abstract: "Open the native Tauri dashboard without a web server."
+  )
+
+  func run() async throws {
+    try await CommandRuntime.runDashboard(desktop: true)
   }
 }

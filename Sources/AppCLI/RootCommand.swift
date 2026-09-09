@@ -7,12 +7,13 @@ import Foundation
 struct RootCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "ccusage-gauge",
-    abstract: "Local ccusage dashboard server and dashboard API client.",
+    abstract: "Native ccusage dashboard, optional HTTP server, and dashboard API client.",
     version: Version.current,
     subcommands: [
       ConfigCheckCommand.self,
       UsageSnapshotCommand.self,
       ServeCommand.self,
+      DesktopDashboardCommand.self,
       ClientCommand.self
     ]
   )

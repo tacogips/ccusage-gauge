@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleDisplayName</key><string>CCUsage Gauge</string>
+  <key>CFBundleExecutable</key><string>ccusage-gauge-menubar</string>
+  <key>CFBundleIdentifier</key><string>com.tacogips.ccusage-gauge</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>CCUsageGauge</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.2.0</string>
+  <key>CFBundleVersion</key><string>0.2.0</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSMultipleInstancesProhibited</key><true/>
+  <key>LSUIElement</key><true/>
+  <key>LSEnvironment</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+</dict>
+</plist>

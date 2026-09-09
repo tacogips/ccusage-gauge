@@ -196,6 +196,8 @@ swift_release_bin_path() {
     DEVELOPER_DIR="$developer_dir" SDKROOT="$sdkroot" \
       "$swift_exe" build -c release --product "$product" --triple "$triple" >/dev/null
     DEVELOPER_DIR="$developer_dir" SDKROOT="$sdkroot" \
+      "$swift_exe" build -c release --product ccusage-gauge-menubar --triple "$triple" >/dev/null
+    DEVELOPER_DIR="$developer_dir" SDKROOT="$sdkroot" \
       "$swift_exe" build -c release --product "$product" --triple "$triple" --show-bin-path
   )
 }
@@ -213,7 +215,7 @@ print_plan() {
   release_dir="$3"
   work_dir="$release_dir/work/$artifact_name-$version-$target"
   dmg_path="$release_dir/$artifact_name-$version-$target.dmg"
-  staged_binary="$work_dir/$product"
+  staged_binary="$work_dir/CCUsageGauge.app"
   triple="$(swift_triple_for_target "$target")"
   install_prefix="$(install_prefix_for_target "$target")"
 
@@ -239,7 +241,7 @@ build_target() {
   release_dir="$3"
   work_dir="$release_dir/work/$artifact_name-$version-$target"
   dmg_path="$release_dir/$artifact_name-$version-$target.dmg"
-  staged_binary="$work_dir/$product"
+  staged_binary="$work_dir/CCUsageGauge.app"
   notarytool="${NOTARYTOOL:-/Applications/Xcode.app/Contents/Developer/usr/bin/notarytool}"
   stapler="${STAPLER:-/Applications/Xcode.app/Contents/Developer/usr/bin/stapler}"
 
@@ -262,11 +264,23 @@ build_target() {
   mkdir -p "$work_dir"
 
   bin_path="$(swift_release_bin_path "$target" | tail -n 1)"
-  cp "$bin_path/$product" "$staged_binary"
-  chmod 0755 "$staged_binary"
-
+  mkdir -p "$staged_binary/Contents/MacOS" "$staged_binary/Contents/Resources/Web"
+  cp "$bin_path/$product" "$bin_path/ccusage-gauge-menubar" "$staged_binary/Contents/MacOS/"
+  test "$("$staged_binary/Contents/MacOS/$product" --version)" = "$version"
+  cp "$repo_root/Resources/AppIcon.icns" "$staged_binary/Contents/Resources/"
+  cp -R "$repo_root/frontend/dist/." "$staged_binary/Contents/Resources/Web/"
+  cp "$repo_root/Resources/MenuBarInfo.plist" "$staged_binary/Contents/Info.plist"
+  plutil -replace CFBundleShortVersionString -string "$version" "$staged_binary/Contents/Info.plist"
+  plutil -replace CFBundleVersion -string "$version" "$staged_binary/Contents/Info.plist"
+  desktop_binary="$(bash "$repo_root/scripts/build-desktop-release.sh" "$target")"
+  CCUSAGE_GAUGE_DESKTOP_BINARY="$desktop_binary" CCUSAGE_GAUGE_VERSION="$version" CCUSAGE_GAUGE_SKIP_ADHOC_SIGN=1 \
+    bash "$repo_root/scripts/stage-desktop-app.sh" "$staged_binary/Contents"
+  codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" \
+    "$staged_binary/Contents/Helpers/CCUsageGaugeDashboard.app"
+  codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$staged_binary/Contents/MacOS/$product"
+  codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$staged_binary/Contents/MacOS/ccusage-gauge-menubar"
   codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$staged_binary"
-  codesign --verify --strict --verbose=2 "$staged_binary"
+  codesign --verify --deep --strict --verbose=2 "$staged_binary"
 
   hdiutil create -quiet -fs HFS+ -format UDZO -volname "$product" -srcfolder "$work_dir" "$dmg_path"
   codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$dmg_path"

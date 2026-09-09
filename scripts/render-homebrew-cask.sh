@@ -55,7 +55,7 @@ main() {
   version="$1"
   output="${2:-$repo_root/Casks/$artifact_name.rb}"
   release_dir="${CASK_RELEASE_DIR:-$repo_root/dist/homebrew-cask}"
-  release_base_url="${CASK_RELEASE_BASE_URL:-https://github.com/user/repo/releases/download/v$version}"
+  release_base_url="${CASK_RELEASE_BASE_URL:-https://github.com/tacogips/ccusage-gauge/releases/download/v$version}"
 
   local darwin_arm64_sha darwin_x64_sha
   darwin_arm64_sha="$(sha_for_target "$version" darwin-arm64 "$release_dir")"
@@ -71,22 +71,25 @@ cask "ccusage-gauge" do
          intel: "$darwin_x64_sha"
 
   url "$release_base_url/$artifact_name-#{version}-#{arch}.dmg",
-      verified: "github.com/user/repo/releases/download/"
-  name "ccusage-gauge"
-  desc "A Swift command line tool"
-  homepage "https://github.com/user/repo"
+      verified: "github.com/tacogips/ccusage-gauge/releases/download/"
+  name "CCUsage Gauge"
+  desc "Menu bar gauge and native dashboard for AI coding-agent usage costs"
+  homepage "https://github.com/tacogips/ccusage-gauge"
 
   livecheck do
     url :url
     strategy :github_latest
   end
 
-  binary "$product"
+  depends_on macos: :sonoma
+
+  app "CCUsageGauge.app"
+  binary "#{appdir}/CCUsageGauge.app/Contents/MacOS/$product", target: "$product"
 
   caveats do
     <<~EOS
-      This cask installs the signed and notarized macOS command line tool.
-      Homebrew links $product into the native Homebrew prefix for this Mac.
+      The app and native dashboard are signed and notarized with Apple Developer ID.
+      Install ccusage separately and configure its path if it is not discoverable.
     EOS
   end
 end

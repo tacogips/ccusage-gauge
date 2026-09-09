@@ -11,6 +11,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/Web"
 swift build --package-path "$project_root" --product ccusage-gauge-menubar >/dev/null
 bin_dir="$(swift build --package-path "$project_root" --show-bin-path)"
 cp "$bin_dir/ccusage-gauge-menubar" "$app/Contents/MacOS/ccusage-gauge-menubar"
+bash "$project_root/scripts/stage-desktop-app.sh" "$app/Contents"
 chmod 0755 "$app/Contents/MacOS/ccusage-gauge-menubar"
 cp "$project_root/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cp -R "$project_root/Sources/AppCore/Resources/Web"/. "$app/Contents/Resources/Web"/

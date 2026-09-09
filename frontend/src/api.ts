@@ -1,3 +1,5 @@
+import { dashboardFetch } from "./desktopTransport";
+
 export interface MetricRow {
   date: string;
   agent: string;
@@ -191,7 +193,7 @@ export async function requestJSON<T>(
   }, Math.max(1, timeoutMilliseconds));
 
   try {
-    const response = await fetch(path, { ...init, signal: controller.signal });
+    const response = await dashboardFetch(path, { ...init, signal: controller.signal });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       const message = typeof payload?.error === "string"

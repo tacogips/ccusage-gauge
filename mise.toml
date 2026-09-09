@@ -21,6 +21,7 @@ swift = "6.3.3"
 swiftlint = "latest"
 gitleaks = "latest"
 bun = "latest"
+rust = "1.98.1"
 github-cli = "latest"
 pre-commit = "latest"
 
@@ -45,7 +46,7 @@ swift run ccusage-gauge "$@"
 
 [tasks."app:build"]
 description = "Build an ad-hoc signed local macOS app bundle with the application icon"
-depends = ["frontend:build"]
+depends = ["desktop:build"]
 run = '''
 scripts/build-local-app.sh
 '''
@@ -79,6 +80,30 @@ rm -rf .build dist release
 description = "Run SwiftLint when available"
 run = '''
 swiftlint
+'''
+
+[tasks."desktop:build"]
+description = "Build the Tauri window with embedded assets and the Swift CLI host (no server)"
+depends = ["frontend:build"]
+run = '''
+cargo build --release --manifest-path src-tauri/Cargo.toml
+swift build --product ccusage-gauge
+bin_dir="$(swift build --show-bin-path)"
+cp src-tauri/target/release/ccusage-gauge-dashboard "$bin_dir/ccusage-gauge-dashboard"
+'''
+
+[tasks."desktop:run"]
+description = "Build and open the dashboard without a web server"
+depends = ["desktop:build"]
+run = '''
+swift run ccusage-gauge dashboard
+'''
+
+[tasks."desktop:test"]
+description = "Test the native dashboard bridge"
+depends = ["frontend:build"]
+run = '''
+cargo test --manifest-path src-tauri/Cargo.toml
 '''
 
 [tasks."frontend:install"]
@@ -148,12 +173,14 @@ scripts/smoke-remote-machines.sh
 
 [tasks."e2e:build"]
 description = "Build an isolated macOS app bundle for fixture, missing, or unreachable E2E testing"
+depends = ["desktop:build"]
 run = '''
 scripts/build-e2e-app.sh "$@"
 '''
 
 [tasks."build:homebrew"]
 description = "Build standalone Homebrew formula archives for the current platform, or pass targets after --"
+depends = ["frontend:build"]
 run = '''
 scripts/build-homebrew-release.sh "$@"
 '''
@@ -178,6 +205,7 @@ scripts/render-homebrew-formula.sh "$*" "../homebrew-tap/Formula/ccusage-gauge.r
 
 [tasks."build:homebrew-cask"]
 description = "Build signed and notarized Homebrew Cask app archives, or pass targets after --"
+depends = ["frontend:build"]
 run = '''
 scripts/build-homebrew-cask-release.sh "$@"
 '''

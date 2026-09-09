@@ -47,7 +47,8 @@ enum CommandRuntime {
     }
   }
 
-  static func serve(port: Int?, assets: String?) async throws {
+  @MainActor
+  static func runDashboard(port: Int? = nil, assets: String? = nil, desktop: Bool = false) async throws {
     let paths = AppPaths.production()
     let config = try ConfigStore(fileURL: paths.configFile).loadOrCreate()
     let registryStore = MachineRegistryStore(fileURL: paths.machinesFile)
@@ -134,6 +135,24 @@ enum CommandRuntime {
       directoryNameStore: directoryNameStore,
       chartColors: config.chartColors
     )
+    if desktop {
+      let window = DesktopDashboard()
+      try window.start(router: machineRouter)
+      await collector.start()
+      await withTaskGroup(of: Void.self) { group in
+        group.addTask { await waitForTerminationSignal() }
+        group.addTask {
+          while await window.isRunning, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(100))
+          }
+        }
+        await group.next()
+        group.cancelAll()
+      }
+      window.stop()
+      await collector.stop()
+      return
+    }
     let router = DashboardRouter(machineRouter: machineRouter, assetResolver: resolver)
     let server = DashboardHTTPServer(router: router)
     let selectedPort = port ?? config.dashboardPort

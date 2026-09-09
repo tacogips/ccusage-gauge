@@ -14,6 +14,8 @@ release/
 # shipped in the Swift package live under Sources/AppCore/Resources/Web/ and are
 # tracked intentionally. frontend/bun.lock is the lockfile and is tracked.
 node_modules/
+src-tauri/target/
+src-tauri/gen/
 .vite/
 *.tsbuildinfo
 frontend/.bun/

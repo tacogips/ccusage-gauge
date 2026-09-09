@@ -213,6 +213,11 @@ build_target() {
   bin_path="$(swift_release_bin_path "$target" | tail -n 1)"
   cp "$bin_path/$product" "$binary"
   chmod 0755 "$binary"
+  test "$("$binary" --version)" = "$version"
+  desktop_binary="$(bash "$repo_root/scripts/build-desktop-release.sh" "$target")"
+  cp "$desktop_binary" "$work_dir/bin/ccusage-gauge-dashboard"
+  mkdir -p "$work_dir/share/ccusage-gauge/web"
+  cp -R "$repo_root/frontend/dist/." "$work_dir/share/ccusage-gauge/web/"
   cp "$repo_root/README.md" "$work_dir/README.md"
 
   tar -C "$work_dir" -czf "$archive" .
