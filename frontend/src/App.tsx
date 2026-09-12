@@ -27,6 +27,7 @@ import {
   visibleDirectoryChoices,
 } from "./dashboardDirectoryState";
 import { initializeDashboardState } from "./dashboardStatePersistence";
+import { startDashboardAutoRefresh } from "./dashboardAutoRefresh";
 import { shieldResource, shouldBlockDashboard } from "./dashboardLoadingState";
 import { changingProxyKind, draftFromMachine, emptyMachineDraft, machineDraftErrors, type MachineDraft, type MachineProxyKind } from "./machineForm";
 import { BreakdownBars, LoadingState, MachineHealthPanel } from "./DashboardComponents";
@@ -1100,11 +1101,12 @@ export default function App() {
   });
   createEffect(() => {
     const intervalSeconds = budget()?.refreshIntervalSeconds ?? 20;
-    const timer = window.setInterval(() => {
-      if (loadStatus()?.isLoading) return;
-      void refresh();
-    }, Math.max(intervalSeconds, 1) * 1_000);
-    onCleanup(() => window.clearInterval(timer));
+    const stopAutoRefresh = startDashboardAutoRefresh({
+      intervalSeconds,
+      isLoading: () => Boolean(loadStatus()?.isLoading),
+      refresh,
+    });
+    onCleanup(stopAutoRefresh);
   });
 
   return (
