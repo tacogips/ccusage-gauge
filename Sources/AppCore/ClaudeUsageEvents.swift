@@ -97,16 +97,33 @@ actor TimestampedUsageEventLoadCoordinator {
   }
 }
 
+struct ClaudeScanContext: Sendable {}
+
 public struct ClaudeUsageEventLoader: Sendable {
+  private typealias Scan = UsageEventFileScan<ClaudeScanContext>
+  private static let assistantNeedle = Data(#""type":"assistant""#.utf8)
   private let rootProvider: @Sendable () -> [URL]
+  private let scanCache = UsageEventFileScanCache<ClaudeScanContext>()
+  private let cachePolicy: UsageEventScanCachePolicy
+  private let now: @Sendable () -> Date
   public var roots: [URL] { rootProvider() }
 
   public init(roots: [URL]) {
-    rootProvider = { roots }
+    self.init(rootProvider: { roots })
   }
 
   public init(rootProvider: @escaping @Sendable () -> [URL]) {
+    self.init(rootProvider: rootProvider, cachePolicy: UsageEventScanCachePolicy(), now: Date.init)
+  }
+
+  init(
+    rootProvider: @escaping @Sendable () -> [URL],
+    cachePolicy: UsageEventScanCachePolicy,
+    now: @escaping @Sendable () -> Date
+  ) {
     self.rootProvider = rootProvider
+    self.cachePolicy = cachePolicy
+    self.now = now
   }
 
   public static func production(
@@ -127,9 +144,26 @@ public struct ClaudeUsageEventLoader: Sendable {
     calendar: Calendar
   ) async throws -> [TimestampedUsageEvent] {
     let roots = rootProvider()
-    return try await Task.detached(priority: .utility) {
-      try Self.loadEvents(roots: roots, since: since, until: until, calendar: calendar)
+    guard let since else {
+      return try await Task.detached(priority: .utility) {
+        try Self.loadAllEvents(roots: roots, until: until, calendar: calendar)
+      }.value
+    }
+    let current = now()
+    let cacheable = cachePolicy.isCacheable(since: since, calendar: calendar, now: current)
+    let cached = cacheable ? await scanCache.snapshot() : [:]
+    let outcome = try await Task.detached(priority: .utility) {
+      try Self.scan(roots: roots, since: since, until: until, calendar: calendar, cached: cached)
     }.value
+    if cacheable {
+      await scanCache.merge(outcome, retentionFloor: cachePolicy.retentionFloor(calendar: calendar, now: current))
+    }
+    return outcome.events
+  }
+
+  /// Test-only view of the retained per-file scans.
+  func cachedScans() async -> [URL: UsageEventFileScan<ClaudeScanContext>] {
+    await scanCache.snapshot()
   }
 
   static func decode(line: Data) -> TimestampedUsageEvent? {
@@ -166,155 +200,137 @@ public struct ClaudeUsageEventLoader: Sendable {
     )
   }
 
-  private static func loadEvents(
+  private struct Decoders {
+    let day: DateFormatter
+    let fractional: ISO8601DateFormatter
+    let wholeSeconds: ISO8601DateFormatter
+
+    init(calendar: Calendar) {
+      day = UsageEventLogReader.dayFormatter(calendar: calendar)
+      fractional = ISO8601DateFormatter()
+      fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+      wholeSeconds = ISO8601DateFormatter()
+    }
+
+    func event(from line: Data) -> (day: String, event: TimestampedUsageEvent)? {
+      guard let event = decode(line: line, fractional: fractional, wholeSeconds: wholeSeconds) else { return nil }
+      return (day.string(from: event.timestamp), event)
+    }
+  }
+
+  /// Unbounded forward scan used when no `since` is given; results are not cached.
+  private static func loadAllEvents(
     roots: [URL],
-    since: String?,
     until: String?,
     calendar: Calendar
   ) throws -> [TimestampedUsageEvent] {
-    let formatter = dayFormatter(calendar: calendar)
-    let minimumModificationDate = since.flatMap(formatter.date(from:))
-    let scanFloor = minimumModificationDate
-      .flatMap { calendar.date(byAdding: .day, value: -1, to: $0) }
-      .map(formatter.string(from:))
-    let scanCeiling = until
-      .flatMap(formatter.date(from:))
-      .flatMap { calendar.date(byAdding: .day, value: 1, to: $0) }
-      .map(formatter.string(from:))
-    let fractional = ISO8601DateFormatter()
-    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    let wholeSeconds = ISO8601DateFormatter()
-    let assistantNeedle = Data(#""type":"assistant""#.utf8)
+    let decoders = Decoders(calendar: calendar)
     var latestByIdentity: [String: TimestampedUsageEvent] = [:]
-    for file in UsageEventLogReader.jsonlFiles(roots: roots, modifiedSince: minimumModificationDate) {
-      if let since {
-        try UsageEventLogReader.forEachLineFromEnd(in: file, matchingAny: [assistantNeedle]) { line in
-          if let rawDay = UsageEventLogReader.timestampDay(in: line) {
-            if let scanFloor, rawDay < scanFloor { return false }
-            if let scanCeiling, rawDay > scanCeiling { return true }
-          }
-          guard let event = decode(line: line, fractional: fractional, wholeSeconds: wholeSeconds) else { return true }
-          let day = formatter.string(from: event.timestamp)
-          if day < since { return false }
-          guard until.map({ day <= $0 }) ?? true else { return true }
-          // Keep the highest-timestamp record for a given identity, matching the
-          // forward-scan dedup below, so daily totals do not depend on whether a
-          // `since` filter (which triggers this reverse scan) was supplied.
-          if let existing = latestByIdentity[event.identity], existing.timestamp >= event.timestamp { return true }
-          latestByIdentity[event.identity] = event
-          return true
-        }
-        continue
-      }
-      try UsageEventLogReader.forEachLine(in: file) { line in
-        guard let event = decode(line: line) else { return }
-        let day = formatter.string(from: event.timestamp)
-        guard since.map({ day >= $0 }) ?? true,
+    for file in UsageEventLogReader.jsonlFiles(roots: roots, modifiedSince: nil) {
+      try UsageEventLogReader.forEachLine(in: file.url, matchingAny: [assistantNeedle]) { line in
+        guard let (day, event) = decoders.event(from: line),
               until.map({ day <= $0 }) ?? true else { return }
         if let existing = latestByIdentity[event.identity], existing.timestamp > event.timestamp { return }
         latestByIdentity[event.identity] = event
       }
     }
-    return latestByIdentity.values.sorted {
+    return sorted(latestByIdentity)
+  }
+
+  private static func scan(
+    roots: [URL],
+    since: String,
+    until: String?,
+    calendar: Calendar,
+    cached: [URL: Scan]
+  ) throws -> UsageEventScanOutcome<ClaudeScanContext> {
+    let decoders = Decoders(calendar: calendar)
+    let minimumModificationDate = decoders.day.date(from: since)
+    let scanFloor = minimumModificationDate
+      .flatMap { calendar.date(byAdding: .day, value: -1, to: $0) }
+      .map(decoders.day.string(from:))
+    let timeZoneIdentifier = calendar.timeZone.identifier
+    var entries: [URL: Scan] = [:]
+    var latestByIdentity: [String: TimestampedUsageEvent] = [:]
+    for file in UsageEventLogReader.jsonlFiles(roots: roots, modifiedSince: minimumModificationDate) {
+      let entry: Scan
+      switch UsageEventFileScanPlanner.step(
+        for: file,
+        entry: cached[file.url],
+        since: since,
+        timeZoneIdentifier: timeZoneIdentifier
+      ) {
+      case .reuse(let existing):
+        entry = existing
+      case .resume(let existing):
+        entry = try resume(existing, file: file, decoders: decoders)
+          ?? rescan(file: file, since: since, scanFloor: scanFloor, timeZoneIdentifier: timeZoneIdentifier, decoders: decoders)
+      case .rescan:
+        entry = try rescan(file: file, since: since, scanFloor: scanFloor, timeZoneIdentifier: timeZoneIdentifier, decoders: decoders)
+      }
+      entries[file.url] = entry
+      for cached in entry.events.values where cached.day >= since && (until.map { cached.day <= $0 } ?? true) {
+        // Keep the highest-timestamp record for a given identity, matching the dedup of the
+        // unbounded forward scan, so daily totals do not depend on whether `since` was supplied.
+        if let existing = latestByIdentity[cached.event.identity], existing.timestamp >= cached.event.timestamp { continue }
+        latestByIdentity[cached.event.identity] = cached.event
+      }
+    }
+    return UsageEventScanOutcome(
+      events: sorted(latestByIdentity),
+      entries: entries,
+      listingFloor: minimumModificationDate
+    )
+  }
+
+  /// Reverse scan from the end of the file down to the first event dated before `since`.
+  private static func rescan(
+    file: UsageEventLogFile,
+    since: String,
+    scanFloor: String?,
+    timeZoneIdentifier: String,
+    decoders: Decoders
+  ) throws -> Scan {
+    let region = try UsageEventLogReader.region(of: file.url)
+    var events: [String: CachedUsageEvent] = [:]
+    try UsageEventLogReader.forEachLineFromEnd(in: file.url, endingAt: region.size, matchingAny: [assistantNeedle]) { line in
+      if let rawDay = UsageEventLogReader.timestampDay(in: line), let scanFloor, rawDay < scanFloor { return false }
+      guard let (day, event) = decoders.event(from: line) else { return true }
+      if day < since { return false }
+      if let existing = events[event.identity], existing.event.timestamp >= event.timestamp { return true }
+      events[event.identity] = CachedUsageEvent(day: day, event: event)
+      return true
+    }
+    return Scan.make(
+      file: file,
+      region: region,
+      since: since,
+      timeZoneIdentifier: timeZoneIdentifier,
+      events: events,
+      context: ClaudeScanContext()
+    )
+  }
+
+  /// Forward parse of only the bytes appended since `entry` was taken. Returns nil when the
+  /// file shrank in the meantime, in which case the caller rescans it.
+  private static func resume(_ entry: Scan, file: UsageEventLogFile, decoders: Decoders) throws -> Scan? {
+    let region = try UsageEventLogReader.region(of: file.url)
+    guard let start = entry.scannedThrough, region.size >= start else { return nil }
+    var updated = entry
+    try UsageEventLogReader.forEachLine(in: file.url, from: start, to: region.size, matchingAny: [assistantNeedle]) { line in
+      guard let (day, event) = decoders.event(from: line), day >= entry.since else { return }
+      if let existing = updated.events[event.identity], existing.event.timestamp > event.timestamp { return }
+      updated.events[event.identity] = CachedUsageEvent(day: day, event: event)
+    }
+    updated.advance(file: file, region: region)
+    return updated
+  }
+
+  private static func sorted(_ eventsByIdentity: [String: TimestampedUsageEvent]) -> [TimestampedUsageEvent] {
+    eventsByIdentity.values.sorted {
       ($0.timestamp, $0.identity) < ($1.timestamp, $1.identity)
     }
   }
-
-  private static func dayFormatter(calendar: Calendar) -> DateFormatter {
-    let formatter = DateFormatter()
-    formatter.calendar = calendar
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = calendar.timeZone
-    formatter.dateFormat = "yyyy-MM-dd"
-    return formatter
-  }
-
-}
-
-enum UsageEventLogReader {
-  private static let compactTimestampNeedle = Data(#""timestamp":""#.utf8)
-  private static let spacedTimestampNeedle = Data(#""timestamp": ""#.utf8)
-
-  static func timestampDay(in line: Data) -> String? {
-    let match = line.range(of: compactTimestampNeedle) ?? line.range(of: spacedTimestampNeedle)
-    guard let match else { return nil }
-    let end = line.index(match.upperBound, offsetBy: 10, limitedBy: line.endIndex) ?? line.endIndex
-    guard line.distance(from: match.upperBound, to: end) == 10 else { return nil }
-    return String(data: Data(line[match.upperBound..<end]), encoding: .utf8)
-  }
-
-  static func jsonlFiles(roots: [URL], modifiedSince: Date?) -> [URL] {
-    let manager = FileManager.default
-    let keys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey]
-    return roots.flatMap { root -> [URL] in
-      guard let enumerator = manager.enumerator(
-        at: root,
-        includingPropertiesForKeys: keys,
-        options: [.skipsPackageDescendants, .skipsHiddenFiles]
-      ) else { return [] }
-      return enumerator.compactMap { item in
-        guard let url = item as? URL, url.pathExtension == "jsonl",
-              let values = try? url.resourceValues(forKeys: Set(keys)),
-              values.isRegularFile == true else { return nil }
-        if let modifiedSince, let modified = values.contentModificationDate, modified < modifiedSince { return nil }
-        return url
-      }
-    }.sorted { $0.path < $1.path }
-  }
-
-  static func forEachLine(
-    in url: URL,
-    matchingAny needles: [Data] = [],
-    body: (Data) -> Void
-  ) throws {
-    let handle = try FileHandle(forReadingFrom: url)
-    defer { try? handle.close() }
-    var pending = Data()
-    while let chunk = try handle.read(upToCount: 64 * 1_024), !chunk.isEmpty {
-      pending.append(chunk)
-      while let newline = pending.firstIndex(of: 0x0A) {
-        let lineRange = pending.startIndex..<newline
-        if newline > pending.startIndex,
-           needles.isEmpty || needles.contains(where: { pending.range(of: $0, in: lineRange) != nil }) {
-          body(Data(pending[lineRange]))
-        }
-        pending.removeSubrange(...newline)
-      }
-    }
-    if !pending.isEmpty { body(pending) }
-  }
-
-  static func forEachLineFromEnd(
-    in url: URL,
-    matchingAny needles: [Data] = [],
-    body: (Data) -> Bool
-  ) throws {
-    let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-    var upperBound = data.endIndex
-    while upperBound > data.startIndex {
-      if Task.isCancelled { return }
-      while upperBound > data.startIndex,
-            data[data.index(before: upperBound)] == 0x0A {
-        upperBound = data.index(before: upperBound)
-      }
-      guard upperBound > data.startIndex else { return }
-      var lowerBound = upperBound
-      while lowerBound > data.startIndex {
-        let previous = data.index(before: lowerBound)
-        if data[previous] == 0x0A { break }
-        lowerBound = previous
-      }
-      let lineRange = lowerBound..<upperBound
-      if !lineRange.isEmpty,
-         needles.isEmpty || needles.contains(where: { data.range(of: $0, in: lineRange) != nil }),
-         !body(Data(data[lineRange])) {
-        return
-      }
-      guard lowerBound > data.startIndex else { return }
-      upperBound = data.index(before: lowerBound)
-    }
-  }
-
 }
 
 private struct EventEnvelope: Decodable {
