@@ -5,17 +5,32 @@ import Testing
 private actor RangeRecordingRunner: CCUsageCommandRunner {
   private var calls: [[String]] = []
   private var blockedHistorical = false
+  private var blockWarmup = false
+  private var failFirstDaily: Bool
   private var waiters: [CheckedContinuation<Void, Never>] = []
   private let today: String
 
-  init(today: String, blockedHistorical: Bool = false) {
+  init(
+    today: String,
+    blockedHistorical: Bool = false,
+    blockWarmup: Bool = false,
+    failFirstDaily: Bool = false
+  ) {
     self.today = today
     self.blockedHistorical = blockedHistorical
+    self.blockWarmup = blockWarmup
+    self.failFirstDaily = failFirstDaily
   }
 
   func run(arguments: [String], timeoutSeconds: TimeInterval) async throws -> ProcessResult {
     calls.append(arguments)
-    if blockedHistorical,
+    if arguments.first == "daily", failFirstDaily {
+      failFirstDaily = false
+      throw CocoaError(.fileReadUnknown)
+    }
+    let shouldBlockHistorical = blockedHistorical
+      || (blockWarmup && argument(after: "--since", in: arguments) == "2026-06-01")
+    if shouldBlockHistorical,
        arguments.first == "daily",
        argument(after: "--since", in: arguments) != today {
       await withCheckedContinuation { waiters.append($0) }
@@ -30,6 +45,7 @@ private actor RangeRecordingRunner: CCUsageCommandRunner {
 
   func releaseHistorical() {
     blockedHistorical = false
+    blockWarmup = false
     let pending = waiters
     waiters.removeAll()
     pending.forEach { $0.resume() }
@@ -163,8 +179,58 @@ private struct RangeFixture: Sendable {
     await collector.stop()
   }
 
+  @Test func pollerRetriesInitialFailureAtConfiguredInterval() async throws {
+    let fixture = try await makeFixture(failFirstDaily: true)
+    let registry = try MachineRegistry(sshMachines: [])
+    let store = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: 1, calendar: fixture.calendar)
+    let collector = try MachineCollector(
+      registry: registry,
+      store: store,
+      calendar: fixture.calendar,
+      now: { fixture.now },
+      serviceFactory: { _ in fixture.service }
+    )
+
+    await collector.start(machineIDs: ["local"])
+    try await waitUntil {
+      await store.entry(machineID: "local")?.collectionStatus.lastSuccessAt != nil
+    }
+    let dailyCalls = await fixture.runner.recordedCalls().filter { $0.first == "daily" }
+    #expect(dailyCalls.count >= 2)
+    await collector.stop()
+  }
+
+  @Test func periodicRefreshContinuesWhileHistoryWarms() async throws {
+    let fixture = try await makeFixture(blockWarmup: true)
+    let registry = try MachineRegistry(sshMachines: [])
+    let store = MachineSnapshotStore(registry: registry, refreshIntervalSeconds: 1, calendar: fixture.calendar)
+    let collector = try MachineCollector(
+      registry: registry,
+      store: store,
+      calendar: fixture.calendar,
+      now: { fixture.now },
+      serviceFactory: { _ in fixture.service }
+    )
+
+    await collector.start(machineIDs: ["local"])
+    try await waitUntil {
+      await fixture.runner.recordedCalls().contains { argument(after: "--since", in: $0) == "2026-06-01" }
+    }
+    try await waitUntil {
+      await collector.rangeLoadStates(
+        machine: "local",
+        earliestDate: nil,
+        latestDate: nil
+      ).contains { $0.requestedStart == nil && $0.requestedEnd == nil && $0.phase == .ready }
+    }
+    await fixture.runner.releaseHistorical()
+    await collector.stop()
+  }
+
   private func makeFixture(
-    blockedHistorical: Bool = false
+    blockedHistorical: Bool = false,
+    blockWarmup: Bool = false,
+    failFirstDaily: Bool = false
   ) async throws -> RangeFixture {
     let root = try temporaryDirectory()
     var calendar = Calendar(identifier: .gregorian)
@@ -173,7 +239,12 @@ private struct RangeFixture: Sendable {
     let stateStore = StateStore(fileURL: root.appendingPathComponent("state.json"))
     let calculator = ResetWindowCalculator(calendar: calendar)
     try await stateStore.save(try calculator.validatedState(AppState(), now: now))
-    let runner = RangeRecordingRunner(today: "2026-07-16", blockedHistorical: blockedHistorical)
+    let runner = RangeRecordingRunner(
+      today: "2026-07-16",
+      blockedHistorical: blockedHistorical,
+      blockWarmup: blockWarmup,
+      failFirstDaily: failFirstDaily
+    )
     let service = SnapshotService(
       stateStore: stateStore,
       client: CCUsageClient(commandRunner: runner, machine: "local"),
@@ -189,7 +260,7 @@ private struct RangeFixture: Sendable {
   private func waitUntil(
     _ condition: @escaping @Sendable () async -> Bool
   ) async throws {
-    for _ in 0..<2_000 {
+    for _ in 0..<4_000 {
       if await condition() { return }
       try await Task.sleep(for: .milliseconds(1))
     }

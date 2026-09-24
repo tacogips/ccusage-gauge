@@ -630,6 +630,7 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
   var services: [String: SnapshotService] = [:]
   var generations: [String: UInt64] = [:]
   private var pollers: [String: Task<Void, Never>] = [:]
+  private var warmups: [String: Task<Void, Never>] = [:]
   var inFlight: [MachineRangeLoadKey: Task<MachineCollectionSnapshotResult, Error>] = [:]
   var rangeLoads: [MachineRangeLoadKey: MachineRangeLoadState] = [:]
   private var activeMachineIDs: Set<String>?
@@ -670,11 +671,15 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
 
   public func stop() async {
     let tasks = Array(pollers.values)
+    let warmupTasks = Array(warmups.values)
     pollers.values.forEach { $0.cancel() }
+    warmups.values.forEach { $0.cancel() }
     inFlight.values.forEach { $0.cancel() }
     pollers.removeAll()
+    warmups.removeAll()
     inFlight.removeAll()
     for task in tasks { await task.value }
+    for task in warmupTasks { await task.value }
   }
 
   public func reconcileRegistry(_ updated: MachineRegistry) async throws {
@@ -696,9 +701,11 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
     for id in changedIDs {
       generations[id, default: 0] &+= 1
       pollers[id]?.cancel()
+      warmups[id]?.cancel()
       let machineLoads = inFlight.filter { $0.key.machineID == id }
       machineLoads.values.forEach { $0.cancel() }
       if let poller = pollers.removeValue(forKey: id) { await poller.value }
+      if let warmup = warmups.removeValue(forKey: id) { await warmup.value }
       for key in machineLoads.keys {
         _ = try? await inFlight.removeValue(forKey: key)?.value
         rangeLoads.removeValue(forKey: key)
@@ -722,9 +729,11 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
 
   public func pause(machineID: String) async {
     pollers[machineID]?.cancel()
+    warmups[machineID]?.cancel()
     let machineLoads = inFlight.filter { $0.key.machineID == machineID }
     machineLoads.values.forEach { $0.cancel() }
     if let poller = pollers.removeValue(forKey: machineID) { await poller.value }
+    if let warmup = warmups.removeValue(forKey: machineID) { await warmup.value }
     for key in machineLoads.keys {
       if let load = inFlight.removeValue(forKey: key) { _ = try? await load.value }
       rangeLoads.removeValue(forKey: key)
@@ -838,19 +847,47 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
     let revision = registry.revision
     pollers[descriptor.id] = Task { [weak self] in
       guard let self else { return }
-      let current = self.now()
-      let weekStart = self.calendar.dateInterval(of: .weekOfYear, for: current)?.start ?? self.calendar.startOfDay(for: current)
-      guard (try? await self.collect(
-        descriptor: descriptor,
-        earliestDate: weekStart,
-        latestDate: current,
-        phase: .loadingWeek
-      )) != nil else {
-        return
+      let interval = await self.store.entry(machineID: descriptor.id)?.collectionStatus.refreshIntervalSeconds
+        ?? AppConfiguration.defaultPollIntervalSeconds
+      var current = self.now()
+      while !Task.isCancelled {
+        let weekStart = self.calendar.dateInterval(of: .weekOfYear, for: current)?.start
+          ?? self.calendar.startOfDay(for: current)
+        if (try? await self.collect(
+          descriptor: descriptor,
+          earliestDate: weekStart,
+          latestDate: current,
+          phase: .loadingWeek
+        )) != nil { break }
+        do { try await Task.sleep(for: .seconds(interval)) } catch { return }
+        current = self.now()
       }
       guard !Task.isCancelled else { return }
+      await self.startWarmup(descriptor: descriptor, now: current, revision: revision, generation: generation)
+      while !Task.isCancelled, await self.isCurrent(machineID: descriptor.id, generation: generation, revision: revision) {
+        do { try await Task.sleep(for: .seconds(interval)) } catch { break }
+        guard !Task.isCancelled else { break }
+        _ = try? await self.collect(
+          descriptor: descriptor,
+          earliestDate: nil,
+          latestDate: nil,
+          phase: .refreshing
+        )
+      }
+    }
+  }
+
+  private func startWarmup(
+    descriptor: MachineDescriptor,
+    now: Date,
+    revision: UInt64,
+    generation: UInt64
+  ) {
+    warmups[descriptor.id] = Task { [weak self] in
+      guard let self else { return }
       if let service = await self.service(machineID: descriptor.id) {
         for pending in await service.pendingRangeLoads() {
+          guard !Task.isCancelled else { return }
           Task { [weak self] in
             _ = try? await self?.collect(
               descriptor: descriptor,
@@ -861,9 +898,12 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
           }
         }
       }
-      let monthStart = self.calendar.dateInterval(of: .month, for: current)?.start ?? weekStart
+      guard !Task.isCancelled else { return }
+      let weekStart = self.calendar.dateInterval(of: .weekOfYear, for: now)?.start
+        ?? self.calendar.startOfDay(for: now)
+      let monthStart = self.calendar.dateInterval(of: .month, for: now)?.start ?? weekStart
       let warmStart = self.calendar.date(byAdding: .month, value: -1, to: monthStart) ?? monthStart
-      if let persistedStart = await self.persistedCoverageStart(machineID: descriptor.id, now: current),
+      if let persistedStart = await self.persistedCoverageStart(machineID: descriptor.id, now: now),
          persistedStart <= warmStart {
         _ = await self.store.extendPublishedCoverage(
           machineID: descriptor.id,
@@ -875,18 +915,8 @@ public actor MachineCollector: MachineRegistryRuntimeReconciler {
         _ = try? await self.collect(
           descriptor: descriptor,
           earliestDate: warmStart,
-          latestDate: current,
+          latestDate: now,
           phase: .loadingHistory
-        )
-      }
-      while !Task.isCancelled, await self.isCurrent(machineID: descriptor.id, generation: generation, revision: revision) {
-        do { try await Task.sleep(for: .seconds(max(1, AppConfiguration.defaultPollIntervalSeconds))) }
-        catch { break }
-        _ = try? await self.collect(
-          descriptor: descriptor,
-          earliestDate: nil,
-          latestDate: nil,
-          phase: .refreshing
         )
       }
     }
