@@ -1,0 +1,567 @@
+{
+  "taskId": "dashboard-dark-flat-effort-20260929",
+  "workflowMode": "issue-resolution",
+  "implementationBranch": "main",
+  "baseBranch": "main",
+  "remote": "origin",
+  "originalHead": "806a91921b332be831624e9eef3a90afbe82fe2f",
+  "designDocPaths": [
+    "design-docs/specs/design-dashboard-dark-flat-effort-grouping.md",
+    "design-docs/user-qa/2026-09-29-dashboard-theme-effort-decisions.md",
+    "design-docs/specs/architecture.md"
+  ],
+  "overviewPlanPath": "impl-plans/active/dashboard-dark-flat-effort-overview.md",
+  "evidenceRoot": "tmp/dashboard-dark-flat-effort-20260929",
+  "evidenceLayout": "Dispatcher evidence goes under evidenceRoot/<planId>/attempt-<n>/ (untracked; tmp/ is git-ignored). Plan verification commands also write complete logs to /tmp/ccusage-gauge-effort/<PLAN-ID>-<step>.log per overview protocol 9; copy or reference those logs from the per-attempt directory.",
+  "reviewContext": {
+    "issueReference": "workflow-input:inline (issueTitle 'Dashboard: dark flat theme, foldable panes, active range buttons, effort grouping, distinct model colors'; no GitHub issue URL or number; plan review communication comm-002501)",
+    "userProblem": "The dashboard uses a light-first rounded theme whose dark variant hides the active range preset (dark override selector specificity 0,3,1 beats .range-buttons button.active 0,2,1). The left pane and responsive header cannot fold. The chart stacks by model only and cannot separate reasoning effort. Hash-based model colors collide or look near-identical (for example the sol and luna models).",
+    "requiredOutcomes": [
+      "Dark-only base theme on every surface, chart, form control, and the machine admin panel, with WCAG contrast targets (text >= 4.5:1; muted text, interactive control borders, chart axis >= 3:1).",
+      "Flat square design: no non-zero border-radius, no shadows, gradients, or drop-shadow filters; chart bar and tooltip rects use rx=0; square legend swatches.",
+      "Square buttons with hover, focus-visible, active, disabled, and aria-pressed=true pressed states through a single .toggle-group button[aria-pressed=\"true\"] rule.",
+      "Left filter pane folds horizontally to a rail above 980px and vertically to a bar at 980px and below; the stacked header (1180px and below) folds vertically; fold state persists as sidebarCollapsed and headerCollapsed.",
+      "Range preset buttons show the pressed state from the range() signal, including after restore; Custom is pressed only when range is custom.",
+      "Opt-in modelEffort stack mode ('Model + effort'): Codex turn_context effort parsed in Swift, carried through reconciliation, merge keys, the session_metrics cache column, and GET /api/cost-series?effortBreakdown=true, rendered with an explicit unknown bucket.",
+      "Collision-free model colors from vendor hue families (anthropic warm, openai green/teal/blue, other violet/magenta) with effort shades of the model color, covered by computed deltaE and contrast tests.",
+      "App.tsx split by responsibility (UsageChart, RangeControls, DashboardLayout modules) and ends below 1580 lines.",
+      "Bundled web assets under Sources/AppCore/Resources/Web regenerated last by mise run frontend:build.",
+      "mise run test, mise run lint, mise run frontend:test, and mise run frontend:check pass."
+    ],
+    "nonGoals": [
+      "Effort filters, and effort in /api/metrics, /api/budget, the metric table, or the breakdown panel.",
+      "Claude effort parsing without a verified transcript field (record-only check in EDF-05 Step 0).",
+      "Remote/SSH event transport or remote effort capture.",
+      "Light-theme parity or a light/dark toggle.",
+      "Changes to cost allocation weights, event identity, daily_metrics schema, or a new coverage table."
+    ],
+    "constraints": [
+      "Do not modify unrelated files; preserve unrelated tracked and untracked changes.",
+      "Swift files stay under 1000 lines (MachineDashboardRouter.swift is 998 and must not grow; Snapshot.swift is 966).",
+      "Follow .codex/skills/swift-coding-agent/SKILL.md and run swiftlint on changed Swift files.",
+      "Model-only grouping stays the default; modelEffort is opt-in and persisted like other dashboard view state.",
+      "Never drop usage rows that lack effort; nil effort is its own identity and renders as unknown.",
+      "Responses without effortBreakdown are identical to pre-change responses.",
+      "Only EDF-12 runs mise run frontend:build and writes Sources/AppCore/Resources/Web; it runs last.",
+      "Workers share one working tree on main with no git mutations (no commit, stash, checkout, reset, restore, clean, branches, or worktrees).",
+      "No emojis in code, docs, or commit messages; no AI attribution in commit messages."
+    ],
+    "designDecisionsAndRationale": [
+      "Dark-only theme with CSS custom properties on :root; light theme removed to avoid doubling the flat restyle surface (user-QA default 1, reversible).",
+      "Pressed state uses aria-pressed and one shared selector so no group rule can hide it; this fixes the specificity root cause of the range bug.",
+      "Fold state persisted server-side in DashboardUIState (decodeIfPresent, default false, always encoded); CSS alone decides fold effect per breakpoint and collapsed content stays mounted.",
+      "Effort follows model per Codex turn_context (not directory); a turn_context without effort resets to nil; forward, reverse, and resume scans must agree.",
+      "UsageEffort.normalized trims, lowercases, accepts ^[a-z0-9_-]{1,32}$, else nil; effort never affects event identity.",
+      "Session reconciliation bucket, SessionCoalesceKey, and SessionRowKey include effort so effort rows neither collapse nor replace each other; per-model totals unchanged.",
+      "session_metrics gains effort TEXT; for the local machine only, the migration clears directory_coverage_ranges in the same transaction so the existing backfill re-derives effort; SSH caches keep coverage.",
+      "effortBreakdown parsing reuses dashboardDirectoryRequest with a distinct invalid_breakdown error; shared error mapping keeps MachineDashboardRouter.swift under 1000 lines.",
+      "Model colors: vendor classification from name, sorted-catalog linear-probing allocation, overrides do not consume slots, effort shades by HSL lightness offsets, unknown desaturated.",
+      "Plans run in four waves with disjoint per-wave writePaths; EDF-12 serially reconciles DRIFT and BLOCKED-BY-FOREIGN entries."
+    ],
+    "intentionalTradeoffs": [
+      "Model colors depend on the model catalog: stable for a fixed catalog, contested slots may move when models are added or removed (documented in seriesColors.ts).",
+      "Past vendor family capacity, colors are reused in probe order rather than erroring.",
+      "One-time local provenance backfill on first launch after upgrade, same cost as the earlier directory migration.",
+      "Effort splits sub-daily session buckets into more rows in memory and cache; non-breakdown responses collapse them so payload size is unchanged.",
+      "App.tsx typecheck may fail in waves 1-2 until EDF-11 rewires it; wave 1-2 frontend plans only require no errors in their own files.",
+      "Removing the light theme is a visible change recorded as a reversible default."
+    ],
+    "supportedEdgeCases": [
+      "Legacy persisted dashboard state without stackBy or fold keys restores to model and expanded.",
+      "Unknown stackBy values coerce to model.",
+      "Non-string Codex effort values (number, object, array) decode as nil without dropping the turn_context or its model.",
+      "Mid-session effort changes and turns without effort; resume after appended lines keeps the last turn's effort.",
+      "Claude, SSH-machine, ccusage aggregate, and log-less historical rows carry nil effort and render as '<model> (unknown)'.",
+      "Legacy SQLite cache without the effort column: local cache clears provenance coverage once; SSH cache preserves it; second open does not clear again.",
+      "effortBreakdown duplicate item, invalid value, or use on non-cost-series routes returns 400 invalid_breakdown; directoryBreakdown errors keep invalid_directory.",
+      "effortBreakdown composes with directory filters and directoryBreakdown.",
+      "Custom editor opened while a preset is applied does not press Custom; Custom exposes aria-expanded.",
+      "Collapsing the header while the custom-range editor is open hides the editor without applying or discarding its draft.",
+      "Header fold toggle hidden above 1180px; header always expanded there regardless of stored value.",
+      "Color overrides from /api/chart-colors dark.models and dark.machines still win."
+    ],
+    "outOfScopeEdgeCases": [
+      "Light-theme users and chartColors.light overrides (config stays valid, SPA ignores it).",
+      "Effort for remote SSH machines or ccusage-only data.",
+      "Deterministic ordering of rows that differ only in effort at the same timestamp and model when effortBreakdown=true (frontend does not depend on row order; tests compare order-insensitively).",
+      "ICU localeCompare legend-order differences versus code-unit sort for mixed-case or control-character identities in non-modelEffort modes."
+    ],
+    "residualRisksFromReview": [
+      "EDF-04: tests/api.test.ts has no existing cost-series cases; use the getJSON/requestJSON fetch-stub pattern near api.test.ts:74 as the template.",
+      "EDF-10: compareSeriesIdentities localeCompare may differ from code-unit sort for unusual identities; existing tests are the guard.",
+      "EDF-08: collapsedSessions dictionary order may make effort-distinct rows order nondeterministic; compare order-insensitively.",
+      "Shared .build contention in wave 2; App.tsx typecheck window until EDF-11; palette threshold feasibility enforced by computed tests; Codex effort key confirmed in EDF-05 Step 0.",
+      "Byte-level emoji scan of edited plan files was not run during plan review (sandbox denial); EDF-12 runs the emoji grep over changed files."
+    ],
+    "sourcePaths": [
+      "frontend/src/App.tsx",
+      "frontend/src/DashboardComponents.tsx",
+      "frontend/src/MachineAdminPanel.tsx",
+      "frontend/src/styles.css",
+      "frontend/src/seriesColors.ts",
+      "frontend/src/usageChartSeries.ts",
+      "frontend/src/dashboardDirectoryState.ts",
+      "frontend/src/dashboardStatePersistence.ts",
+      "frontend/src/api.ts",
+      "frontend/index.html",
+      "frontend/uno.config.ts",
+      "Sources/AppCore/CodexUsageEvents.swift",
+      "Sources/AppCore/ClaudeUsageEvents.swift",
+      "Sources/AppCore/CCUsage.swift",
+      "Sources/AppCore/Snapshot.swift",
+      "Sources/AppCore/MultiSourceUsageCoalescing.swift",
+      "Sources/AppCore/CostSnapshotMerge.swift",
+      "Sources/AppCore/AggregationCache.swift",
+      "Sources/AppCore/DashboardQuery.swift",
+      "Sources/AppCore/DashboardDirectoryAPI.swift",
+      "Sources/AppCore/HTTPService.swift",
+      "Sources/AppCore/MachineDashboardRouter.swift",
+      "Sources/AppCore/MachineDashboardRouter+DirectoryQueries.swift",
+      "Sources/AppCore/DashboardStateStore.swift",
+      "Sources/AppCore/Resources/Web",
+      "mise.toml"
+    ]
+  },
+  "plans": [
+    {
+      "planId": "EDF-01",
+      "planPath": "impl-plans/active/effort-01-swift-record-contract.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "Sources/AppCore/UsageEffort.swift",
+        "Sources/AppCore/ClaudeUsageEvents.swift",
+        "Sources/AppCore/CCUsage.swift",
+        "Tests/AppCoreTests/UsageEffortContractTests.swift",
+        "impl-plans/active/effort-01-swift-record-contract.md"
+      ],
+      "sharedPaths": [],
+      "acceptanceCriteria": [
+        "UsageEffort.normalized trims, lowercases, and accepts only ^[a-z0-9_-]{1,32}$, else nil.",
+        "TimestampedUsageEvent, CCUsageMetricRecord, and CCUsageSessionMetricRecord gain optional effort as the last defaulted init parameter; identity unchanged.",
+        "Records decode effort with decodeIfPresent and omit it from encoding when nil.",
+        "CCUsageClient re-stamp sites copy effort wherever they copy directory.",
+        "UsageEffortContractTests pass; existing Directory suites stay green; swiftlint clean; files under 1000 lines."
+      ],
+      "verification": [
+        "mkdir -p /tmp/ccusage-gauge-effort",
+        "swift build > /tmp/ccusage-gauge-effort/EDF-01-build.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter UsageEffortContractTests > /tmp/ccusage-gauge-effort/EDF-01-test.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter Directory > /tmp/ccusage-gauge-effort/EDF-01-directory.log 2>&1; echo \"exit=$?\"",
+        "swiftlint lint --quiet Sources/AppCore/UsageEffort.swift Sources/AppCore/ClaudeUsageEvents.swift Sources/AppCore/CCUsage.swift Tests/AppCoreTests/UsageEffortContractTests.swift > /tmp/ccusage-gauge-effort/EDF-01-lint.log 2>&1; echo \"exit=$?\"",
+        "wc -l Sources/AppCore/CCUsage.swift Sources/AppCore/ClaudeUsageEvents.swift"
+      ]
+    },
+    {
+      "planId": "EDF-02",
+      "planPath": "impl-plans/active/effort-02-dashboard-ui-state.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "Sources/AppCore/DashboardStateStore.swift",
+        "Tests/AppCoreTests/DashboardUIStateFoldEffortTests.swift",
+        "impl-plans/active/effort-02-dashboard-ui-state.md"
+      ],
+      "sharedPaths": [],
+      "acceptanceCriteria": [
+        "DashboardUIState accepts stackBy modelEffort in decode coercion and validate() from one shared allowed-set constant; unknown values coerce to model.",
+        "sidebarCollapsed and headerCollapsed are decoded with decodeIfPresent defaulting to false and always encoded.",
+        "Legacy JSON without the new keys loads and validates; save and load round-trips.",
+        "DashboardUIStateFoldEffortTests and DashboardStateStoreTests pass; swiftlint clean."
+      ],
+      "verification": [
+        "mkdir -p /tmp/ccusage-gauge-effort",
+        "swift build > /tmp/ccusage-gauge-effort/EDF-02-build.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter DashboardUIStateFoldEffortTests > /tmp/ccusage-gauge-effort/EDF-02-test.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter DashboardStateStoreTests > /tmp/ccusage-gauge-effort/EDF-02-store.log 2>&1; echo \"exit=$?\"",
+        "swiftlint lint --quiet Sources/AppCore/DashboardStateStore.swift Tests/AppCoreTests/DashboardUIStateFoldEffortTests.swift > /tmp/ccusage-gauge-effort/EDF-02-lint.log 2>&1; echo \"exit=$?\""
+      ]
+    },
+    {
+      "planId": "EDF-03",
+      "planPath": "impl-plans/active/dashboard-03-dark-flat-theme.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "frontend/src/styles.css",
+        "frontend/src/DashboardComponents.tsx",
+        "frontend/src/MachineAdminPanel.tsx",
+        "frontend/tests/flatThemeStyles.test.ts",
+        "impl-plans/active/dashboard-03-dark-flat-theme.md"
+      ],
+      "sharedPaths": [],
+      "sharedPathNotes": [
+        {
+          "path": "frontend/src/DashboardComponents.tsx",
+          "intendedEdit": "Only add a missing class hook if styling requires it; expected unchanged."
+        },
+        {
+          "path": "frontend/src/MachineAdminPanel.tsx",
+          "intendedEdit": "Only add a missing class hook if styling requires it; expected unchanged."
+        }
+      ],
+      "acceptanceCriteria": [
+        "styles.css starts with a :root token block declaring color-scheme: dark, --color-bg #0f1115, --color-surface #15171c, and the listed tokens; color literals appear only inside :root.",
+        "No non-zero border-radius, no box-shadow/text-shadow other than none, no gradient(, no drop-shadow, no data-color-scheme selectors.",
+        "Single pressed rule .toggle-group button[aria-pressed=\"true\"]; base button states for hover, focus-visible, active, disabled.",
+        "Contrast targets met, including --color-control-border and --color-chart-axis >= 3:1.",
+        "Fold CSS for .sidebar-collapsed, .pane-fold-bar, .header-collapsed, and .header-fold-toggle per breakpoint contract.",
+        "flatThemeStyles and machineAdminPanel tests pass; no type errors in own files."
+      ],
+      "verification": [
+        "mkdir -p /tmp/ccusage-gauge-effort",
+        "cd frontend && bun test tests/flatThemeStyles.test.ts > /tmp/ccusage-gauge-effort/EDF-03-test.log 2>&1; echo \"exit=$?\"",
+        "cd frontend && bun test tests/machineAdminPanel.test.ts > /tmp/ccusage-gauge-effort/EDF-03-admin.log 2>&1; echo \"exit=$?\"",
+        "cd frontend && bun run check > /tmp/ccusage-gauge-effort/EDF-03-check.log 2>&1; echo \"exit=$?\"; grep -E \"src/(DashboardComponents|MachineAdminPanel)\\.tsx\" /tmp/ccusage-gauge-effort/EDF-03-check.log; echo \"own-errors-grep-exit=$?\""
+      ]
+    },
+    {
+      "planId": "EDF-04",
+      "planPath": "impl-plans/active/effort-04-frontend-contract.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "frontend/src/effort.ts",
+        "frontend/src/api.ts",
+        "frontend/tests/effort.test.ts",
+        "frontend/tests/api.test.ts",
+        "impl-plans/active/effort-04-frontend-contract.md"
+      ],
+      "sharedPaths": [],
+      "acceptanceCriteria": [
+        "src/effort.ts exports EFFORT_ORDER, UNKNOWN_EFFORT, effortRank, and effortLabel with the pinned semantics and no imports from usageChartSeries.ts.",
+        "api.ts adds CostRow.effort?: string, stackBy including modelEffort, and optional sidebarCollapsed and headerCollapsed.",
+        "effort and api tests pass; no type errors in effort.ts or api.ts."
+      ],
+      "verification": [
+        "mkdir -p /tmp/ccusage-gauge-effort",
+        "cd frontend && bun test tests/effort.test.ts tests/api.test.ts > /tmp/ccusage-gauge-effort/EDF-04-test.log 2>&1; echo \"exit=$?\"",
+        "cd frontend && bun run check > /tmp/ccusage-gauge-effort/EDF-04-check.log 2>&1; echo \"exit=$?\"; grep -E \"src/(effort|api)\\.ts\" /tmp/ccusage-gauge-effort/EDF-04-check.log; echo \"own-errors-grep-exit=$?\""
+      ]
+    },
+    {
+      "planId": "EDF-05",
+      "planPath": "impl-plans/active/effort-05-codex-effort-parsing.md",
+      "wave": 2,
+      "dependsOn": ["EDF-01"],
+      "writePaths": [
+        "Sources/AppCore/CodexUsageEvents.swift",
+        "Tests/AppCoreTests/CodexEffortParsingTests.swift",
+        "impl-plans/active/effort-05-codex-effort-parsing.md"
+      ],
+      "sharedPaths": [],
+      "acceptanceCriteria": [
+        "Step 0 key confirmation recorded (key names or 'not accessible'); no Claude parsing added.",
+        "Codex turn_context effort is tolerantly decoded, normalized, and attached to governed token-count events; a turn without effort resets to nil.",
+        "Forward, reverse, and resume scans produce identical (identity, model, effort) associations.",
+        "CodexEffortParsingTests, IncrementalScanTests, and Directory suites pass; swiftlint clean; file under 1000 lines."
+      ],
+      "verification": [
+        "mkdir -p /tmp/ccusage-gauge-effort",
+        "swift build > /tmp/ccusage-gauge-effort/EDF-05-build.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter CodexEffortParsingTests > /tmp/ccusage-gauge-effort/EDF-05-test.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter IncrementalScanTests > /tmp/ccusage-gauge-effort/EDF-05-incremental.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter Directory > /tmp/ccusage-gauge-effort/EDF-05-directory.log 2>&1; echo \"exit=$?\"",
+        "swiftlint lint --quiet Sources/AppCore/CodexUsageEvents.swift Tests/AppCoreTests/CodexEffortParsingTests.swift > /tmp/ccusage-gauge-effort/EDF-05-lint.log 2>&1; echo \"exit=$?\"",
+        "wc -l Sources/AppCore/CodexUsageEvents.swift"
+      ]
+    },
+    {
+      "planId": "EDF-06",
+      "planPath": "impl-plans/active/effort-06-reconciliation-merge-keys.md",
+      "wave": 2,
+      "dependsOn": ["EDF-01"],
+      "writePaths": [
+        "Sources/AppCore/Snapshot.swift",
+        "Sources/AppCore/Snapshot+Reconciliation.swift",
+        "Sources/AppCore/MultiSourceUsageCoalescing.swift",
+        "Sources/AppCore/CostSnapshotMerge.swift",
+        "Tests/AppCoreTests/EffortReconciliationTests.swift",
+        "impl-plans/active/effort-06-reconciliation-merge-keys.md"
+      ],
+      "sharedPaths": [],
+      "sharedPathNotes": [
+        {
+          "path": "Sources/AppCore/Snapshot+Reconciliation.swift",
+          "intendedEdit": "Create only if Snapshot.swift would reach 990 lines or more; move reconciledTimestampedSessions, AgentModelDay, and AgentModelBucket unchanged."
+        }
+      ],
+      "acceptanceCriteria": [
+        "Reconciliation buckets, SessionCoalesceKey, and SessionRowKey include effort with nil as a distinct identity.",
+        "Per-model totals equal pre-change totals; no row is dropped or replaced when rows differ only in effort.",
+        "EffortReconciliationTests, MultiSourceUsageCoalescingTests, and Directory suites pass; swiftlint clean; Snapshot.swift under 1000 lines."
+      ],
+      "verification": [
+        "mkdir -p /tmp/ccusage-gauge-effort",
+        "swift build > /tmp/ccusage-gauge-effort/EDF-06-build.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter EffortReconciliationTests > /tmp/ccusage-gauge-effort/EDF-06-test.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter MultiSourceUsageCoalescingTests > /tmp/ccusage-gauge-effort/EDF-06-coalesce.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter Directory > /tmp/ccusage-gauge-effort/EDF-06-directory.log 2>&1; echo \"exit=$?\"",
+        "swiftlint lint --quiet Sources/AppCore/Snapshot.swift Sources/AppCore/MultiSourceUsageCoalescing.swift Sources/AppCore/CostSnapshotMerge.swift Tests/AppCoreTests/EffortReconciliationTests.swift > /tmp/ccusage-gauge-effort/EDF-06-lint.log 2>&1; echo \"exit=$?\"",
+        "wc -l Sources/AppCore/Snapshot.swift Sources/AppCore/Snapshot+Reconciliation.swift"
+      ]
+    },
+    {
+      "planId": "EDF-07",
+      "planPath": "impl-plans/active/effort-07-aggregation-cache.md",
+      "wave": 2,
+      "dependsOn": ["EDF-01"],
+      "writePaths": [
+        "Sources/AppCore/AggregationCache.swift",
+        "Tests/AppCoreTests/EffortAggregationCacheTests.swift",
+        "impl-plans/active/effort-07-aggregation-cache.md"
+      ],
+      "sharedPaths": [],
+      "acceptanceCriteria": [
+        "session_metrics gains effort TEXT in CREATE and an idempotent hasColumn ALTER migration.",
+        "For the local machine only, ALTER and DELETE FROM directory_coverage_ranges commit in one transaction; SSH caches keep coverage; a second open does not clear again.",
+        "readSessions and insertSessions read and bind effort; daily_metrics untouched.",
+        "EffortAggregationCacheTests, CacheLifecycleTests, and directory/cache regression suites pass; swiftlint clean; file under 1000 lines."
+      ],
+      "verification": [
+        "mkdir -p /tmp/ccusage-gauge-effort",
+        "swift build > /tmp/ccusage-gauge-effort/EDF-07-build.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter EffortAggregationCacheTests > /tmp/ccusage-gauge-effort/EDF-07-test.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter CacheLifecycleTests > /tmp/ccusage-gauge-effort/EDF-07-lifecycle.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter \"DirectorySQLiteRegressionTests|DirectoryCacheMigrationTests|UsageAggregationCacheTests\" > /tmp/ccusage-gauge-effort/EDF-07-regression.log 2>&1; echo \"exit=$?\"",
+        "swiftlint lint --quiet Sources/AppCore/AggregationCache.swift Tests/AppCoreTests/EffortAggregationCacheTests.swift > /tmp/ccusage-gauge-effort/EDF-07-lint.log 2>&1; echo \"exit=$?\"",
+        "wc -l Sources/AppCore/AggregationCache.swift"
+      ]
+    },
+    {
+      "planId": "EDF-08",
+      "planPath": "impl-plans/active/effort-08-cost-series-api.md",
+      "wave": 2,
+      "dependsOn": ["EDF-01"],
+      "writePaths": [
+        "Sources/AppCore/DashboardQuery.swift",
+        "Sources/AppCore/DashboardDirectoryAPI.swift",
+        "Sources/AppCore/HTTPService.swift",
+        "Sources/AppCore/MachineDashboardRouter.swift",
+        "Sources/AppCore/MachineDashboardRouter+DirectoryQueries.swift",
+        "Tests/AppCoreTests/EffortCostSeriesTests.swift",
+        "impl-plans/active/effort-08-cost-series-api.md"
+      ],
+      "sharedPaths": [],
+      "acceptanceCriteria": [
+        "GET /api/cost-series accepts a single optional effortBreakdown=true|false on HTTPService and MachineDashboardRouter; violations return 400 invalid_breakdown; directoryBreakdown errors keep invalid_directory.",
+        "Omitted or false effortBreakdown responses are identical to pre-change behavior (no effort key, same rows, order, count).",
+        "effortBreakdown=true yields effort-distinct rows whose totals equal the non-breakdown totals, composing with directory filters and directoryBreakdown.",
+        "EffortCostSeriesTests, Directory, DashboardQueryTests, and APIRouteTests pass; swiftlint clean; MachineDashboardRouter.swift at most 998 lines."
+      ],
+      "verification": [
+        "mkdir -p /tmp/ccusage-gauge-effort",
+        "swift build > /tmp/ccusage-gauge-effort/EDF-08-build.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter EffortCostSeriesTests > /tmp/ccusage-gauge-effort/EDF-08-test.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter Directory > /tmp/ccusage-gauge-effort/EDF-08-directory.log 2>&1; echo \"exit=$?\"",
+        "swift test --filter \"DashboardQueryTests|APIRouteTests\" > /tmp/ccusage-gauge-effort/EDF-08-dashboard.log 2>&1; echo \"exit=$?\"",
+        "swiftlint lint --quiet Sources/AppCore/DashboardQuery.swift Sources/AppCore/DashboardDirectoryAPI.swift Sources/AppCore/HTTPService.swift Sources/AppCore/MachineDashboardRouter.swift \"Sources/AppCore/MachineDashboardRouter+DirectoryQueries.swift\" Tests/AppCoreTests/EffortCostSeriesTests.swift > /tmp/ccusage-gauge-effort/EDF-08-lint.log 2>&1; echo \"exit=$?\"",
+        "wc -l Sources/AppCore/MachineDashboardRouter.swift Sources/AppCore/DashboardQuery.swift Sources/AppCore/HTTPService.swift"
+      ]
+    },
+    {
+      "planId": "EDF-09",
+      "planPath": "impl-plans/active/dashboard-09-model-colors.md",
+      "wave": 2,
+      "dependsOn": ["EDF-04"],
+      "writePaths": [
+        "frontend/src/seriesColors.ts",
+        "frontend/tests/seriesColors.test.ts",
+        "impl-plans/active/dashboard-09-model-colors.md"
+      ],
+      "sharedPaths": [],
+      "acceptanceCriteria": [
+        "seriesColors.ts exports ModelVendor, vendorForModel, MODEL_COLOR_FAMILIES, allocateModelColors, effortShade, SeriesKind, seriesColor(kind, key, overrides?), and CHART_BACKGROUND = \"#15171c\".",
+        "Light palettes, ColorScheme, and the model hash palette are removed (grep -cw light = 0, grep -c ColorScheme = 0).",
+        "Family deltaE >= 20, contrast >= 3:1 on CHART_BACKGROUND, sol and luna distinct, overrides consume no slot, effort shades pairwise deltaE >= 10 with monotonic lightness.",
+        "Existing dark machine and subdirectory colors unchanged (machine local is #8fa6b5).",
+        "seriesColors tests pass; no type errors in seriesColors.ts."
+      ],
+      "verification": [
+        "mkdir -p /tmp/ccusage-gauge-effort",
+        "cd frontend && bun test tests/seriesColors.test.ts > /tmp/ccusage-gauge-effort/EDF-09-test.log 2>&1; echo \"exit=$?\"",
+        "cd frontend && bun run check > /tmp/ccusage-gauge-effort/EDF-09-check.log 2>&1; echo \"exit=$?\"; grep -E \"src/seriesColors\\.ts\" /tmp/ccusage-gauge-effort/EDF-09-check.log; echo \"own-errors-grep-exit=$?\""
+      ]
+    },
+    {
+      "planId": "EDF-10",
+      "planPath": "impl-plans/active/effort-10-frontend-effort-series.md",
+      "wave": 2,
+      "dependsOn": ["EDF-04"],
+      "writePaths": [
+        "frontend/src/usageChartSeries.ts",
+        "frontend/src/dashboardDirectoryState.ts",
+        "frontend/tests/usageChart.test.ts",
+        "frontend/tests/dashboardDirectoryState.test.ts",
+        "impl-plans/active/effort-10-frontend-effort-series.md"
+      ],
+      "sharedPaths": [],
+      "acceptanceCriteria": [
+        "StackBy includes modelEffort; identity is model + U+001F + effort; modelEffortParts splits on the last U+001F; labels are '<model> (<effort|unknown>)'.",
+        "compareSeriesIdentities orders by model, then effort rank, then effort string, unknown last.",
+        "costSeriesDataPath appends effortBreakdown=true only for modelEffort; restoredStackBy accepts modelEffort; default stays model.",
+        "dashboardDirectoryState.test.ts seriesColor calls migrated to seriesColor(\"subdirectory\", identity).",
+        "usageChart and dashboardDirectoryState tests pass (rename-flow cases may be BLOCKED-BY-FOREIGN until EDF-09 lands); no type errors in own files."
+      ],
+      "verification": [
+        "mkdir -p /tmp/ccusage-gauge-effort",
+        "cd frontend && bun test tests/usageChart.test.ts tests/dashboardDirectoryState.test.ts > /tmp/ccusage-gauge-effort/EDF-10-test.log 2>&1; echo \"exit=$?\"",
+        "cd frontend && bun run check > /tmp/ccusage-gauge-effort/EDF-10-check.log 2>&1; echo \"exit=$?\"; grep -E \"src/(usageChartSeries|dashboardDirectoryState)\\.ts\" /tmp/ccusage-gauge-effort/EDF-10-check.log; echo \"own-errors-grep-exit=$?\""
+      ]
+    },
+    {
+      "planId": "EDF-11",
+      "planPath": "impl-plans/active/dashboard-11-app-split-wiring.md",
+      "wave": 3,
+      "dependsOn": ["EDF-02", "EDF-03", "EDF-04", "EDF-08", "EDF-09", "EDF-10"],
+      "writePaths": [
+        "frontend/src/App.tsx",
+        "frontend/src/UsageChart.tsx",
+        "frontend/src/RangeControls.tsx",
+        "frontend/src/rangeControls.ts",
+        "frontend/src/DashboardLayout.tsx",
+        "frontend/src/dashboardLayoutState.ts",
+        "frontend/index.html",
+        "frontend/tests/rangeControls.test.ts",
+        "frontend/tests/dashboardLayoutState.test.ts",
+        "frontend/tests/appMarkupGuards.test.ts",
+        "impl-plans/active/dashboard-11-app-split-wiring.md"
+      ],
+      "sharedPaths": [],
+      "acceptanceCriteria": [
+        "App.tsx split into UsageChart.tsx, RangeControls.tsx, rangeControls.ts, DashboardLayout.tsx, and dashboardLayoutState.ts; App.tsx below 1580 lines.",
+        "Range presets pressed via rangeButtonPressed on the range() signal with aria-pressed strings; Custom pressed only for custom range and exposes aria-expanded.",
+        "Fold shell markup matches overview section 4 contract; fold state restored and persisted; collapsed content stays mounted.",
+        "Light/dark toggle, colorScheme signal, localStorage key, and prefers-color-scheme read removed; index.html declares color-scheme dark.",
+        "Model + effort stack button; colors via allocateModelColors, seriesColor, and effortShade; chart rects rx=0.",
+        "Full bun test, bun run check, and bun run build exit 0."
+      ],
+      "verification": [
+        "mkdir -p /tmp/ccusage-gauge-effort",
+        "cd frontend && bun test > /tmp/ccusage-gauge-effort/EDF-11-test.log 2>&1; echo \"exit=$?\"",
+        "cd frontend && bun run check > /tmp/ccusage-gauge-effort/EDF-11-check.log 2>&1; echo \"exit=$?\"",
+        "cd frontend && bun run build > /tmp/ccusage-gauge-effort/EDF-11-vite-build.log 2>&1; echo \"exit=$?\"",
+        "wc -l frontend/src/App.tsx"
+      ]
+    },
+    {
+      "planId": "EDF-12",
+      "planPath": "impl-plans/active/dashboard-12-finalize-assets-gate.md",
+      "wave": 4,
+      "dependsOn": ["EDF-01", "EDF-02", "EDF-03", "EDF-04", "EDF-05", "EDF-06", "EDF-07", "EDF-08", "EDF-09", "EDF-10", "EDF-11"],
+      "writePaths": [
+        "Sources/AppCore/Resources/Web",
+        "impl-plans/active/dashboard-dark-flat-effort-overview.md",
+        "design-docs/specs/design-dashboard-dark-flat-effort-grouping.md",
+        "impl-plans/active/dashboard-12-finalize-assets-gate.md"
+      ],
+      "sharedPaths": [
+        "Sources/AppCore/UsageEffort.swift",
+        "Sources/AppCore/ClaudeUsageEvents.swift",
+        "Sources/AppCore/CCUsage.swift",
+        "Tests/AppCoreTests/UsageEffortContractTests.swift",
+        "Sources/AppCore/DashboardStateStore.swift",
+        "Tests/AppCoreTests/DashboardUIStateFoldEffortTests.swift",
+        "frontend/src/styles.css",
+        "frontend/src/DashboardComponents.tsx",
+        "frontend/src/MachineAdminPanel.tsx",
+        "frontend/tests/flatThemeStyles.test.ts",
+        "frontend/src/effort.ts",
+        "frontend/src/api.ts",
+        "frontend/tests/effort.test.ts",
+        "frontend/tests/api.test.ts",
+        "Sources/AppCore/CodexUsageEvents.swift",
+        "Tests/AppCoreTests/CodexEffortParsingTests.swift",
+        "Sources/AppCore/Snapshot.swift",
+        "Sources/AppCore/Snapshot+Reconciliation.swift",
+        "Sources/AppCore/MultiSourceUsageCoalescing.swift",
+        "Sources/AppCore/CostSnapshotMerge.swift",
+        "Tests/AppCoreTests/EffortReconciliationTests.swift",
+        "Sources/AppCore/AggregationCache.swift",
+        "Tests/AppCoreTests/EffortAggregationCacheTests.swift",
+        "Sources/AppCore/DashboardQuery.swift",
+        "Sources/AppCore/DashboardDirectoryAPI.swift",
+        "Sources/AppCore/HTTPService.swift",
+        "Sources/AppCore/MachineDashboardRouter.swift",
+        "Sources/AppCore/MachineDashboardRouter+DirectoryQueries.swift",
+        "Tests/AppCoreTests/EffortCostSeriesTests.swift",
+        "frontend/src/seriesColors.ts",
+        "frontend/tests/seriesColors.test.ts",
+        "frontend/src/usageChartSeries.ts",
+        "frontend/src/dashboardDirectoryState.ts",
+        "frontend/tests/usageChart.test.ts",
+        "frontend/tests/dashboardDirectoryState.test.ts",
+        "frontend/src/App.tsx",
+        "frontend/src/UsageChart.tsx",
+        "frontend/src/RangeControls.tsx",
+        "frontend/src/rangeControls.ts",
+        "frontend/src/DashboardLayout.tsx",
+        "frontend/src/dashboardLayoutState.ts",
+        "frontend/index.html",
+        "frontend/tests/rangeControls.test.ts",
+        "frontend/tests/dashboardLayoutState.test.ts",
+        "frontend/tests/appMarkupGuards.test.ts"
+      ],
+      "sharedPathNotes": [
+        {
+          "path": "Sources/AppCore/Resources/Web",
+          "intendedEdit": "Regenerated only by mise run frontend:build as the final step after all source edits; rerun if any source changes afterwards."
+        },
+        {
+          "path": "design-docs/specs/design-dashboard-dark-flat-effort-grouping.md",
+          "intendedEdit": "Status line only, set to Implemented."
+        },
+        {
+          "path": "impl-plans/active/dashboard-dark-flat-effort-overview.md",
+          "intendedEdit": "Status to Completed and a summary appended to the Progress Log (plans done, repairs, gate results with log paths, residual items)."
+        },
+        {
+          "path": "Sources/AppCore/MachineDashboardRouter.swift",
+          "intendedEdit": "Serial repair only for recorded DRIFT, BLOCKED-BY-FOREIGN, or gate failures; must stay at most 998 lines."
+        },
+        {
+          "path": "frontend/src/App.tsx",
+          "intendedEdit": "Serial repair only for recorded DRIFT, BLOCKED-BY-FOREIGN, or gate failures; minimal change restoring EDF-11 contract."
+        },
+        {
+          "path": "frontend/src/seriesColors.ts",
+          "intendedEdit": "Serial repair only for recorded DRIFT, BLOCKED-BY-FOREIGN, or gate failures; minimal change restoring EDF-09 contract."
+        },
+        {
+          "path": "frontend/tests/dashboardDirectoryState.test.ts",
+          "intendedEdit": "Serial repair only if the EDF-10 seriesColor migration is still failing after EDF-09 landed."
+        }
+      ],
+      "sharedPathsPolicy": "Every sharedPaths entry is another plan's writePaths entry. EDF-12 may edit it only to repair a DRIFT or BLOCKED-BY-FOREIGN entry recorded in a Progress Log, or a failure of this plan's gate, with the minimal change that restores the owning plan's contract. No new features, refactors, or formatting sweeps.",
+      "acceptanceCriteria": [
+        "Every recorded DRIFT and BLOCKED-BY-FOREIGN entry is repaired and the owning plan's verification re-run.",
+        "Contract greps pass: effort in CCUsage, CodexUsageEvents, DashboardQuery, AggregationCache; effortBreakdown in HTTPService and router files; --color-surface #15171c matches CHART_BACKGROUND; no data-color-scheme or colorScheme in frontend/src.",
+        "All Sources/AppCore Swift files under 1000 lines; App.tsx below 1580 lines.",
+        "Full gate exits 0: swift build, swift test, swiftlint on changed Swift files, mise run lint, mise run test, mise run frontend:test, mise run frontend:check, then mise run frontend:build last.",
+        "Regenerated assets contain no data-color-scheme and contain aria-pressed.",
+        "No emojis in changed files; design Status set to Implemented; overview and EDF-12 Status set to Completed."
+      ],
+      "verification": [
+        "mkdir -p /tmp/ccusage-gauge-effort",
+        "grep -n \"effort\" Sources/AppCore/CCUsage.swift Sources/AppCore/CodexUsageEvents.swift Sources/AppCore/DashboardQuery.swift Sources/AppCore/AggregationCache.swift",
+        "grep -n \"effortBreakdown\" Sources/AppCore/HTTPService.swift Sources/AppCore/MachineDashboardRouter.swift \"Sources/AppCore/MachineDashboardRouter+DirectoryQueries.swift\"",
+        "grep -n -- \"--color-surface: #15171c\" frontend/src/styles.css && grep -n 'CHART_BACKGROUND = \"#15171c\"' frontend/src/seriesColors.ts",
+        "! grep -rn \"data-color-scheme\\|colorScheme\" frontend/src",
+        "wc -l Sources/AppCore/*.swift | sort -n | tail -5",
+        "wc -l frontend/src/App.tsx",
+        "swift build > /tmp/ccusage-gauge-effort/EDF-12-swift-build.log 2>&1; echo \"exit=$?\"",
+        "swift test > /tmp/ccusage-gauge-effort/EDF-12-swift-test.log 2>&1; echo \"exit=$?\"",
+        "git status --porcelain -- Sources Tests | awk '$NF ~ /\\.swift$/ {print $NF}' | xargs swiftlint lint --quiet > /tmp/ccusage-gauge-effort/EDF-12-swiftlint.log 2>&1; echo \"exit=$?\"",
+        "mise run lint > /tmp/ccusage-gauge-effort/EDF-12-lint.log 2>&1; echo \"exit=$?\"",
+        "mise run test > /tmp/ccusage-gauge-effort/EDF-12-test.log 2>&1; echo \"exit=$?\"",
+        "mise run frontend:test > /tmp/ccusage-gauge-effort/EDF-12-frontend-test.log 2>&1; echo \"exit=$?\"",
+        "mise run frontend:check > /tmp/ccusage-gauge-effort/EDF-12-frontend-check.log 2>&1; echo \"exit=$?\"",
+        "mise run frontend:build > /tmp/ccusage-gauge-effort/EDF-12-frontend-build.log 2>&1; echo \"exit=$?\"",
+        "git status --porcelain -- Sources/AppCore/Resources/Web",
+        "grep -c \"data-color-scheme\" Sources/AppCore/Resources/Web/assets/*.css",
+        "grep -c \"aria-pressed\" Sources/AppCore/Resources/Web/assets/*.js",
+        "LC_ALL=C grep -rln $'\\xF0\\x9F' frontend/src frontend/tests Sources/AppCore/*.swift Tests/AppCoreTests design-docs/specs/design-dashboard-dark-flat-effort-grouping.md"
+      ]
+    }
+  ]
+}

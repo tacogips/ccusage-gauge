@@ -297,6 +297,20 @@ allocation. Aggregate, coalescing, snapshot-merge, and cache identities include
 directory, with `nil` as a distinct identity, so otherwise equal rows from two
 projects cannot collapse.
 
+Optional reasoning `effort` is session-level provenance parsed from Codex
+`turn_context`. It follows the per-turn model context rather than the
+per-session directory.
+
+- It is carried through `TimestampedUsageEvent` and session records. Session
+  merge, coalescing, and reconciliation bucket keys include it, and the
+  `session_metrics` cache column stores it.
+- Adding that column to the local cache resets directory-provenance coverage
+  once, so the existing backfill re-derives session partitions with effort.
+- Claude, SSH-machine, and `ccusage` aggregate rows have `nil` (unknown)
+  effort.
+
+`design-dashboard-dark-flat-effort-grouping.md` holds the full contract.
+
 For a local machine, directory-provenance coverage follows aggregate snapshot
 coverage rather than the former recent-event optimization. Initial week/history
 warming, an older custom-range expansion, and a targeted refresh load JSONL
@@ -528,7 +542,8 @@ subdirectory fetch remains the source of truth and proves persistence after
 reload.
 
 The graph's stack control adds `subdirectory` beside the existing `model` and
-`machine` values. It defaults to the existing non-subdirectory state, so
+`machine` values (`modelEffort` is added later by
+`design-dashboard-dark-flat-effort-grouping.md`). It defaults to the existing non-subdirectory state, so
 subdirectory splitting is disabled until explicitly selected. Old persisted
 `model` and `machine` values remain valid; missing or unknown saved values fall
 back to `model`. The frontend sends `directoryBreakdown=true` to
@@ -878,6 +893,19 @@ daily detail;
 mixed-model block costs are never used for dashboard model filtering. The SPA
 reads only the same-origin JSON API, treats API failures and empty series as
 first-class UI states, and does not invoke `ccusage` or access local files.
+
+`design-dashboard-dark-flat-effort-grouping.md` defines the following:
+
+- the dark-only flat theme, with no border-radius, shadows, or gradients;
+- square buttons whose pressed state is signalled by `aria-pressed`, which
+  also fixes the range-preset active state;
+- persisted `sidebarCollapsed` and `headerCollapsed` fold state;
+- the opt-in `modelEffort` stack mode, backed by
+  `/api/cost-series?effortBreakdown=true`;
+- vendor-family, collision-free model color allocation with effort shades.
+
+The model-only stack remains the default, and responses without
+`effortBreakdown` are unchanged.
 
 ## Security and Privacy Boundaries
 
