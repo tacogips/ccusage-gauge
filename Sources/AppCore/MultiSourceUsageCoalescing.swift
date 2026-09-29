@@ -20,6 +20,7 @@ private struct SessionCoalesceKey: Hashable {
   let machine: String
   let quality: UsageDataQuality
   let directory: String?
+  let effort: String?
 }
 
 private struct PointCoalesceKey: Hashable {
@@ -73,7 +74,8 @@ func coalescingSameKeySessions(_ rows: [CCUsageSessionMetricRecord]) -> [CCUsage
       model: row.model,
       machine: row.machine,
       quality: row.dataQuality,
-      directory: row.directory
+      directory: row.directory,
+      effort: row.effort
     )
     if let existing = grouped[key] {
       grouped[key] = CCUsageSessionMetricRecord(
@@ -87,7 +89,8 @@ func coalescingSameKeySessions(_ rows: [CCUsageSessionMetricRecord]) -> [CCUsage
         cacheReadTokens: existing.cacheReadTokens + row.cacheReadTokens,
         dataQuality: row.dataQuality,
         machine: row.machine,
-        directory: row.directory
+        directory: row.directory,
+        effort: row.effort
       )
     } else {
       order.append(key)

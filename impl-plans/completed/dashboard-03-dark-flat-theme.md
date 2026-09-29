@@ -1,11 +1,11 @@
 # EDF-03: Dark Flat Theme Stylesheet
 
-**Status**: Not Started
+**Status**: Completed
 **Plan ID**: EDF-03
 **Wave**: 1
 **Depends on**: none
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` sections 2, 3 (fold presentation), 4 (pressed style)
-**Protocol**: `impl-plans/active/dashboard-dark-flat-effort-overview.md` section 3 (CSS contract in section 4)
+**Protocol**: `impl-plans/completed/dashboard-dark-flat-effort-overview.md` section 3 (CSS contract in section 4)
 
 ## Purpose
 
@@ -159,11 +159,12 @@ Expected evidence:
 
 ## Completion criteria
 
-- [ ] `grep -c "data-color-scheme" frontend/src/styles.css` is 0.
-- [ ] `grep -c "999px" frontend/src/styles.css` is 0. The complete
+- [x] `grep -c "data-color-scheme" frontend/src/styles.css` is 0.
+- [x] `grep -c "999px" frontend/src/styles.css` is 0. The complete
       non-zero-radius check is the guard test.
-- [ ] The guard test passes, and all logs are recorded.
+- [x] The guard test passes, and all logs are recorded.
 
 ## Progress Log
 
 - 2026-09-29: Plan created.
+- 2026-09-29: Rewrote `frontend/src/styles.css` as a dark token-based flat theme, added shared button and pressed states plus sidebar/header fold CSS, and added `frontend/tests/flatThemeStyles.test.ts` with radius/effect/token/contrast guards. `bun test tests/flatThemeStyles.test.ts` passed (4/4); `bun test tests/machineAdminPanel.test.ts` passed (1/1); `bun run check` exited 0 and the grep for errors in `DashboardComponents.tsx` and `MachineAdminPanel.tsx` returned no matches (grep exit 1). Theme override and 999px probes returned no matches. Complete logs and the initial test-harness false-positive attempt are preserved under `tmp/dashboard-dark-flat-effort-20260929/EDF-03/attempt-1/` and `/tmp/ccusage-gauge-effort/`. Formal review remains a downstream workflow step.

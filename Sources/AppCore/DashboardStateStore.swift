@@ -4,6 +4,8 @@ import Foundation
 private let dashboardSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 public struct DashboardUIState: Codable, Equatable, Sendable {
+  private static let allowedStackByValues: Set<String> = ["model", "machine", "subdirectory", "modelEffort"]
+
   public let range: String
   public let customStart: String
   public let customEnd: String
@@ -13,6 +15,8 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
   public let granularity: String
   public let chartMetric: String
   public let stackBy: String
+  public let sidebarCollapsed: Bool
+  public let headerCollapsed: Bool
 
   public init(
     range: String,
@@ -23,7 +27,9 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
     selectedMachines: [String] = [],
     granularity: String,
     chartMetric: String,
-    stackBy: String = "model"
+    stackBy: String = "model",
+    sidebarCollapsed: Bool = false,
+    headerCollapsed: Bool = false
   ) {
     self.range = range
     self.customStart = customStart
@@ -34,11 +40,13 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
     self.granularity = granularity
     self.chartMetric = chartMetric
     self.stackBy = stackBy
+    self.sidebarCollapsed = sidebarCollapsed
+    self.headerCollapsed = headerCollapsed
   }
 
   private enum CodingKeys: String, CodingKey {
     case range, customStart, customEnd, selectedModels, selectedAgents, selectedMachines
-    case granularity, chartMetric, stackBy
+    case granularity, chartMetric, stackBy, sidebarCollapsed, headerCollapsed
   }
 
   public init(from decoder: Decoder) throws {
@@ -52,7 +60,9 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
     granularity = try container.decode(String.self, forKey: .granularity)
     chartMetric = try container.decode(String.self, forKey: .chartMetric)
     let decodedStackBy = try container.decodeIfPresent(String.self, forKey: .stackBy) ?? "model"
-    stackBy = ["model", "machine", "subdirectory"].contains(decodedStackBy) ? decodedStackBy : "model"
+    stackBy = Self.allowedStackByValues.contains(decodedStackBy) ? decodedStackBy : "model"
+    sidebarCollapsed = try container.decodeIfPresent(Bool.self, forKey: .sidebarCollapsed) ?? false
+    headerCollapsed = try container.decodeIfPresent(Bool.self, forKey: .headerCollapsed) ?? false
   }
 
   public func validate() throws {
@@ -64,7 +74,7 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
           selectedModels.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 500 }),
           selectedAgents.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 100 }),
           selectedMachines.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 100 }),
-          ["model", "machine", "subdirectory"].contains(stackBy) else {
+          Self.allowedStackByValues.contains(stackBy) else {
       throw DashboardStateError.invalidState
     }
   }

@@ -11,6 +11,7 @@ private struct AgentModelBucket: Hashable {
   let agent: String
   let model: String
   let directory: String?
+  let effort: String?
 }
 
 private struct UsageLoadResult: Sendable {
@@ -239,7 +240,8 @@ private func reconciledTimestampedSessions(
         cacheCreationTokens: cacheCreationTokens,
         cacheReadTokens: cacheReadTokens,
         dataQuality: .timestamped,
-        directory: event.directory
+        directory: event.directory,
+        effort: event.effort
       )
     }
   }
@@ -252,7 +254,8 @@ private func reconciledTimestampedSessions(
       timestamp: bucketTimestamp,
       agent: event.agent,
       model: event.model,
-      directory: event.directory
+      directory: event.directory,
+      effort: event.effort
     )
     var totals = buckets[key] ?? UsageBucketTotals()
     totals.costUSD += event.costUSD
@@ -273,7 +276,8 @@ private func reconciledTimestampedSessions(
       cacheCreationTokens: totals.cacheCreationTokens,
       cacheReadTokens: totals.cacheReadTokens,
       dataQuality: .timestamped,
-      directory: key.directory
+      directory: key.directory,
+      effort: key.effort
     )
   }.sorted { ($0.timestamp, $0.model) < ($1.timestamp, $1.model) }
 }

@@ -517,10 +517,9 @@ public struct DashboardRouter: Sendable {
         return errorResponse(status: 400, code: "invalid_custom_range", message: "custom range start must not be after end")
       } catch DashboardQueryError.invalidGranularity {
         return errorResponse(status: 400, code: "invalid_granularity", message: "granularity must be 15min, hourly, 6hour, or daily")
-      } catch DashboardDirectoryRequestError.machineNotFound {
-        return errorResponse(status: 404, code: "machine_not_found", message: "Machine not found")
-      } catch DashboardDirectoryRequestError.invalid {
-        return errorResponse(status: 400, code: "invalid_directory", message: "Invalid directory selection")
+      } catch let error as DashboardDirectoryRequestError {
+        let failure = dashboardDirectoryRequestFailure(error)
+        return errorResponse(status: failure.status, code: failure.code, message: failure.message)
       } catch DashboardDirectoryNameError.databaseUnavailable {
         return errorResponse(
           status: 503,
@@ -661,7 +660,8 @@ private extension DashboardRouter {
           startDate: startDate,
           endDate: endDate,
           directorySelections: directoryRequest.selections,
-          directoryBreakdown: directoryRequest.breakdown
+          directoryBreakdown: directoryRequest.breakdown,
+          effortBreakdown: directoryRequest.effortBreakdown
         ))
       }
       return json(try queryService.costSeries(
@@ -669,7 +669,8 @@ private extension DashboardRouter {
         granularity: granularity,
         range: range,
         directorySelections: directoryRequest.selections,
-        directoryBreakdown: directoryRequest.breakdown
+        directoryBreakdown: directoryRequest.breakdown,
+        effortBreakdown: directoryRequest.effortBreakdown
       ))
     case "/api/budget":
       return json(queryService.budget(

@@ -42,7 +42,7 @@ describe("dashboard directory integration state", () => {
       .toBe(`/api/budget?${suffix}`);
   });
 
-  test("requests directory breakdown only for subdirectory stacking", () => {
+  test("requests only the breakdown for the selected stack mode", () => {
     const base = "/api/cost-series?range=today&granularity=hourly";
 
     expect(costSeriesDataPath(base, ["local"], {}, defaultStackBy))
@@ -51,6 +51,8 @@ describe("dashboard directory integration state", () => {
       .toBe(`${base}&machine=local`);
     expect(costSeriesDataPath(base, ["local"], {}, "subdirectory"))
       .toBe(`${base}&directoryBreakdown=true&machine=local`);
+    expect(costSeriesDataPath(base, ["local"], {}, "modelEffort"))
+      .toBe(`${base}&effortBreakdown=true&machine=local`);
   });
 
   test("shows only expanded nonempty inventories and clears unchecked selections", () => {
@@ -70,6 +72,7 @@ describe("dashboard directory integration state", () => {
     expect(restoredStackBy("future-value")).toBe("model");
     expect(restoredStackBy("machine")).toBe("machine");
     expect(restoredStackBy("subdirectory")).toBe("subdirectory");
+    expect(restoredStackBy("modelEffort")).toBe("modelEffort");
   });
 
   test("starts rename from the explicit value and maps blank input to clear", () => {
@@ -200,7 +203,7 @@ describe("dashboard directory integration state", () => {
       directory: "/work/project",
     };
     const identity = chartSeriesIdentity(row, "subdirectory");
-    const color = seriesColor("light", "subdirectory", identity);
+    const color = seriesColor("subdirectory", identity);
     const editorTransitions: Array<string | undefined> = [];
     const order: string[] = [];
 
@@ -247,7 +250,7 @@ describe("dashboard directory integration state", () => {
           expect(chartSeriesLabel(row, "subdirectory", () => sidebarLabel ?? "Directory"))
             .toBe("Billing");
           expect(chartSeriesIdentity(row, "subdirectory")).toBe(identity);
-          expect(seriesColor("light", "subdirectory", identity)).toBe(color);
+          expect(seriesColor("subdirectory", identity)).toBe(color);
         },
         refreshCatalog: async () => {
           order.push("refresh");

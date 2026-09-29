@@ -21,6 +21,7 @@ private struct SessionRowKey: Hashable {
   let machine: String
   let quality: UsageDataQuality
   let directory: String?
+  let effort: String?
 }
 
 func mergingSnapshots(
@@ -68,7 +69,8 @@ func mergingSnapshots(
         model: $0.model,
         machine: $0.machine,
         quality: $0.dataQuality,
-        directory: $0.directory
+        directory: $0.directory,
+        effort: $0.effort
       )
     ] = $0
   }
@@ -80,7 +82,8 @@ func mergingSnapshots(
         model: $0.model,
         machine: $0.machine,
         quality: $0.dataQuality,
-        directory: $0.directory
+        directory: $0.directory,
+        effort: $0.effort
       )
     ] = $0
   }

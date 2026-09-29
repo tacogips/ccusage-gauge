@@ -14,6 +14,7 @@ public struct TimestampedUsageEvent: Equatable, Sendable {
   public let cacheCreationFiveMinuteTokens: Int
   public let cacheCreationOneHourTokens: Int
   public let directory: String?
+  public let effort: String?
 
   public init(
     timestamp: Date,
@@ -28,7 +29,8 @@ public struct TimestampedUsageEvent: Equatable, Sendable {
     cacheReadTokens: Int,
     cacheCreationFiveMinuteTokens: Int,
     cacheCreationOneHourTokens: Int,
-    directory: String? = nil
+    directory: String? = nil,
+    effort: String? = nil
   ) {
     self.timestamp = timestamp
     self.agent = agent
@@ -43,6 +45,7 @@ public struct TimestampedUsageEvent: Equatable, Sendable {
     self.cacheCreationFiveMinuteTokens = cacheCreationFiveMinuteTokens
     self.cacheCreationOneHourTokens = cacheCreationOneHourTokens
     self.directory = Self.normalizedDirectory(directory)
+    self.effort = UsageEffort.normalized(effort)
   }
 
   private static func normalizedDirectory(_ value: String?) -> String? {

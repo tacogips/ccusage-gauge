@@ -1,11 +1,11 @@
 # EDF-01: Swift Effort Record Contract
 
-**Status**: Not Started
+**Status**: Completed
 **Plan ID**: EDF-01
 **Wave**: 1
 **Depends on**: none
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` section 5 (Normalization; Records, reconciliation, and merge keys)
-**Protocol**: `impl-plans/active/dashboard-dark-flat-effort-overview.md` section 3
+**Protocol**: `impl-plans/completed/dashboard-dark-flat-effort-overview.md` section 3
 
 ## Purpose
 
@@ -116,11 +116,55 @@ Expected evidence:
 
 ## Completion criteria
 
-- [ ] All four files are in the state described above.
-- [ ] All verification commands are recorded with exit status 0 and log paths.
-- [ ] `grep -c "effort" Sources/AppCore/CCUsage.swift` is at least 11: 2 fields,
-      2 params, 2 CodingKeys, 2 decodes, and 5 or more client copies.
+- [x] All four files are in the state described above.
+- [x] All verification commands are recorded with exit status 0 and log paths.
+- [x] `grep -c "effort" Sources/AppCore/CCUsage.swift` is at least 12: 2 fields,
+      2 params, 2 CodingKeys, 2 decodes, and the four metric/session client copies.
+      The blocks re-stamp is excluded because `CCUsageCostRecord` does not carry effort.
 
 ## Progress Log
 
 - 2026-09-29: Plan created.
+- 2026-09-29: Implemented EDF-01. Added `UsageEffort.normalized`, optional effort
+  on `TimestampedUsageEvent`, `CCUsageMetricRecord`, and
+  `CCUsageSessionMetricRecord`, optional decoding and nil-omitting synthesized
+  encoding, plus effort propagation at all four metric/session machine
+  re-stamps. `CCUsageCostRecord` and block re-stamping remain unchanged by
+  design. Added five contract tests. The current CCUsage JSON loader has no
+  seam to inject an effort-bearing row into `CCUsageClient`, so a focused
+  record-copy test covers the re-stamp contract while the four client hunks
+  explicitly copy effort.
+  - Post-edit SHA-256: `Sources/AppCore/UsageEffort.swift`
+    `d697a9b19e8728d69f0edd1300527811d9bc00d858680a0decf52fd7fc46e578`;
+    `Sources/AppCore/ClaudeUsageEvents.swift`
+    `0d77754e25104dfebce057b67981ace1fc09e7febf2099ea8a9bf6dccff4d163`;
+    `Sources/AppCore/CCUsage.swift`
+    `b326f9d9edc9616553aeabfbcba10e15312747aadf6bd5dd8004238de788ac35`;
+    `Tests/AppCoreTests/UsageEffortContractTests.swift`
+    `de81779c02b103fd0c76dd774056df74a5942028b12e51d3dd1b9262134baf57`.
+  - `swift build`: exit 0, complete log `/tmp/ccusage-gauge-effort/EDF-01-build.log`.
+  - `swift test --filter UsageEffortContractTests`: exit 0, 5 tests passed,
+    complete log `/tmp/ccusage-gauge-effort/EDF-01-test.log`.
+  - `swift test --filter Directory`: exit 0, 44 tests passed,
+    complete log `/tmp/ccusage-gauge-effort/EDF-01-directory.log`.
+  - Strict changed-file SwiftLint via the NUL-delimited manifest:
+    exit 0, complete log `/tmp/ccusage-gauge-effort/EDF-01-lint.log`.
+  - `wc -l Sources/AppCore/CCUsage.swift Sources/AppCore/ClaudeUsageEvents.swift`:
+    exit 0; 799 and 400 lines. `grep -c "effort" Sources/AppCore/CCUsage.swift`:
+    exit 0; 14 occurrences.
+  - Self-check strengthened normalization tests for all accepted character
+    classes and the 32-character boundary, and changed the identity test to
+    compare distinct normalized efforts. Final-tree reruns: `swift test
+    --filter UsageEffortContractTests` exited 0 with 5 tests passed
+    (`/tmp/ccusage-gauge-effort/EDF-01-test-rerun.log`); `swift test --filter
+    Directory` exited 0 with 44 tests passed
+    (`/tmp/ccusage-gauge-effort/EDF-01-directory-rerun.log`); strict changed-file
+    SwiftLint exited 0 (`/tmp/ccusage-gauge-effort/EDF-01-lint-rerun.log`).
+  - The first build wrapper attempt exited 1 because zsh reserves the variable
+    name `status`; the shell error is preserved at
+    `tmp/dashboard-dark-flat-effort-20260929/EDF-01/attempt-1/first-build-wrapper-error.txt`.
+    The corrected `swift build` rerun above exited 0.
+  - Final source-tree `swift build` rerun exited 0; complete log
+    `/tmp/ccusage-gauge-effort/EDF-01-build-rerun.log`. Final size check exited
+    0 (`/tmp/ccusage-gauge-effort/EDF-01-line-count.log`); final grep count
+    exited 0 with 14 (`/tmp/ccusage-gauge-effort/EDF-01-effort-count.log`).

@@ -27,11 +27,19 @@ public struct SubdirectoriesResponse: Codable, Equatable, Sendable {
 struct DashboardDirectoryRequest: Sendable {
   let selections: DashboardDirectorySelections
   let breakdown: Bool
+  let effortBreakdown: Bool
 }
 
 enum DashboardDirectoryRequestError: Error, Equatable {
   case invalid
   case machineNotFound
+  case invalidBreakdown
+}
+
+struct DashboardDirectoryRequestFailure {
+  let status: Int
+  let code: String
+  let message: String
 }
 
 func dashboardDirectoryRequest(
@@ -75,7 +83,38 @@ func dashboardDirectoryRequest(
   case "true": breakdown = true
   default: throw DashboardDirectoryRequestError.invalid
   }
-  return DashboardDirectoryRequest(selections: selections, breakdown: breakdown)
+  let effortBreakdownItems = (components.queryItems ?? []).filter { $0.name == "effortBreakdown" }
+  guard acceptsBreakdown || effortBreakdownItems.isEmpty,
+        effortBreakdownItems.count <= 1 else {
+    throw DashboardDirectoryRequestError.invalidBreakdown
+  }
+  let effortBreakdown: Bool
+  switch effortBreakdownItems.first?.value {
+  case nil, "false": effortBreakdown = false
+  case "true": effortBreakdown = true
+  default: throw DashboardDirectoryRequestError.invalidBreakdown
+  }
+  return DashboardDirectoryRequest(
+    selections: selections,
+    breakdown: breakdown,
+    effortBreakdown: effortBreakdown
+  )
+}
+
+func dashboardDirectoryRequestFailure(
+  _ error: Error
+) -> DashboardDirectoryRequestFailure {
+  if let error = error as? DashboardDirectoryRequestError, error == .machineNotFound {
+    return DashboardDirectoryRequestFailure(status: 404, code: "machine_not_found", message: "Machine not found")
+  }
+  if let error = error as? DashboardDirectoryRequestError, error == .invalidBreakdown {
+    return DashboardDirectoryRequestFailure(
+      status: 400,
+      code: "invalid_breakdown",
+      message: "effortBreakdown must be true or false"
+    )
+  }
+  return DashboardDirectoryRequestFailure(status: 400, code: "invalid_directory", message: "Invalid directory selection")
 }
 
 func subdirectoriesResponse(

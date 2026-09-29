@@ -1,6 +1,6 @@
 # Dashboard Dark Flat Theme, Foldable Panes, Active Range Buttons, Effort Grouping, and Distinct Model Colors
 
-**Status**: Proposed
+**Status**: Implemented
 **Source issue**: workflow-input inline issue "Dashboard: dark flat theme, foldable
 panes, active range buttons, effort grouping, distinct model colors". No GitHub
 issue URL, Codex-agent reference, reference repository, or Cursor CLI behavior
@@ -390,7 +390,7 @@ key.
     `medium` equal to the base color, `high`, and `xhigh` lightest;
   - unranked values map deterministically to an intermediate step;
   - `unknown` is the base color with strongly reduced saturation.
-  Any two effort variants of one model differ by deltaE >= 10.
+  Any two effort variants of one model differ by deltaE >= 11.
 - The machine and subdirectory color namespaces keep their current
   hash-based assignment, using only the dark palette. The breakdown bars keep
   using the model allocator.

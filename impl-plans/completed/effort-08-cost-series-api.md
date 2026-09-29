@@ -1,11 +1,11 @@
 # EDF-08: Cost-Series effortBreakdown Query and HTTP Contract
 
-**Status**: Not Started
+**Status**: Completed
 **Plan ID**: EDF-08
 **Wave**: 2
 **Depends on**: EDF-01 (record `effort` fields)
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` section 5 (Query and HTTP contract)
-**Protocol**: `impl-plans/active/dashboard-dark-flat-effort-overview.md` section 3
+**Protocol**: `impl-plans/completed/dashboard-dark-flat-effort-overview.md` section 3
 
 ## Purpose
 
@@ -76,7 +76,7 @@ behavior.
      never `.invalid`.
    - Leave `directoryBreakdown` violations throwing `.invalid`, as today.
    - Add a small shared mapping,
-     `func dashboardDirectoryRequestFailure(_ error: Error) -> (status: Int, code: String, message: String)`:
+     `func dashboardDirectoryRequestFailure(_ error: Error) -> DashboardDirectoryRequestFailure`:
      - `.machineNotFound` maps to `404`, `machine_not_found`, "Machine not found";
      - `.invalidBreakdown` maps to `400`, `invalid_breakdown`,
        "effortBreakdown must be true or false";
@@ -166,10 +166,15 @@ Expected evidence:
 
 ## Completion criteria
 
-- [ ] The identity-invariant tests and HTTP error-code tests pass.
-- [ ] `MachineDashboardRouter.swift` is under 1000 lines.
-- [ ] All logs recorded.
+- [x] The identity-invariant tests and HTTP error-code tests pass.
+- [x] `MachineDashboardRouter.swift` is under 1000 lines.
+- [x] All logs recorded.
 
 ## Progress Log
 
 - 2026-09-29: Plan created.
+- 2026-09-29: Implemented optional `effortBreakdown` parsing and error mapping, cost-series effort-preserving aggregation, default-response collapse behavior, and forwarding through local and machine HTTP routes. Added `EffortCostSeriesTests.swift` covering omitted/false identity across all granularities, effort totals and unknown rows, directory filter/breakdown composition, malformed and duplicate query items, non-cost-series rejection, and both HTTP routers.
+- 2026-09-29 verification on final implementation/test source: `swift build` exit 0 (`/tmp/ccusage-gauge-effort/EDF-08-build-final.log`); `swift test --filter EffortCostSeriesTests` exit 0, 5 tests (`.../EDF-08-test-final2.log`); `swift test --filter Directory` exit 0, 47 tests (`.../EDF-08-directory-final2.log`); `swift test --filter 'DashboardQueryTests|APIRouteTests'` exit 0, 17 tests (`.../EDF-08-dashboard-final2.log`); plan SwiftLint command exit 0 (`.../EDF-08-lint-final.log`) with four existing warnings in `MachineDashboardRouter.swift`. Strict selected-file SwiftLint reports those four baseline violations; the `HEAD` copy reports the same diagnostic categories, while new EDF-08 code and tests have no reported violations (`.../EDF-08-lint-strict-final.log`, baseline comparison input `tmp/dashboard-dark-flat-effort-20260929/EDF-08/attempt-1/MachineDashboardRouter.baseline.swift` and `.../EDF-08-lint-baseline.log`). Router is 995 lines.
+- 2026-09-29: Earlier build attempt failed on a non-exhaustive catch and was corrected; an initial test attempt encountered a concurrent malformed `EffortReconciliationTests.swift` edit outside EDF-08, then the final focused test rerun passed after that shared file was corrected. Logs retained at `/tmp/ccusage-gauge-effort/EDF-08-build.log` and `/tmp/ccusage-gauge-effort/EDF-08-test.log`.
+- 2026-09-30: Reran the assigned verification on the current shared source identity (recorded in `tmp/dashboard-dark-flat-effort-20260929/EDF-08/resume-20260930/source-identity.txt`): `swift build` exit 0; `swift test --filter EffortCostSeriesTests` exit 0 (5/5); `swift test --filter Directory` exit 0 (47/47); `swift test --filter 'DashboardQueryTests|APIRouteTests'` exit 0 (17/17); `git diff --check` exit 0. The regular selected-file SwiftLint command exited 0 with four warnings in `MachineDashboardRouter.swift`. The strict selected-file gate exited 1; its four diagnostics are existing baseline categories (the saved pre-change router has those categories plus one extra statement-position diagnostic), so no EDF-08-specific lint issue was introduced. Full logs are in `tmp/dashboard-dark-flat-effort-20260929/EDF-08/resume-20260930/`. Router remains 995 lines.
+- Formal adversarial and combined-tree integration review remain assigned to downstream workflow steps.

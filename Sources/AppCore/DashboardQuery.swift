@@ -121,6 +121,7 @@ public struct DashboardCostRow: Codable, Equatable, Sendable {
   public let dataQuality: String
   public let machine: String
   public let directory: String?
+  public let effort: String?
 }
 
 public typealias DashboardDirectorySelections = [String: Set<String>]
@@ -304,16 +305,22 @@ public struct DashboardQueryService: Sendable {
     endDate: Date? = nil,
     now: Date = Date(),
     directorySelections: DashboardDirectorySelections = [:],
-    directoryBreakdown: Bool = false
+    directoryBreakdown: Bool = false,
+    effortBreakdown: Bool = false
   ) throws -> DashboardCostResponse {
     let interval = try queryInterval(range: range, startDate: startDate, endDate: endDate, now: now)
     let rows: [DashboardCostRow]
     let directoryResolved = directoryBreakdown || !directorySelections.isEmpty
     switch granularity {
     case "15min", "hourly", "6hour":
-      let sessions = directoryResolved
-        ? snapshot.dashboardSessions
-        : collapsedSessions(snapshot.dashboardSessions)
+      let sessions: [CCUsageSessionMetricRecord]
+      if directoryResolved {
+        sessions = effortBreakdown
+          ? snapshot.dashboardSessions
+          : collapsedDirectoryEffortSessions(snapshot.dashboardSessions)
+      } else {
+        sessions = collapsedSessions(snapshot.dashboardSessions, includeEffort: effortBreakdown)
+      }
       rows = sessions.compactMap { record in
         guard isWithin(record.timestamp, interval: interval) else { return nil }
         guard matchesDirectory(
@@ -333,15 +340,17 @@ public struct DashboardQueryService: Sendable {
           totalTokens: record.totalTokens,
           dataQuality: record.dataQuality.rawValue,
           machine: record.machine,
-          directory: directoryResolved ? record.directory : nil
+          directory: directoryResolved ? record.directory : nil,
+          effort: effortBreakdown ? record.effort : nil
         )
       }
     case "daily":
-      let records = directoryResolved
+      let records = directoryResolved || effortBreakdown
         ? aggregateSessions(
           snapshot.dashboardSessions,
           interval: interval,
-          includeDirectory: true,
+          includeDirectory: directoryResolved,
+          includeEffort: effortBreakdown,
           directorySelections: directorySelections
         )
         : snapshot.dashboardMetrics
@@ -360,7 +369,8 @@ public struct DashboardQueryService: Sendable {
           totalTokens: record.totalTokens,
           dataQuality: "daily",
           machine: record.machine,
-          directory: directoryResolved ? record.directory : nil
+          directory: directoryResolved ? record.directory : nil,
+          effort: effortBreakdown ? record.effort : nil
         )
       }
     default: throw DashboardQueryError.invalidGranularity
@@ -429,6 +439,7 @@ public struct DashboardQueryService: Sendable {
     _ sessions: [CCUsageSessionMetricRecord],
     interval: DateInterval?,
     includeDirectory: Bool = false,
+    includeEffort: Bool = false,
     directorySelections: DashboardDirectorySelections = [:]
   ) -> [CCUsageMetricRecord] {
     struct Key: Hashable {
@@ -437,6 +448,7 @@ public struct DashboardQueryService: Sendable {
       let model: String
       let machine: String
       let directory: String?
+      let effort: String?
     }
     struct Values {
       var costUSD = Decimal.zero
@@ -458,7 +470,8 @@ public struct DashboardQueryService: Sendable {
         agent: session.agent,
         model: session.model,
         machine: session.machine,
-        directory: includeDirectory ? session.directory : nil
+        directory: includeDirectory ? session.directory : nil,
+        effort: includeEffort ? session.effort : nil
       )
       var values = groups[key, default: Values()]
       values.costUSD += session.costUSD
@@ -479,16 +492,18 @@ public struct DashboardQueryService: Sendable {
         cacheCreationTokens: values.cacheCreationTokens,
         cacheReadTokens: values.cacheReadTokens,
         machine: key.machine,
-        directory: key.directory
+        directory: key.directory,
+        effort: key.effort
       )
     }.sorted {
-      ($0.date, $0.agent, $0.model, $0.machine, $0.directory ?? "")
-        < ($1.date, $1.agent, $1.model, $1.machine, $1.directory ?? "")
+      ($0.date, $0.agent, $0.model, $0.machine, $0.directory ?? "", $0.effort ?? "")
+        < ($1.date, $1.agent, $1.model, $1.machine, $1.directory ?? "", $1.effort ?? "")
     }
   }
 
   private func collapsedSessions(
-    _ sessions: [CCUsageSessionMetricRecord]
+    _ sessions: [CCUsageSessionMetricRecord],
+    includeEffort: Bool
   ) -> [CCUsageSessionMetricRecord] {
     struct Key: Hashable {
       let timestamp: Date
@@ -496,6 +511,7 @@ public struct DashboardQueryService: Sendable {
       let model: String
       let machine: String
       let quality: UsageDataQuality
+      let effort: String?
     }
     struct Values {
       var costUSD = Decimal.zero
@@ -511,7 +527,8 @@ public struct DashboardQueryService: Sendable {
         agent: session.agent,
         model: session.model,
         machine: session.machine,
-        quality: session.dataQuality
+        quality: session.dataQuality,
+        effort: includeEffort ? session.effort : nil
       )
       var values = groups[key, default: Values()]
       values.costUSD += session.costUSD
@@ -532,9 +549,67 @@ public struct DashboardQueryService: Sendable {
         cacheCreationTokens: values.cacheCreationTokens,
         cacheReadTokens: values.cacheReadTokens,
         dataQuality: key.quality,
-        machine: key.machine
+        machine: key.machine,
+        effort: key.effort
       )
     }.sorted(by: sessionsInIncreasingOrder)
+  }
+
+  private func collapsedDirectoryEffortSessions(
+    _ sessions: [CCUsageSessionMetricRecord]
+  ) -> [CCUsageSessionMetricRecord] {
+    guard sessions.contains(where: { $0.effort != nil }) else { return sessions }
+    struct Key: Hashable {
+      let timestamp: Date
+      let agent: String
+      let model: String
+      let machine: String
+      let quality: UsageDataQuality
+      let directory: String?
+    }
+    struct Values {
+      var costUSD = Decimal.zero
+      var inputTokens = 0
+      var outputTokens = 0
+      var cacheCreationTokens = 0
+      var cacheReadTokens = 0
+    }
+    var groups: [Key: Values] = [:]
+    var order: [Key] = []
+    for session in sessions {
+      let key = Key(
+        timestamp: session.timestamp,
+        agent: session.agent,
+        model: session.model,
+        machine: session.machine,
+        quality: session.dataQuality,
+        directory: session.directory
+      )
+      if groups[key] == nil { order.append(key) }
+      var values = groups[key, default: Values()]
+      values.costUSD += session.costUSD
+      values.inputTokens += session.inputTokens
+      values.outputTokens += session.outputTokens
+      values.cacheCreationTokens += session.cacheCreationTokens
+      values.cacheReadTokens += session.cacheReadTokens
+      groups[key] = values
+    }
+    return order.compactMap { key in
+      guard let values = groups[key] else { return nil }
+      return CCUsageSessionMetricRecord(
+        timestamp: key.timestamp,
+        agent: key.agent,
+        model: key.model,
+        costUSD: values.costUSD,
+        inputTokens: values.inputTokens,
+        outputTokens: values.outputTokens,
+        cacheCreationTokens: values.cacheCreationTokens,
+        cacheReadTokens: values.cacheReadTokens,
+        dataQuality: key.quality,
+        machine: key.machine,
+        directory: key.directory
+      )
+    }
   }
 
   private func matchesDirectory(

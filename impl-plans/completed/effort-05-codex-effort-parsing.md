@@ -1,11 +1,11 @@
 # EDF-05: Codex Effort Parsing
 
-**Status**: Not Started
+**Status**: Completed
 **Plan ID**: EDF-05
 **Wave**: 2
 **Depends on**: EDF-01 (`TimestampedUsageEvent.effort`, `UsageEffort.normalized`)
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` section 5 (Source facts; Parsing)
-**Protocol**: `impl-plans/active/dashboard-dark-flat-effort-overview.md` section 3
+**Protocol**: `impl-plans/completed/dashboard-dark-flat-effort-overview.md` section 3
 
 ## Purpose
 
@@ -132,11 +132,15 @@ directory suites are unchanged green, and the file is under 1000 lines.
 
 ## Completion criteria
 
-- [ ] Step 0 result recorded (key names, or "not accessible").
-- [ ] Forward, reverse, and resume parity tests pass.
-- [ ] Tolerant decoding test passes.
-- [ ] All logs recorded.
+- [x] Step 0 result recorded (key names, or "not accessible").
+- [x] Forward, reverse, and resume parity tests pass.
+- [x] Tolerant decoding test passes.
+- [x] All logs recorded.
 
 ## Progress Log
 
 - 2026-09-29: Plan created.
+- 2026-09-29: Confirmed the local Codex `turn_context` payload uses `effort` (sample value `high`); payload key names and the Claude transcript effort-like key count (57 occurrences of `"effort"`) are recorded at `tmp/dashboard-dark-flat-effort-20260929/EDF-05/step0-key-confirmation.txt`. Claude parsing was not changed.
+- 2026-09-29: Added tolerant Codex effort decoding, normalized per-turn forward and reverse associations, effort in the retained scan context for resume, and focused tests for two token counts, turn changes, missing effort reset, malformed numeric/object values, normalization, resume parity, and nil Claude effort.
+- 2026-09-29: Current-source verification passed: `swift build` (`/tmp/ccusage-gauge-effort/EDF-05-final-build.log`); `swift test --filter CodexEffortParsingTests` (5 tests, `/tmp/ccusage-gauge-effort/EDF-05-test-rerun2.log`); `swift test --filter IncrementalScanTests` (9 tests, `/tmp/ccusage-gauge-effort/EDF-05-incremental.log`); `swift test --filter Directory` (47 tests, `/tmp/ccusage-gauge-effort/EDF-05-directory.log`); selected-file strict SwiftLint (`/tmp/ccusage-gauge-effort/EDF-05-final-lint.log`, empty); `wc -l Sources/AppCore/CodexUsageEvents.swift` (448). Final source hashes are in `tmp/dashboard-dark-flat-effort-20260929/EDF-05/final-source-identity.txt`.
+- 2026-09-29: Earlier build/test attempts failed while other shared-tree plans were being edited: the initial build and focused test hit an incomplete `Sources/AppCore/MachineDashboardRouter.swift` catch and a concurrent `Sources/AppCore/MultiSourceUsageCoalescing.swift` mutation; the next focused test hit a transient syntax error in `Tests/AppCoreTests/EffortReconciliationTests.swift` (outside EDF-05 write paths). The later build and focused test passed on the stabilized shared tree. Earlier complete logs remain at `/tmp/ccusage-gauge-effort/EDF-05-build.log`, `/tmp/ccusage-gauge-effort/EDF-05-test.log`, and `/tmp/ccusage-gauge-effort/EDF-05-test-rerun1.log`.

@@ -4,12 +4,14 @@ struct CodexScanContext: Sendable {
   var sessionID: String
   var model: String
   var directory: String?
+  var effort: String?
 }
 
 private struct ResolvedTokenCount {
   let envelope: CodexEnvelope
   let timestamp: Date
   let model: String
+  let effort: String?
 }
 
 private struct CodexDecoders {
@@ -57,6 +59,7 @@ private struct CodexForwardParser {
     }
     if envelope.type == "turn_context", let model = envelope.payload.model, !model.isEmpty {
       context.model = model
+      context.effort = UsageEffort.normalized(envelope.payload.effort)
       return nil
     }
     guard envelope.type == "event_msg", envelope.payload.type == "token_count", !context.model.isEmpty,
@@ -65,7 +68,8 @@ private struct CodexForwardParser {
             timestamp: timestamp,
             sessionID: context.sessionID,
             model: context.model,
-            directory: context.directory
+            directory: context.directory,
+            effort: context.effort
           ) else { return nil }
     return (decoders.day.string(from: timestamp), event)
   }
@@ -221,6 +225,7 @@ public struct CodexUsageEventLoader: Sendable {
     var pending: [(envelope: CodexEnvelope, timestamp: Date)] = []
     var resolved: [ResolvedTokenCount] = []
     var contextModel: String?
+    var contextEffort: String?
     var stopRequested = false
     func flush() {
       for item in resolved {
@@ -229,7 +234,8 @@ public struct CodexUsageEventLoader: Sendable {
           timestamp: item.timestamp,
           sessionID: context.sessionID,
           model: item.model,
-          directory: context.directory
+          directory: context.directory,
+          effort: item.effort
         ), events[event.identity] == nil else { continue }
         events[event.identity] = CachedUsageEvent(day: decoders.day.string(from: item.timestamp), event: event)
       }
@@ -254,8 +260,14 @@ public struct CodexUsageEventLoader: Sendable {
         return true
       }
       if envelope.type == "turn_context", let model = envelope.payload.model, !model.isEmpty {
-        if contextModel == nil { contextModel = model }
-        resolved.append(contentsOf: pending.map { ResolvedTokenCount(envelope: $0.envelope, timestamp: $0.timestamp, model: model) })
+        let effort = UsageEffort.normalized(envelope.payload.effort)
+        if contextModel == nil {
+          contextModel = model
+          contextEffort = effort
+        }
+        resolved.append(contentsOf: pending.map {
+          ResolvedTokenCount(envelope: $0.envelope, timestamp: $0.timestamp, model: model, effort: effort)
+        })
         pending.removeAll(keepingCapacity: true)
         if day < since, resolved.isEmpty { stopRequested = true }
         return !stopRequested
@@ -271,6 +283,7 @@ public struct CodexUsageEventLoader: Sendable {
     }
     flush()
     context.model = contextModel ?? ""
+    context.effort = contextEffort
     return Scan.make(
       file: file,
       region: region,
@@ -298,7 +311,7 @@ public struct CodexUsageEventLoader: Sendable {
   }
 
   private static func initialContext(for file: UsageEventLogFile) -> CodexScanContext {
-    CodexScanContext(sessionID: file.url.deletingPathExtension().lastPathComponent, model: "", directory: nil)
+    CodexScanContext(sessionID: file.url.deletingPathExtension().lastPathComponent, model: "", directory: nil, effort: nil)
   }
 
   /// A rollout opens with its `session_meta` line. Reading it directly keeps the session id
@@ -322,7 +335,8 @@ public struct CodexUsageEventLoader: Sendable {
     timestamp: Date,
     sessionID: String,
     model: String,
-    directory: String?
+    directory: String?,
+    effort: String?
   ) -> TimestampedUsageEvent? {
     guard let info = envelope.payload.info,
           let last = info.lastTokenUsage,
@@ -347,7 +361,8 @@ public struct CodexUsageEventLoader: Sendable {
       cacheReadTokens: last.cachedInputTokens,
       cacheCreationFiveMinuteTokens: 0,
       cacheCreationOneHourTokens: 0,
-      directory: directory
+      directory: directory,
+      effort: effort
     )
   }
 
@@ -375,6 +390,26 @@ private struct CodexPayload: Decodable {
   let model: String?
   let cwd: String?
   let info: CodexTokenInfo?
+  let effort: String?
+
+  enum CodingKeys: String, CodingKey {
+    case type
+    case id
+    case model
+    case cwd
+    case info
+    case effort
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    type = try container.decodeIfPresent(String.self, forKey: .type)
+    id = try container.decodeIfPresent(String.self, forKey: .id)
+    model = try container.decodeIfPresent(String.self, forKey: .model)
+    cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
+    info = try container.decodeIfPresent(CodexTokenInfo.self, forKey: .info)
+    effort = (try? container.decodeIfPresent(String.self, forKey: .effort)) ?? nil
+  }
 }
 
 private struct CodexTokenInfo: Decodable {

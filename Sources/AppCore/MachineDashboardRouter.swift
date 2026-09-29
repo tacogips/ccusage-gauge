@@ -121,8 +121,7 @@ public struct MachineDashboardRouter: Sendable {
 
   private func queryRoute(path: String, components: URLComponents) async -> HTTPResponse {
     let requested: String
-    do { requested = try machineSelection(components) }
-    catch { return selectionError(error) }
+    do { requested = try machineSelection(components) } catch { return selectionError(error) }
     let directoryRequest: DashboardDirectoryRequest
     do {
       directoryRequest = try dashboardDirectoryRequest(
@@ -131,10 +130,9 @@ public struct MachineDashboardRouter: Sendable {
         requestedMachines: requested,
         acceptsBreakdown: path == "/api/cost-series"
       )
-    } catch DashboardDirectoryRequestError.machineNotFound {
-      return error(status: 404, code: "machine_not_found", message: "Machine not found")
     } catch {
-      return self.error(status: 400, code: "invalid_directory", message: "Invalid directory selection")
+      let failure = dashboardDirectoryRequestFailure(error)
+      return self.error(status: failure.status, code: failure.code, message: failure.message)
     }
     let coverage = requestedCoverage(path: path, components: components, queryService: queryService)
     if let coverage {
@@ -260,8 +258,7 @@ public struct MachineDashboardRouter: Sendable {
           scope: selection.scope,
           machineLatestEvents: selection.machineLatestEvents,
           rangeProgress: rangeProgress,
-          directorySelections: directoryRequest.selections,
-          directoryBreakdown: directoryRequest.breakdown
+          directoryRequest: directoryRequest
         )
       case "/api/budget":
         return jsonWithScope(

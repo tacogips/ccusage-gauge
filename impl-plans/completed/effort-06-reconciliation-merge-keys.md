@@ -1,11 +1,11 @@
 # EDF-06: Effort in Reconciliation, Coalescing, and Snapshot Merge
 
-**Status**: Not Started
+**Status**: Completed
 **Plan ID**: EDF-06
 **Wave**: 2
 **Depends on**: EDF-01 (record `effort` fields)
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` section 5 (Records, reconciliation, and merge keys)
-**Protocol**: `impl-plans/active/dashboard-dark-flat-effort-overview.md` section 3
+**Protocol**: `impl-plans/completed/dashboard-dark-flat-effort-overview.md` section 3
 
 ## Purpose
 
@@ -108,10 +108,11 @@ suites stay green, and `Snapshot.swift` is under 1000 lines.
 
 ## Completion criteria
 
-- [ ] Both `SessionCoalesceKey` and `SessionRowKey` contain `effort`.
-- [ ] Tests prove totals are unchanged and that no row is dropped or replaced.
-- [ ] All logs recorded.
+- [x] Both `SessionCoalesceKey` and `SessionRowKey` contain `effort`.
+- [x] Tests prove totals are unchanged and that no row is dropped or replaced.
+- [x] All logs recorded.
 
 ## Progress Log
 
 - 2026-09-29: Plan created.
+- 2026-09-29: Added effort to timestamped reconciliation rows and 15-minute bucket identity, session coalescing sums, and snapshot session replacement keys. Added `EffortReconciliationTests` covering high/low/nil effort, unchanged cost and token totals, same-key sums, distinct-effort retention, and matching-effort replacement. `Snapshot.swift` is 970 lines, below the 990-line extraction threshold. `swift build` passed (log `tmp/dashboard-dark-flat-effort-20260929/EDF-06/verification/final-build.log`); `swift test --filter EffortReconciliationTests` passed 3 tests (log `.../attempt-2-effort-tests.log`); `swift test --filter MultiSourceUsageCoalescingTests` passed 4 tests (log `.../final-coalesce.log`); `swift test --filter Directory` passed 47 tests in 16 suites (log `.../final-directory.log`); strict changed-file SwiftLint passed with empty output (log `.../attempt-3-lint.log`, manifest `.../changed-swift-files.nul`). The first focused test attempt exited 1 before tests ran because concurrent edits in `MachineDashboardRouter.swift` caused a non-exhaustive catch; the later retry passed after that shared-tree compile conflict cleared (`.../attempt-1-effort-tests.log`). Formal integration review remains downstream.

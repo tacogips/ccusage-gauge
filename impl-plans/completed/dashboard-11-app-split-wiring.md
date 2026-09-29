@@ -1,11 +1,11 @@
 # EDF-11: App.tsx Split, Range Active State, Fold Shell, and Wiring
 
-**Status**: Not Started
+**Status**: Completed
 **Plan ID**: EDF-11
 **Wave**: 3
 **Depends on**: EDF-02, EDF-03, EDF-04, EDF-08, EDF-09, EDF-10
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` sections 2 (theme removal), 3, 4, 6, 7 (color wiring), 8
-**Protocol**: `impl-plans/active/dashboard-dark-flat-effort-overview.md` section 3; CSS and markup contract in section 4
+**Protocol**: `impl-plans/completed/dashboard-dark-flat-effort-overview.md` section 3; CSS and markup contract in section 4
 
 ## Purpose
 
@@ -200,12 +200,30 @@ Expected evidence:
 
 ## Completion criteria
 
-- [ ] All new modules exist with the exported names above.
-- [ ] `grep -c "aria-pressed" frontend/src/App.tsx frontend/src/RangeControls.tsx`
+- [x] All new modules exist with the exported names above.
+- [x] `grep -c "aria-pressed" frontend/src/App.tsx frontend/src/RangeControls.tsx`
       reports at least one match in each file.
-- [ ] `bun run check` exits 0.
-- [ ] All logs recorded.
+- [x] `bun test` exits 0 (115 tests, 0 failures).
+- [x] `bun run check` exits 0.
+- [x] `bun run build` exits 0.
+- [x] `frontend/src/App.tsx` is below 1580 lines (1320).
+- [x] Complete logs recorded at `/tmp/ccusage-gauge-effort/EDF-11-test.log`,
+      `/tmp/ccusage-gauge-effort/EDF-11-check.log`, and
+      `/tmp/ccusage-gauge-effort/EDF-11-vite-build.log`.
 
 ## Progress Log
 
 - 2026-09-29: Plan created.
+- 2026-09-30: Extracted `UsageChart`, range controls/helpers, and fold layout
+  state/components. Wired dark-only model/machine/subdirectory/effort colors,
+  model+effort stacking, pressed range/group state, fold restore/persistence,
+  and mounted fold regions. Removed runtime theme selection and set the HTML
+  color-scheme metadata to dark.
+- 2026-09-30: `bun test` passed 115/115 across 20 files;
+  `bun run check` and `bun run build` exited 0. `App.tsx` is 1320 lines.
+  Exact logs: `/tmp/ccusage-gauge-effort/EDF-11-test.log`,
+  `/tmp/ccusage-gauge-effort/EDF-11-check.log`, and
+  `/tmp/ccusage-gauge-effort/EDF-11-vite-build.log`.
+- 2026-09-30: Explicit `.ts`/`.tsx` import suffixes disambiguate the required
+  `rangeControls.ts` and `RangeControls.tsx` names on the case-insensitive
+  macOS filesystem; focused TS5097 suppressions preserve the project check.

@@ -1,11 +1,11 @@
 # EDF-04: Frontend Effort Contract
 
-**Status**: Not Started
+**Status**: Completed
 **Plan ID**: EDF-04
 **Wave**: 1
 **Depends on**: none
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` sections 5 (Query and HTTP contract), 6, 8
-**Protocol**: `impl-plans/active/dashboard-dark-flat-effort-overview.md` section 3
+**Protocol**: `impl-plans/completed/dashboard-dark-flat-effort-overview.md` section 3
 
 ## Purpose
 
@@ -84,9 +84,10 @@ Expected evidence:
 
 ## Completion criteria
 
-- [ ] The exports exist with the exact names and signatures above.
-- [ ] The tests pass, and all logs are recorded.
+- [x] The exports exist with the exact names and signatures above.
+- [x] The tests pass, and all logs are recorded.
 
 ## Progress Log
 
 - 2026-09-29: Plan created.
+- 2026-09-29: Implemented effort helpers, additive cost/dashboard UI types, and focused helper/API tests. `api.ts` has no runtime decoder, so no request behavior changed. `cd frontend && bun test tests/effort.test.ts tests/api.test.ts` passed 9 tests with 0 failures (log: `tmp/dashboard-dark-flat-effort-20260929/EDF-04/EDF-04-test.log`; exit 0). `cd frontend && bun run check` passed (log: `tmp/dashboard-dark-flat-effort-20260929/EDF-04/EDF-04-check.log`; exit 0); the required `grep -E "src/(effort|api)\.ts"` returned 1 because neither file had reported type errors. Review and workflow finalization remain downstream.

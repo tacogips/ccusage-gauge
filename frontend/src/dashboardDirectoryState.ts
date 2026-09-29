@@ -34,13 +34,17 @@ export function costSeriesDataPath(
 ): string {
   const breakdownPath = appendQuery(
     path,
-    stackBy === "subdirectory" ? "directoryBreakdown=true" : "",
+    stackBy === "modelEffort"
+      ? "effortBreakdown=true"
+      : stackBy === "subdirectory"
+        ? "directoryBreakdown=true"
+        : "",
   );
   return dashboardDataPath(breakdownPath, activeMachineIDs, selections);
 }
 
 export function restoredStackBy(value: unknown): StackBy {
-  return value === "model" || value === "machine" || value === "subdirectory"
+  return value === "model" || value === "machine" || value === "subdirectory" || value === "modelEffort"
     ? value
     : defaultStackBy;
 }

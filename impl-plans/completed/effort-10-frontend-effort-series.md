@@ -1,11 +1,11 @@
 # EDF-10: Frontend modelEffort Series Identity, Ordering, and Request Path
 
-**Status**: Not Started
+**Status**: Completed
 **Plan ID**: EDF-10
 **Wave**: 2
 **Depends on**: EDF-04 (`src/effort.ts`, `CostRow.effort`)
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` section 6
-**Protocol**: `impl-plans/active/dashboard-dark-flat-effort-overview.md` section 3
+**Protocol**: `impl-plans/completed/dashboard-dark-flat-effort-overview.md` section 3
 
 ## Purpose
 
@@ -118,10 +118,15 @@ cases may fail on the old `seriesColor` signature. That is recorded as
 
 ## Completion criteria
 
-- [ ] `modelEffortParts` and `compareSeriesIdentities` are exported with the
+- [x] `modelEffortParts` and `compareSeriesIdentities` are exported with the
       exact signatures above.
-- [ ] The tests pass, and all logs are recorded.
+- [x] The focused tests pass, and all implementation logs are recorded.
 
 ## Progress Log
 
 - 2026-09-29: Plan created.
+- 2026-09-29: Implementation intent snapshot before source edits. Existing-file SHA-256 values: `frontend/src/usageChartSeries.ts` `0b8338c9bfeebde305aa46848162bb3712587552cd155b624291b6e21da700a8`; `frontend/src/dashboardDirectoryState.ts` `c57f825e630a0be9887c990540985fee97704a75b7c85e95df6aeeec710f0ecb`; `frontend/tests/usageChart.test.ts` `f1411cf119434c04be0efbf4b97e66aa5da109a2bc254b513f53180a21f7a119`; `frontend/tests/dashboardDirectoryState.test.ts` `3a05ca0e8a3f7161f592d748e49b6d8f708e4f54f513ef0d71c10983d39d45a5`; plan pre-edit SHA-256 `e6c6d20c5764ae05f25611a8ea27c71c90417f2a96444b0007ebc813e90c02b3`. Intended edits: add modelEffort identity, last-separator parser, label, and comparator to `usageChartSeries.ts`; gate request and restore behavior in `dashboardDirectoryState.ts`; add contract tests to both owned test files and migrate exactly two rename-flow color calls; record exact verification and post-edit hashes here. Exact per-file intent is preserved in `tmp/dashboard-dark-flat-effort-20260929/EDF-10/attempt-1/edit-intents.json`.
+- 2026-09-29: Implemented EDF-10. `usageChartSeries.ts` now represents model+effort with model/U+001F/effort identity, splits at the last separator, labels missing effort as `unknown`, and sorts model first then effort rank/string; other stack modes retain localeCompare ordering. `dashboardDirectoryState.ts` adds `effortBreakdown=true` only for modelEffort and restores that mode while retaining model as default. Tests cover the identity/label/parser, required ordering, total preservation, request exclusivity, restore behavior, and both rename-flow calls now use `seriesColor("subdirectory", identity)`.
+- Verification: `cd frontend && bun test tests/usageChart.test.ts tests/dashboardDirectoryState.test.ts` exited 0; 22 tests passed, 0 failed (81 assertions); full log `/tmp/ccusage-gauge-effort/EDF-10-test-attempt-2.log`. `cd frontend && bun run check` exited 2 due to five existing `App.tsx` references to the old color API while EDF-11 wiring is pending; full log `/tmp/ccusage-gauge-effort/EDF-10-check-attempt-1.log`. The required own-file grep `grep -E "src/(usageChartSeries|dashboardDirectoryState)\.ts" /tmp/ccusage-gauge-effort/EDF-10-check-attempt-1.log` exited 1 (no matching errors). This is the plan's allowed waves 1-2 `App.tsx` carve-out. `git diff --check` exited 0.
+- Post-edit SHA-256: `frontend/src/usageChartSeries.ts` `c7d2347268dceb26dd2f09e3cfd6f6a8a2df2982b598f978df3cccdb680a241e`; `frontend/src/dashboardDirectoryState.ts` `aadec9bc3965866b39967e08befb3aca02e9560719da6b6eb460f353492fc76c`; `frontend/tests/usageChart.test.ts` `21dbe026bc35623816223fc898c1c659d315dcdc2a3bd41bbfa925ff53c396e5`; `frontend/tests/dashboardDirectoryState.test.ts` `286b1fa4aa23744e4c9bcf430d15c9878778fa88fd8cab1a2d13e5ced32bd402`.
+- Verification wrapper note: the first shell attempt used zsh's read-only `status` variable and exited before starting Bun; it has no test result. The corrected foreground run above is the source-matched passing result. Formal review, EDF-11 integration, and final asset build remain downstream workflow steps.

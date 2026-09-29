@@ -33,8 +33,7 @@ extension MachineDashboardRouter {
     scope: DashboardScope,
     machineLatestEvents: [MachineLatestEvent],
     rangeProgress: DashboardRangeLoadProgress?,
-    directorySelections: DashboardDirectorySelections,
-    directoryBreakdown: Bool
+    directoryRequest: DashboardDirectoryRequest
   ) throws -> HTTPResponse {
     let start = range == "custom" ? queryValue("start", components).flatMap(queryService.parseDay) : nil
     let end = range == "custom" ? queryValue("end", components).flatMap(queryService.parseDay) : nil
@@ -47,8 +46,9 @@ extension MachineDashboardRouter {
       range: range,
       startDate: start,
       endDate: end,
-      directorySelections: directorySelections,
-      directoryBreakdown: directoryBreakdown
+      directorySelections: directoryRequest.selections,
+      directoryBreakdown: directoryRequest.breakdown,
+      effortBreakdown: directoryRequest.effortBreakdown
     )
     response.scope = scope
     response.machineLatestEvents = machineLatestEvents

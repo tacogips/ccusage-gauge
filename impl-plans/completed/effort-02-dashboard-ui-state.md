@@ -1,11 +1,11 @@
 # EDF-02: Dashboard UI State - modelEffort Stack and Fold Flags
 
-**Status**: Not Started
+**Status**: Completed
 **Plan ID**: EDF-02
 **Wave**: 1
 **Depends on**: none
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` section 5 (Dashboard UI state) and section 3
-**Protocol**: `impl-plans/active/dashboard-dark-flat-effort-overview.md` section 3
+**Protocol**: `impl-plans/completed/dashboard-dark-flat-effort-overview.md` section 3
 
 ## Purpose
 
@@ -71,23 +71,47 @@ Imitate the existing `DashboardUIState` tests in
 
 ## Verification
 
-```text
-mkdir -p /tmp/ccusage-gauge-effort
-swift build > /tmp/ccusage-gauge-effort/EDF-02-build.log 2>&1; echo "exit=$?"
-swift test --filter DashboardUIStateFoldEffortTests > /tmp/ccusage-gauge-effort/EDF-02-test.log 2>&1; echo "exit=$?"
-swift test --filter DashboardStateStoreTests > /tmp/ccusage-gauge-effort/EDF-02-store.log 2>&1; echo "exit=$?"
-swiftlint lint --quiet Sources/AppCore/DashboardStateStore.swift Tests/AppCoreTests/DashboardUIStateFoldEffortTests.swift > /tmp/ccusage-gauge-effort/EDF-02-lint.log 2>&1; echo "exit=$?"
-```
-
-Expected evidence: every command exits 0, and the existing
-`DashboardStateStoreTests` suite remains green.
+- `swift build`: initial attempt exited 1 while concurrent `CCUsage.swift`
+  edits produced a transient compile mismatch; complete log:
+  `/tmp/ccusage-gauge-effort/EDF-02-build.log`. Retry exited 0 against the
+  shared tree:
+  `/tmp/ccusage-gauge-effort/EDF-02-build-rerun1.log`.
+- `swift test --filter DashboardUIStateFoldEffortTests`: exit 0; 5 passed,
+  0 failed; `/tmp/ccusage-gauge-effort/EDF-02-test.log`.
+- `swift test --filter DashboardStateStoreTests`: exit 0; 3 passed, 0 failed;
+  `/tmp/ccusage-gauge-effort/EDF-02-store.log`.
+- Changed-file strict SwiftLint via the NUL-delimited manifest in
+  `tmp/dashboard-dark-flat-effort-20260929/EDF-02/changed-swift-files.nul`:
+  exit 0; `/tmp/ccusage-gauge-effort/EDF-02-lint-final.log`.
 
 ## Completion criteria
 
-- [ ] `grep -c "modelEffort" Sources/AppCore/DashboardStateStore.swift` is at
+- [x] `grep -c "modelEffort" Sources/AppCore/DashboardStateStore.swift` is at
       least 1, and the allowed set is defined once.
-- [ ] The new tests pass, and all logs are recorded.
+- [x] The new tests pass, and all logs are recorded.
 
 ## Progress Log
 
 - 2026-09-29: Plan created.
+- 2026-09-29: Step 6 started after confirming EDF-02 has no dependencies. Initial
+  write-path snapshot: `Sources/AppCore/DashboardStateStore.swift`
+  `06c5d69014f27ffdac99c2ab41bd19e8c27bbae0467f7f2c4fb528b7fcdfe218`;
+  `impl-plans/completed/effort-02-dashboard-ui-state.md`
+  `0c759ca588b0be58fdf9880ba815ec1db8d2a0eafb73b7102f0e8a5d835fd67c`;
+  `Tests/AppCoreTests/DashboardUIStateFoldEffortTests.swift` did not exist.
+  Intent: add one shared allowed-stack set, accept `modelEffort` in decoding and
+  validation, default missing fold flags to false while always encoding them,
+  and add legacy/coercion/round-trip tests. No schema, route, or frontend change.
+- 2026-09-29: Implemented EDF-02 in the two assigned Swift paths. Post-edit
+  SHA-256: `Sources/AppCore/DashboardStateStore.swift`
+  `b0159a6f46fa181f3da54eb62425132242fe3e87a2897abbc99d7f648474a720`;
+  `Tests/AppCoreTests/DashboardUIStateFoldEffortTests.swift`
+  `4a231424a6fb163a6f1a14f89f2d968d443002e805e5103899f5bb960c14e2af`.
+  Verification: `swift build` retry exit 0;
+  `swift test --filter DashboardUIStateFoldEffortTests` exit 0 (5 passed, 0
+  failed); `swift test --filter DashboardStateStoreTests` exit 0 (3 passed, 0
+  failed); selected-file `swiftlint lint --strict --quiet --no-cache` exit 0.
+  The first build attempt's shared-tree `CCUsage.swift` compile mismatch is
+  retained above with its separate failed log and passing retry. Plan-local
+  edit intentions and changed Swift manifest are under
+  `tmp/dashboard-dark-flat-effort-20260929/EDF-02/`.

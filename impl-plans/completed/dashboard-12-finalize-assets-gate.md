@@ -1,11 +1,11 @@
 # EDF-12: Serial Reconciliation, Asset Regeneration, and Final Gate
 
-**Status**: Not Started
+**Status**: Completed
 **Plan ID**: EDF-12
 **Wave**: 4 (serial, runs alone)
 **Depends on**: EDF-01, EDF-02, EDF-03, EDF-04, EDF-05, EDF-06, EDF-07, EDF-08, EDF-09, EDF-10, EDF-11
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` sections 9 and 10
-**Protocol**: `impl-plans/active/dashboard-dark-flat-effort-overview.md` section 3
+**Protocol**: `impl-plans/completed/dashboard-dark-flat-effort-overview.md` section 3
 
 ## Purpose
 
@@ -20,7 +20,7 @@ This plan runs after all parallel work has joined. It:
 ## Write paths
 
 - `Sources/AppCore/Resources/Web` (directory; regenerated only by `mise run frontend:build`)
-- `impl-plans/active/dashboard-dark-flat-effort-overview.md`
+- `impl-plans/completed/dashboard-dark-flat-effort-overview.md`
 - `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` (Status line only)
 
 ## Shared paths (serial repair only)
@@ -113,11 +113,57 @@ stated contract.
 
 ## Completion criteria
 
-- [ ] Every gate command exits 0, with log paths recorded.
-- [ ] Assets are regenerated after the final source edit.
-- [ ] Every repair is documented.
-- [ ] The design Status is `Implemented`.
+- [x] Every gate command exits 0, with log paths recorded.
+- [x] Assets are regenerated after the final source edit.
+- [x] Every repair is documented.
+- [x] The design Status is `Implemented`.
 
 ## Progress Log
 
 - 2026-09-29: Plan created.
+- 2026-09-30: Completed outside the workflow. The riela dispatch-plans step
+  crashed while dispatching this plan: a regression in riela-packages
+  d1d526d gave every fanout item the last plan's dependsOn, which made
+  EDF-01 depend on itself. The session could not be resumed. EDF-01 through
+  EDF-11 were already accepted by integration review.
+  - Collect: no open DRIFT or BLOCKED-BY-FOREIGN entries. Earlier transient
+    failures were fixed and rerun in the owning plans.
+  - Contracts: effort appears in CCUsage, CodexUsageEvents, DashboardQuery
+    and AggregationCache. effortBreakdown appears in HTTPService and in
+    MachineDashboardRouter+DirectoryQueries. `--color-surface: #15171c`
+    matches CHART_BACKGROUND. There are no colorScheme or data-color-scheme
+    references.
+  - Line limits: the largest Swift file is MachineDashboardRouter.swift at
+    995 lines. App.tsx is 1320 lines, down from 1580.
+  - Gate, all exit 0, logs in `/tmp/ccusage-gauge-effort/EDF-12-*.log`:
+    - swift build;
+    - swift test: 316 swift-testing tests in 67 suites;
+    - swiftlint on the changed Swift files;
+    - mise run lint and mise run test;
+    - frontend test: 115 tests;
+    - frontend check;
+    - frontend build.
+  - Assets: regenerated. The CSS has no data-color-scheme and the JS
+    contains aria-pressed.
+  - E2E: Playwright was run against an isolated `serve` with Codex effort
+    fixtures and a Claude fixture. Everything passed on function:
+    - square corners everywhere;
+    - dark background;
+    - wide fold (sidebar 245 to 44 px);
+    - narrow vertical folds for the sidebar and header, persisted across
+      reload;
+    - preset aria-pressed, surviving reload, and custom ranges clear the
+      presets;
+    - Model + effort with an explicit "(unknown)" bucket for Claude.
+  - Visual repairs made after E2E:
+    - The collapsed-rail toggle now shows a chevron only, because the
+      "Expand" text was clipped in the 44px rail.
+    - Toggle-group buttons are nowrap; "Model + effort" had wrapped onto
+      three lines.
+    - The usage panel title and controls stack and wrap at 1180px and
+      below, removing a 1000px scroll width on an 800px viewport.
+    - The stacked title keeps flex 0 0 auto.
+    - Effort shade offsets widened to -30/-16/0/+16/+28. Luna medium vs high
+      went from dE 10.2 to 13.9, and the test minimum rose from 10 to 11.
+  - Screenshots: `/tmp/ccusage-gauge-effort/screenshots/`, including the
+    v2- and v3- sets.

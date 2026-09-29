@@ -1,11 +1,11 @@
 # EDF-09: Distinct Model Colors with Vendor Families and Effort Shades
 
-**Status**: Not Started
+**Status**: Completed
 **Plan ID**: EDF-09
 **Wave**: 2
 **Depends on**: EDF-04 (`src/effort.ts`: `EFFORT_ORDER`, `effortRank`)
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` section 7
-**Protocol**: `impl-plans/active/dashboard-dark-flat-effort-overview.md` section 3
+**Protocol**: `impl-plans/completed/dashboard-dark-flat-effort-overview.md` section 3
 
 ## Purpose
 
@@ -148,12 +148,25 @@ errors are allowed at this wave.
 
 ## Completion criteria
 
-- [ ] The contract exports exist with the exact names above.
-- [ ] `grep -cw "light" frontend/src/seriesColors.ts` is 0 (whole word, so
+- [x] The contract exports exist with the exact names above.
+- [x] `grep -cw "light" frontend/src/seriesColors.ts` is 0 (whole word, so
       `lightness` is allowed) and `grep -c "ColorScheme" frontend/src/seriesColors.ts`
       is 0.
-- [ ] The deltaE and contrast tests pass, and all logs are recorded.
+- [x] The deltaE and contrast tests pass, and all logs are recorded.
 
 ## Progress Log
 
 - 2026-09-29: Plan created.
+- 2026-09-29: Implemented dark vendor-family model colors, sorted catalog
+  allocation with override slot skipping, and HSL effort shades in
+  `frontend/src/seriesColors.ts`. Rewrote `frontend/tests/seriesColors.test.ts`
+  with computed CIE76, WCAG contrast, and HSL assertions plus allocation and
+  dark palette regression coverage.
+- 2026-09-29: `bun test tests/seriesColors.test.ts` passed 8 tests / 428
+  assertions after a first palette candidate failed the shade-distance check;
+  the repaired palette was verified in
+  `tmp/dashboard-dark-flat-effort-20260929/EDF-09/attempt-1/test-rerun.log`.
+  `bun run check` still reports five expected `App.tsx` errors from old color
+  API callers, owned by EDF-11; grep found no `seriesColors.ts` errors. The
+  complete logs are under `tmp/dashboard-dark-flat-effort-20260929/EDF-09/attempt-1/`.
+- 2026-09-29: Combined-tree integration review remains downstream with EDF-12.

@@ -4,6 +4,7 @@ import {
   renameSubdirectory,
   requestJSON,
   type CostRow,
+  type CostSeriesResponse,
   type MachinesResponse,
   type MetricRow,
   type SubdirectoriesResponse,
@@ -53,6 +54,40 @@ describe("dashboard API requests", () => {
 
     expect(metric).not.toHaveProperty("directory");
     expect(cost).not.toHaveProperty("directory");
+  });
+
+  test("preserves optional effort on cost-series rows", async () => {
+    const payload: CostSeriesResponse = {
+      range: "today",
+      granularity: "hourly",
+      rows: [
+        {
+          timestamp: "2026-07-16T00:00:00Z", agent: "codex", model: "gpt", costUSD: 1,
+          inputTokens: 1, outputTokens: 2, cacheCreationTokens: 0, cacheReadTokens: 3,
+          totalTokens: 6, dataQuality: "timestamped", machine: "local", effort: "high",
+        },
+        {
+          timestamp: "2026-07-16T01:00:00Z", agent: "codex", model: "gpt", costUSD: 1,
+          inputTokens: 1, outputTokens: 2, cacheCreationTokens: 0, cacheReadTokens: 3,
+          totalTokens: 6, dataQuality: "timestamped", machine: "local",
+        },
+      ],
+      totalUSD: 2,
+      scope: {
+        requested: "all", dataDisposition: "current", includedMachineIds: ["local"],
+        staleMachineIds: [], unavailableMachineIds: [], excludedFromCurrentTotalsMachineIds: [],
+        machineAvailability: [], lastHourDataGaps: [], evaluatedAt: "2026-07-16T02:00:00Z",
+      },
+      machineLatestEvents: [],
+    };
+    globalThis.fetch = (async () => new Response(JSON.stringify(payload), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })) as typeof fetch;
+
+    const response = await requestJSON<CostSeriesResponse>("/api/cost-series");
+
+    expect(response.rows[0].effort).toBe("high");
+    expect(response.rows[1].effort).toBeUndefined();
   });
 
   test("keeps names optional for old subdirectory payloads", () => {

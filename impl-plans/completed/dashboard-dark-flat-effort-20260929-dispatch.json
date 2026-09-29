@@ -10,7 +10,7 @@
     "design-docs/user-qa/2026-09-29-dashboard-theme-effort-decisions.md",
     "design-docs/specs/architecture.md"
   ],
-  "overviewPlanPath": "impl-plans/active/dashboard-dark-flat-effort-overview.md",
+  "overviewPlanPath": "impl-plans/completed/dashboard-dark-flat-effort-overview.md",
   "evidenceRoot": "tmp/dashboard-dark-flat-effort-20260929",
   "evidenceLayout": "Dispatcher evidence goes under evidenceRoot/<planId>/attempt-<n>/ (untracked; tmp/ is git-ignored). Plan verification commands also write complete logs to /tmp/ccusage-gauge-effort/<PLAN-ID>-<step>.log per overview protocol 9; copy or reference those logs from the per-attempt directory.",
   "reviewContext": {
@@ -125,7 +125,7 @@
   "plans": [
     {
       "planId": "EDF-01",
-      "planPath": "impl-plans/active/effort-01-swift-record-contract.md",
+      "planPath": "impl-plans/completed/effort-01-swift-record-contract.md",
       "wave": 1,
       "dependsOn": [],
       "writePaths": [
@@ -133,7 +133,7 @@
         "Sources/AppCore/ClaudeUsageEvents.swift",
         "Sources/AppCore/CCUsage.swift",
         "Tests/AppCoreTests/UsageEffortContractTests.swift",
-        "impl-plans/active/effort-01-swift-record-contract.md"
+        "impl-plans/completed/effort-01-swift-record-contract.md"
       ],
       "sharedPaths": [],
       "acceptanceCriteria": [
@@ -154,13 +154,13 @@
     },
     {
       "planId": "EDF-02",
-      "planPath": "impl-plans/active/effort-02-dashboard-ui-state.md",
+      "planPath": "impl-plans/completed/effort-02-dashboard-ui-state.md",
       "wave": 1,
       "dependsOn": [],
       "writePaths": [
         "Sources/AppCore/DashboardStateStore.swift",
         "Tests/AppCoreTests/DashboardUIStateFoldEffortTests.swift",
-        "impl-plans/active/effort-02-dashboard-ui-state.md"
+        "impl-plans/completed/effort-02-dashboard-ui-state.md"
       ],
       "sharedPaths": [],
       "acceptanceCriteria": [
@@ -179,7 +179,7 @@
     },
     {
       "planId": "EDF-03",
-      "planPath": "impl-plans/active/dashboard-03-dark-flat-theme.md",
+      "planPath": "impl-plans/completed/dashboard-03-dark-flat-theme.md",
       "wave": 1,
       "dependsOn": [],
       "writePaths": [
@@ -187,7 +187,7 @@
         "frontend/src/DashboardComponents.tsx",
         "frontend/src/MachineAdminPanel.tsx",
         "frontend/tests/flatThemeStyles.test.ts",
-        "impl-plans/active/dashboard-03-dark-flat-theme.md"
+        "impl-plans/completed/dashboard-03-dark-flat-theme.md"
       ],
       "sharedPaths": [],
       "sharedPathNotes": [
@@ -217,7 +217,7 @@
     },
     {
       "planId": "EDF-04",
-      "planPath": "impl-plans/active/effort-04-frontend-contract.md",
+      "planPath": "impl-plans/completed/effort-04-frontend-contract.md",
       "wave": 1,
       "dependsOn": [],
       "writePaths": [
@@ -225,7 +225,7 @@
         "frontend/src/api.ts",
         "frontend/tests/effort.test.ts",
         "frontend/tests/api.test.ts",
-        "impl-plans/active/effort-04-frontend-contract.md"
+        "impl-plans/completed/effort-04-frontend-contract.md"
       ],
       "sharedPaths": [],
       "acceptanceCriteria": [
@@ -241,13 +241,13 @@
     },
     {
       "planId": "EDF-05",
-      "planPath": "impl-plans/active/effort-05-codex-effort-parsing.md",
+      "planPath": "impl-plans/completed/effort-05-codex-effort-parsing.md",
       "wave": 2,
       "dependsOn": ["EDF-01"],
       "writePaths": [
         "Sources/AppCore/CodexUsageEvents.swift",
         "Tests/AppCoreTests/CodexEffortParsingTests.swift",
-        "impl-plans/active/effort-05-codex-effort-parsing.md"
+        "impl-plans/completed/effort-05-codex-effort-parsing.md"
       ],
       "sharedPaths": [],
       "acceptanceCriteria": [
@@ -268,7 +268,7 @@
     },
     {
       "planId": "EDF-06",
-      "planPath": "impl-plans/active/effort-06-reconciliation-merge-keys.md",
+      "planPath": "impl-plans/completed/effort-06-reconciliation-merge-keys.md",
       "wave": 2,
       "dependsOn": ["EDF-01"],
       "writePaths": [
@@ -277,7 +277,7 @@
         "Sources/AppCore/MultiSourceUsageCoalescing.swift",
         "Sources/AppCore/CostSnapshotMerge.swift",
         "Tests/AppCoreTests/EffortReconciliationTests.swift",
-        "impl-plans/active/effort-06-reconciliation-merge-keys.md"
+        "impl-plans/completed/effort-06-reconciliation-merge-keys.md"
       ],
       "sharedPaths": [],
       "sharedPathNotes": [
@@ -303,13 +303,13 @@
     },
     {
       "planId": "EDF-07",
-      "planPath": "impl-plans/active/effort-07-aggregation-cache.md",
+      "planPath": "impl-plans/completed/effort-07-aggregation-cache.md",
       "wave": 2,
       "dependsOn": ["EDF-01"],
       "writePaths": [
         "Sources/AppCore/AggregationCache.swift",
         "Tests/AppCoreTests/EffortAggregationCacheTests.swift",
-        "impl-plans/active/effort-07-aggregation-cache.md"
+        "impl-plans/completed/effort-07-aggregation-cache.md"
       ],
       "sharedPaths": [],
       "acceptanceCriteria": [
@@ -330,7 +330,7 @@
     },
     {
       "planId": "EDF-08",
-      "planPath": "impl-plans/active/effort-08-cost-series-api.md",
+      "planPath": "impl-plans/completed/effort-08-cost-series-api.md",
       "wave": 2,
       "dependsOn": ["EDF-01"],
       "writePaths": [
@@ -340,7 +340,7 @@
         "Sources/AppCore/MachineDashboardRouter.swift",
         "Sources/AppCore/MachineDashboardRouter+DirectoryQueries.swift",
         "Tests/AppCoreTests/EffortCostSeriesTests.swift",
-        "impl-plans/active/effort-08-cost-series-api.md"
+        "impl-plans/completed/effort-08-cost-series-api.md"
       ],
       "sharedPaths": [],
       "acceptanceCriteria": [
@@ -361,13 +361,13 @@
     },
     {
       "planId": "EDF-09",
-      "planPath": "impl-plans/active/dashboard-09-model-colors.md",
+      "planPath": "impl-plans/completed/dashboard-09-model-colors.md",
       "wave": 2,
       "dependsOn": ["EDF-04"],
       "writePaths": [
         "frontend/src/seriesColors.ts",
         "frontend/tests/seriesColors.test.ts",
-        "impl-plans/active/dashboard-09-model-colors.md"
+        "impl-plans/completed/dashboard-09-model-colors.md"
       ],
       "sharedPaths": [],
       "acceptanceCriteria": [
@@ -385,7 +385,7 @@
     },
     {
       "planId": "EDF-10",
-      "planPath": "impl-plans/active/effort-10-frontend-effort-series.md",
+      "planPath": "impl-plans/completed/effort-10-frontend-effort-series.md",
       "wave": 2,
       "dependsOn": ["EDF-04"],
       "writePaths": [
@@ -393,7 +393,7 @@
         "frontend/src/dashboardDirectoryState.ts",
         "frontend/tests/usageChart.test.ts",
         "frontend/tests/dashboardDirectoryState.test.ts",
-        "impl-plans/active/effort-10-frontend-effort-series.md"
+        "impl-plans/completed/effort-10-frontend-effort-series.md"
       ],
       "sharedPaths": [],
       "acceptanceCriteria": [
@@ -411,7 +411,7 @@
     },
     {
       "planId": "EDF-11",
-      "planPath": "impl-plans/active/dashboard-11-app-split-wiring.md",
+      "planPath": "impl-plans/completed/dashboard-11-app-split-wiring.md",
       "wave": 3,
       "dependsOn": ["EDF-02", "EDF-03", "EDF-04", "EDF-08", "EDF-09", "EDF-10"],
       "writePaths": [
@@ -425,7 +425,7 @@
         "frontend/tests/rangeControls.test.ts",
         "frontend/tests/dashboardLayoutState.test.ts",
         "frontend/tests/appMarkupGuards.test.ts",
-        "impl-plans/active/dashboard-11-app-split-wiring.md"
+        "impl-plans/completed/dashboard-11-app-split-wiring.md"
       ],
       "sharedPaths": [],
       "acceptanceCriteria": [
@@ -446,14 +446,14 @@
     },
     {
       "planId": "EDF-12",
-      "planPath": "impl-plans/active/dashboard-12-finalize-assets-gate.md",
+      "planPath": "impl-plans/completed/dashboard-12-finalize-assets-gate.md",
       "wave": 4,
       "dependsOn": ["EDF-01", "EDF-02", "EDF-03", "EDF-04", "EDF-05", "EDF-06", "EDF-07", "EDF-08", "EDF-09", "EDF-10", "EDF-11"],
       "writePaths": [
         "Sources/AppCore/Resources/Web",
-        "impl-plans/active/dashboard-dark-flat-effort-overview.md",
+        "impl-plans/completed/dashboard-dark-flat-effort-overview.md",
         "design-docs/specs/design-dashboard-dark-flat-effort-grouping.md",
-        "impl-plans/active/dashboard-12-finalize-assets-gate.md"
+        "impl-plans/completed/dashboard-12-finalize-assets-gate.md"
       ],
       "sharedPaths": [
         "Sources/AppCore/UsageEffort.swift",
@@ -512,7 +512,7 @@
           "intendedEdit": "Status line only, set to Implemented."
         },
         {
-          "path": "impl-plans/active/dashboard-dark-flat-effort-overview.md",
+          "path": "impl-plans/completed/dashboard-dark-flat-effort-overview.md",
           "intendedEdit": "Status to Completed and a summary appended to the Progress Log (plans done, repairs, gate results with log paths, residual items)."
         },
         {

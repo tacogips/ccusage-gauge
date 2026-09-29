@@ -1,6 +1,6 @@
 # Dashboard Dark Flat Theme and Effort Grouping - Plan Overview
 
-**Status**: In Progress
+**Status**: Completed
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md`
 **User decisions**: `design-docs/user-qa/2026-09-29-dashboard-theme-effort-decisions.md`
 **Issue**: workflow-input inline issue "Dashboard: dark flat theme, foldable panes, active range buttons, effort grouping, distinct model colors" (no GitHub issue number)
@@ -27,18 +27,18 @@ Model-only stacking remains the default.
 
 | Wave | Plan ID | File | Depends on |
 |---|---|---|---|
-| 1 | EDF-01 | `impl-plans/active/effort-01-swift-record-contract.md` | - |
-| 1 | EDF-02 | `impl-plans/active/effort-02-dashboard-ui-state.md` | - |
-| 1 | EDF-03 | `impl-plans/active/dashboard-03-dark-flat-theme.md` | - |
-| 1 | EDF-04 | `impl-plans/active/effort-04-frontend-contract.md` | - |
-| 2 | EDF-05 | `impl-plans/active/effort-05-codex-effort-parsing.md` | EDF-01 |
-| 2 | EDF-06 | `impl-plans/active/effort-06-reconciliation-merge-keys.md` | EDF-01 |
-| 2 | EDF-07 | `impl-plans/active/effort-07-aggregation-cache.md` | EDF-01 |
-| 2 | EDF-08 | `impl-plans/active/effort-08-cost-series-api.md` | EDF-01 |
-| 2 | EDF-09 | `impl-plans/active/dashboard-09-model-colors.md` | EDF-04 |
-| 2 | EDF-10 | `impl-plans/active/effort-10-frontend-effort-series.md` | EDF-04 |
-| 3 | EDF-11 | `impl-plans/active/dashboard-11-app-split-wiring.md` | EDF-02, EDF-03, EDF-04, EDF-08, EDF-09, EDF-10 |
-| 4 | EDF-12 | `impl-plans/active/dashboard-12-finalize-assets-gate.md` | EDF-01 .. EDF-11 |
+| 1 | EDF-01 | `impl-plans/completed/effort-01-swift-record-contract.md` | - |
+| 1 | EDF-02 | `impl-plans/completed/effort-02-dashboard-ui-state.md` | - |
+| 1 | EDF-03 | `impl-plans/completed/dashboard-03-dark-flat-theme.md` | - |
+| 1 | EDF-04 | `impl-plans/completed/effort-04-frontend-contract.md` | - |
+| 2 | EDF-05 | `impl-plans/completed/effort-05-codex-effort-parsing.md` | EDF-01 |
+| 2 | EDF-06 | `impl-plans/completed/effort-06-reconciliation-merge-keys.md` | EDF-01 |
+| 2 | EDF-07 | `impl-plans/completed/effort-07-aggregation-cache.md` | EDF-01 |
+| 2 | EDF-08 | `impl-plans/completed/effort-08-cost-series-api.md` | EDF-01 |
+| 2 | EDF-09 | `impl-plans/completed/dashboard-09-model-colors.md` | EDF-04 |
+| 2 | EDF-10 | `impl-plans/completed/effort-10-frontend-effort-series.md` | EDF-04 |
+| 3 | EDF-11 | `impl-plans/completed/dashboard-11-app-split-wiring.md` | EDF-02, EDF-03, EDF-04, EDF-08, EDF-09, EDF-10 |
+| 4 | EDF-12 | `impl-plans/completed/dashboard-12-finalize-assets-gate.md` | EDF-01 .. EDF-11 |
 
 Within a wave, the `writePaths` of different plans are disjoint. No file is
 written by two plans in the same wave.
@@ -183,3 +183,12 @@ mise run frontend:build        (last; regenerates Sources/AppCore/Resources/Web)
 ## Progress Log
 
 - 2026-09-29: Plan set created by the Step 4 author from the accepted design.
+- 2026-09-30: All 12 plans completed. Waves 1 through 3 (EDF-01 to EDF-11)
+  were implemented by GPT-6 Luna fanout and accepted by the Opus
+  integration review. The workflow then stopped at the final dispatch
+  because of a riela-packages dispatch-plans regression, fixed in local
+  riela-packages commit 4931bd6. EDF-12 (gate, assets, E2E and visual
+  repairs) was completed directly; see the EDF-12 Progress Log. Residual:
+  - the custom date editor stays open after Apply (minor, observed in E2E
+    and not triaged);
+  - Claude effort is still unknown (open question in user-qa).

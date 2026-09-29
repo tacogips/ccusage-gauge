@@ -60,6 +60,7 @@ export interface CostRow {
   dataQuality: "timestamped" | "sessionEstimated" | "daily";
   machine: string;
   directory?: string;
+  effort?: string;
 }
 export interface CostSeriesResponse {
   range: string;
@@ -100,7 +101,9 @@ export interface DashboardUIState {
   selectedMachines: string[];
   granularity: "15min" | "hourly" | "6hour" | "daily";
   chartMetric: "costUSD" | "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens";
-  stackBy: "model" | "machine" | "subdirectory";
+  stackBy: "model" | "machine" | "subdirectory" | "modelEffort";
+  sidebarCollapsed?: boolean;
+  headerCollapsed?: boolean;
 }
 export interface DashboardUIStateResponse { state?: DashboardUIState }
 export interface SSHConnection {

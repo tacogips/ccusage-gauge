@@ -369,7 +369,8 @@ public actor UsageAggregationCache {
         cache_creation_tokens INTEGER NOT NULL,
         cache_read_tokens INTEGER NOT NULL,
         data_quality TEXT NOT NULL,
-        directory TEXT
+        directory TEXT,
+        effort TEXT
       );
       CREATE INDEX IF NOT EXISTS daily_metrics_date_idx ON daily_metrics(date);
       CREATE INDEX IF NOT EXISTS session_metrics_timestamp_idx ON session_metrics(timestamp);
@@ -400,6 +401,19 @@ public actor UsageAggregationCache {
     }
     if try !hasColumn("directory", in: "session_metrics", database: database) {
       try execute("ALTER TABLE session_metrics ADD COLUMN directory TEXT", in: database)
+    }
+    if try !hasColumn("effort", in: "session_metrics", database: database) {
+      try execute("BEGIN IMMEDIATE", in: database)
+      do {
+        try execute("ALTER TABLE session_metrics ADD COLUMN effort TEXT", in: database)
+        if machineID == MachineDescriptor.local.id {
+          try execute("DELETE FROM directory_coverage_ranges", in: database)
+        }
+        try execute("COMMIT", in: database)
+      } catch {
+        try? execute("ROLLBACK", in: database)
+        throw error
+      }
     }
   }
 
@@ -488,8 +502,8 @@ public actor UsageAggregationCache {
   private func readSessions(from database: OpaquePointer) throws -> [CCUsageSessionMetricRecord] {
     let statement = try prepare("""
       SELECT timestamp, agent, model, cost_usd, input_tokens, output_tokens,
-             cache_creation_tokens, cache_read_tokens, data_quality, directory
-      FROM session_metrics ORDER BY timestamp, agent, model, directory
+             cache_creation_tokens, cache_read_tokens, data_quality, directory, effort
+      FROM session_metrics ORDER BY timestamp, agent, model, directory, effort
       """, in: database)
     defer { sqlite3_finalize(statement) }
     var rows: [CCUsageSessionMetricRecord] = []
@@ -511,7 +525,8 @@ public actor UsageAggregationCache {
         cacheReadTokens: Int(sqlite3_column_int64(statement, 7)),
         dataQuality: dataQuality,
         machine: machineID,
-        directory: optionalText(statement, column: 9)
+        directory: optionalText(statement, column: 9),
+        effort: optionalText(statement, column: 10)
       ))
     }
     return rows
@@ -567,8 +582,8 @@ public actor UsageAggregationCache {
     let statement = try prepare("""
       INSERT INTO session_metrics(
         timestamp, agent, model, cost_usd, input_tokens, output_tokens,
-        cache_creation_tokens, cache_read_tokens, data_quality, directory
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cache_creation_tokens, cache_read_tokens, data_quality, directory, effort
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """, in: database)
     defer { sqlite3_finalize(statement) }
     for row in sessions {
@@ -584,6 +599,7 @@ public actor UsageAggregationCache {
       sqlite3_bind_int64(statement, 8, sqlite3_int64(row.cacheReadTokens))
       try bind(row.dataQuality.rawValue, to: 9, in: statement)
       try bindOptional(row.directory, to: 10, in: statement)
+      try bindOptional(row.effort, to: 11, in: statement)
       try stepDone(statement)
     }
   }

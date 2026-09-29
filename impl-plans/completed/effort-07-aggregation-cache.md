@@ -1,11 +1,11 @@
 # EDF-07: Aggregate Cache Effort Column and One-Time Local Backfill Trigger
 
-**Status**: Not Started
+**Status**: Completed
 **Plan ID**: EDF-07
 **Wave**: 2
 **Depends on**: EDF-01 (`CCUsageSessionMetricRecord.effort`)
 **Design Reference**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md` section 5 (Aggregate cache); `design-docs/specs/architecture.md` "Project-directory dimension and filtering" (backfill contract)
-**Protocol**: `impl-plans/active/dashboard-dark-flat-effort-overview.md` section 3
+**Protocol**: `impl-plans/completed/dashboard-dark-flat-effort-overview.md` section 3
 
 ## Purpose
 
@@ -110,9 +110,11 @@ the file is under 1000 lines.
 
 ## Completion criteria
 
-- [ ] Local-only reset, idempotency, SSH preservation, and round-trip tests pass.
-- [ ] All logs recorded.
+- [x] Local-only reset, idempotency, SSH preservation, and effort round-trip tests pass.
+- [x] All required build, focused test, lifecycle, regression, and strict changed-file lint logs recorded under `/tmp/ccusage-gauge-effort/EDF-07-*`.
 
 ## Progress Log
 
 - 2026-09-29: Plan created.
+- 2026-09-29: Added nullable `session_metrics.effort`, an idempotent migration that atomically adds the column and clears directory coverage only for the local machine, effort-aware session reads/writes, and four focused legacy/local/remote/idempotency/round-trip tests. Strict changed-file SwiftLint passed with an empty log. Initial `swift build`, `EffortAggregationCacheTests`, `CacheLifecycleTests`, and the directory/cache regression filter all stopped during package compilation at the in-flight `MachineDashboardRouter.swift:128` non-exhaustive catch (outside EDF-07 write paths); full logs are under `/tmp/ccusage-gauge-effort/EDF-07-*.log`. Rerun these gates after the router integration is repaired.
+- 2026-09-29: After the shared router integration was fixed, reran `swift build` (pass), `EffortAggregationCacheTests` (4/4), `CacheLifecycleTests` (5/5), and `DirectorySQLiteRegressionTests|DirectoryCacheMigrationTests|UsageAggregationCacheTests` (6/6). The final changed-file `swiftlint lint --strict --quiet --no-cache` run passed with empty output. `AggregationCache.swift` is 783 lines. Successful logs are named `EDF-07-build-rerun1.log`, `EDF-07-test-rerun1.log`, `EDF-07-lifecycle-rerun1.log`, `EDF-07-regression-rerun1.log`, and `EDF-07-lint-rerun1.log` in `/tmp/ccusage-gauge-effort`. Formal review remains a downstream workflow step.
