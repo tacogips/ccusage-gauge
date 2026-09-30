@@ -1,6 +1,6 @@
 # Dashboard Dark Flat Theme, Foldable Panes, Active Range Buttons, Effort Grouping, and Distinct Model Colors
 
-**Status**: Implemented
+**Status**: Implemented (section 2 amended by `design-dashboard-light-theme-and-flat-icons.md`: optional light theme)
 **Source issue**: workflow-input inline issue "Dashboard: dark flat theme, foldable
 panes, active range buttons, effort grouping, distinct model colors". No GitHub
 issue URL, Codex-agent reference, reference repository, or Cursor CLI behavior

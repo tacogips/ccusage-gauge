@@ -1,0 +1,314 @@
+{
+  "taskId": "light-theme-flat-icons-20260930",
+  "workflowMode": "issue-resolution",
+  "implementationBranch": "main",
+  "baseBranch": "main",
+  "remote": "origin",
+  "originalHead": "d34c4fcf36ea9fd558ae82755d274419f05f859f",
+  "designDocPaths": [
+    "design-docs/specs/design-dashboard-light-theme-and-flat-icons.md",
+    "design-docs/user-qa/2026-09-29-dashboard-theme-effort-decisions.md",
+    "design-docs/specs/design-dashboard-dark-flat-effort-grouping.md"
+  ],
+  "overviewPlanPath": "impl-plans/active/light-theme-flat-icons-overview.md",
+  "evidenceRoot": "tmp/light-theme-flat-icons-20260930",
+  "evidenceLayout": "Dispatcher evidence goes under evidenceRoot/<planId>/attempt-<n>/ (untracked; tmp/ is git-ignored). Plan verification commands write complete logs to evidenceRoot/<PLAN-ID>/<step>.log per overview protocol 7; copy or reference those logs from the per-attempt directory.",
+  "reviewContext": {
+    "issueReference": "none (no GitHub issue supplied); user request 2026-09-30, follow-up to commit d34c4fc; plan review communication comm-002765",
+    "userProblem": "After commit d34c4fc the dashboard is dark-only, and the user wants an optional light theme while dark stays the default. The app icon, the Tauri dashboard icon, and the menu-bar glyph do not match the flat dark style; the user asked for dark icons with a white gauge rail.",
+    "requiredOutcomes": [
+      "Dark theme on first load with empty storage, whatever the OS appearance; a square theme-toggle button in the header stats-actions switches to light, the choice persists across reload under localStorage key ccusage-gauge-theme, and toggling back returns to dark.",
+      "Light token block meets the same contrast floors as dark (text/bg and text/surface >=4.5, muted/surface >=3, accent-text/accent >=4.5, control-border vs surface and bg >=3, chart-axis/surface >=3, border/surface >=1.5), enforced by flatThemeStyles.test.ts.",
+      "seriesColors.test.ts covers light palettes: every light model family color >=3:1 on #ffffff, pairwise CIE76 dE>=20 within each vendor, light effort ladder strictly increasing HSL lightness and pairwise dE>=11, light machine and subdirectory colors >=3:1; dark behavior unchanged.",
+      "Resources/AppIcon.png (1024x1024), Resources/AppIcon.icns (10-entry iconset), and Resources/DashboardIcon.png (128x128) regenerated deterministically by scripts/render-app-icon.swift per design section 5.1.",
+      "MenuBarPieIcon renders a template ring gauge (0.35-alpha rail plus solid used arc, butt caps) for fraction, unknown-fraction, no-budget states, and the unchanged warning state.",
+      "Sources/AppCore/Resources/Web matches a fresh frontend build.",
+      "Playwright screenshots of dark and light at 1440 and 390 widths show no clipping, overflow, or invisible borders or text.",
+      "Gate passes: cd frontend && bun test && bun run check && bun run build; swift build; swift test; swiftlint on changed Swift files; mise run lint; mise run test."
+    ],
+    "nonGoals": [
+      "Following the OS appearance automatically.",
+      "Server-side persistence of the theme.",
+      "Theming the native menu-bar popover.",
+      "A light variant of the app icon.",
+      "Editing icon consumers (build/stage scripts, Resources/*.plist, src-tauri/tauri.conf.json) or MenuBarApp.swift.",
+      "Committing, pushing, or archiving plans during implementation."
+    ],
+    "constraints": [
+      "Adopt the uncommitted working-tree theme implementation (colorScheme.ts, index.tsx, seriesColors.ts, App.tsx, DashboardLayout.tsx, styles.css, and the flatThemeStyles, appMarkupGuards, colorScheme tests); do not discard or rewrite it without a concrete defect.",
+      "Flat contract in both themes: no border-radius, box-shadow, text-shadow, gradients, or drop-shadow; color literals only inside the two theme token blocks.",
+      "Dark palettes, dark tokens, and dark tests do not change.",
+      "frontend/src/App.tsx stays at 1330 lines or fewer; Swift files stay under 1000 lines; run swiftlint after Swift edits.",
+      "English only, no emojis, no AI attribution.",
+      "Single working tree on main, no worktrees, no git mutations by workers; overview protocol sections 4-5 (intent snapshot hashes, fresh re-read, DRIFT and BLOCKED-BY-FOREIGN records) apply.",
+      "Only LTF-04 runs mise run frontend:build / scripts/sync-frontend-assets.sh and edits the design doc and overview.",
+      "Land as a change separate from d34c4fc."
+    ],
+    "designDecisionsAndRationale": [
+      "New storage key ccusage-gauge-theme; the legacy ccusage-gauge-color-scheme key is never read because it was auto-written from prefers-color-scheme and would open light-OS users in light, breaking the dark default.",
+      "Theme applied to documentElement data-theme before first render to avoid a flash; index.html keeps color-scheme dark meta to match the default.",
+      "Theme stays per-browser in localStorage, not in server-side UI state, since a desktop webview and a browser tab may reasonably differ.",
+      "Light series colors are fixed palettes that keep dark slot hue and saturation with lowered lightness, so a model keeps the same slot index in both themes.",
+      "App icon is rendered from vector geometry at each size by a checked-in CoreGraphics script and iconutil so the binary assets are reproducible and reviewable via the script.",
+      "Menu-bar glyph stays a template NSImage drawn in black with alpha so macOS adapts it to the menu bar appearance."
+    ],
+    "intentionalTradeoffs": [
+      "Icon colors are duplicated as literals in the render script because it cannot read CSS; the icon must be regenerated if --color-bg or --color-accent changes.",
+      "Icon geometry may be adjusted by up to 0.02 S for 16 px legibility, keeping the 270-degree opening, butt caps, and no-effects rule.",
+      "Menu-bar render harness and Playwright screenshots live under the git-ignored evidenceRoot instead of outside the repository; same not-committed intent as design section 6.",
+      "swiftlint on scripts/render-app-icon.swift may report No lintable files found because .swiftlint.yml includes only Package.swift, Sources, and Tests; recorded verbatim, not a failure.",
+      "Light machine and subdirectory contrast margin is narrow (about 3.13 for #a5913c)."
+    ],
+    "supportedEdgeCases": [
+      "Missing or throwing localStorage: read returns dark, write is dropped.",
+      "Stored value other than light maps to dark.",
+      "Only the legacy ccusage-gauge-color-scheme=light key present: theme is dark.",
+      "Menu-bar fraction clamped to [0,1]; 0 draws rail only; >=1 draws full solid ring.",
+      "Budget with unknown fraction draws a 12-to-3 o'clock solid quarter; no budget draws the vertical marker; warning state unchanged.",
+      "Unknown effort values use unranked offsets per scheme; missing effort desaturates in light as in dark.",
+      "User chartColors overrides for the active scheme are used verbatim in light."
+    ],
+    "outOfScopeEdgeCases": [
+      "OS appearance changes while the dashboard is open.",
+      "Syncing the theme between the desktop webview and browser tabs.",
+      "Subdirectory series color overrides (no override path before or after).",
+      "Light-appearance native popover styling."
+    ],
+    "sourcePaths": [
+      "design-docs/specs/design-dashboard-light-theme-and-flat-icons.md",
+      "design-docs/user-qa/2026-09-29-dashboard-theme-effort-decisions.md",
+      "design-docs/specs/design-dashboard-dark-flat-effort-grouping.md",
+      "impl-plans/active/light-theme-flat-icons-overview.md",
+      "frontend/src/colorScheme.ts",
+      "frontend/src/index.tsx",
+      "frontend/src/seriesColors.ts",
+      "frontend/src/App.tsx",
+      "frontend/src/DashboardLayout.tsx",
+      "frontend/src/styles.css",
+      "frontend/tests/flatThemeStyles.test.ts",
+      "frontend/tests/appMarkupGuards.test.ts",
+      "frontend/tests/colorScheme.test.ts",
+      "frontend/tests/seriesColors.test.ts",
+      "Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift",
+      "scripts/smoke-dashboard.sh",
+      "scripts/sync-frontend-assets.sh"
+    ]
+  },
+  "plans": [
+    {
+      "planId": "LTF-01",
+      "planPath": "impl-plans/active/ltf-01-light-series-color-tests.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "frontend/tests/seriesColors.test.ts",
+        "frontend/src/seriesColors.ts",
+        "impl-plans/active/ltf-01-light-series-color-tests.md",
+        "tmp/light-theme-flat-icons-20260930/LTF-01"
+      ],
+      "sharedPaths": [
+        "frontend/node_modules"
+      ],
+      "sharedPathNotes": [
+        {
+          "path": "frontend/node_modules",
+          "intendedEdit": "Read-only use by bun test and bun run check; shared with LTF-04; no installs."
+        },
+        {
+          "path": "frontend/src/seriesColors.ts",
+          "intendedEdit": "Light palette literals and effortLadders.light only, and only when a new test proves a value defective; dark values untouched."
+        }
+      ],
+      "acceptanceCriteria": [
+        "frontend/tests/seriesColors.test.ts has exactly one describe(\"light series colors\") block with at least 8 explicit \"light\" arguments.",
+        "Light tests cover palette selection, per-vendor >=3:1 on #ffffff and pairwise dE>=20, hue parity within 5 degrees, 8 distinct light machine and subdirectory colors >=3:1, light effort ladder strictly increasing lightness and pairwise dE>=11, missing-effort desaturation, dark default unchanged, slot parity, and light overrides.",
+        "No change to MODEL_COLOR_FAMILIES, darkSeriesColors, effortLadders.dark, or CHART_BACKGROUND; no signature or export changes.",
+        "bun test (targeted and full) and bun run check exit 0 with logs recorded; Progress Log has intent snapshot, post-hashes, and any palette value changes."
+      ],
+      "verification": [
+        "mkdir -p tmp/light-theme-flat-icons-20260930/LTF-01 && (cd frontend && bun test tests/seriesColors.test.ts) > tmp/light-theme-flat-icons-20260930/LTF-01/series.log 2>&1",
+        "(cd frontend && bun test) > tmp/light-theme-flat-icons-20260930/LTF-01/all.log 2>&1",
+        "(cd frontend && bun run check) > tmp/light-theme-flat-icons-20260930/LTF-01/check.log 2>&1",
+        "test \"$(grep -c 'describe(\"light series colors\"' frontend/tests/seriesColors.test.ts)\" -eq 1",
+        "test \"$(grep -c '\"light\"' frontend/tests/seriesColors.test.ts)\" -ge 8"
+      ]
+    },
+    {
+      "planId": "LTF-02",
+      "planPath": "impl-plans/active/ltf-02-app-icon-renderer.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "scripts/render-app-icon.swift",
+        "Resources/AppIcon.png",
+        "Resources/AppIcon.icns",
+        "Resources/DashboardIcon.png",
+        "impl-plans/active/ltf-02-app-icon-renderer.md",
+        "tmp/light-theme-flat-icons-20260930/LTF-02"
+      ],
+      "sharedPaths": [],
+      "acceptanceCriteria": [
+        "scripts/render-app-icon.swift exists, is under 1000 lines, runs from the repo root with no arguments, and uses only Foundation/CoreGraphics/ImageIO (and UniformTypeIdentifiers if needed).",
+        "Two consecutive renders produce identical AppIcon.png and DashboardIcon.png hashes.",
+        "AppIcon.png is 1024x1024, DashboardIcon.png is 128x128, and AppIcon.icns round-trips through iconutil to 10 entries.",
+        "Script contains no round caps, shadow, gradient, RoundedRect, or cornerRadius; geometry follows design section 5.1 within the 0.02 S tolerance.",
+        "Visual check recorded: dark full-bleed base, white bottom-open rail with square ends, green progress from lower-left over the top, three square orange/teal/violet bars, readable at 16 px.",
+        "Only the three icon files change under Resources."
+      ],
+      "verification": [
+        "mkdir -p tmp/light-theme-flat-icons-20260930/LTF-02 && swift scripts/render-app-icon.swift > tmp/light-theme-flat-icons-20260930/LTF-02/render-1.log 2>&1",
+        "shasum -a 256 Resources/AppIcon.png Resources/DashboardIcon.png > tmp/light-theme-flat-icons-20260930/LTF-02/hash-1.txt && swift scripts/render-app-icon.swift > tmp/light-theme-flat-icons-20260930/LTF-02/render-2.log 2>&1 && shasum -a 256 Resources/AppIcon.png Resources/DashboardIcon.png > tmp/light-theme-flat-icons-20260930/LTF-02/hash-2.txt && diff tmp/light-theme-flat-icons-20260930/LTF-02/hash-1.txt tmp/light-theme-flat-icons-20260930/LTF-02/hash-2.txt",
+        "sips -g pixelWidth -g pixelHeight Resources/AppIcon.png Resources/DashboardIcon.png > tmp/light-theme-flat-icons-20260930/LTF-02/sips.log 2>&1",
+        "rm -rf tmp/light-theme-flat-icons-20260930/LTF-02/roundtrip.iconset && iconutil -c iconset Resources/AppIcon.icns -o tmp/light-theme-flat-icons-20260930/LTF-02/roundtrip.iconset > tmp/light-theme-flat-icons-20260930/LTF-02/iconutil.log 2>&1 && test \"$(ls tmp/light-theme-flat-icons-20260930/LTF-02/roundtrip.iconset | wc -l | tr -d ' ')\" -eq 10",
+        "swiftlint lint --quiet scripts/render-app-icon.swift > tmp/light-theme-flat-icons-20260930/LTF-02/swiftlint.log 2>&1 || grep -q 'No lintable files found' tmp/light-theme-flat-icons-20260930/LTF-02/swiftlint.log",
+        "test \"$(wc -l < scripts/render-app-icon.swift)\" -lt 1000",
+        "grep -q iconutil scripts/render-app-icon.swift",
+        "! grep -Eq '\\.round\\)|= \\.round|[Ss]hadow|[Gg]radient|RoundedRect|cornerRadius' scripts/render-app-icon.swift"
+      ]
+    },
+    {
+      "planId": "LTF-03",
+      "planPath": "impl-plans/active/ltf-03-menubar-ring-gauge.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift",
+        "impl-plans/active/ltf-03-menubar-ring-gauge.md",
+        "tmp/light-theme-flat-icons-20260930/LTF-03"
+      ],
+      "sharedPaths": [
+        ".build"
+      ],
+      "sharedPathNotes": [
+        {
+          "path": ".build",
+          "intendedEdit": "SwiftPM build cache written by swift build; shared with LTF-04; no manual edits."
+        }
+      ],
+      "acceptanceCriteria": [
+        "MenuBarPieIcon.image(fraction:hasBudget:warning:) signature, enum name, 18x18 size, and isTemplate = true unchanged; MenuBarApp.swift untouched.",
+        "Non-warning states draw a 0.35-alpha full rail on circle inset 2 pt, width 2.5, butt caps; fraction known draws a solid clockwise arc from 12 o'clock (rail only at 0, full ring at >=1); unknown fraction draws a solid 12-to-3 quarter; no budget draws the butt-capped vertical marker.",
+        "No move(to: center) remains; accessibility description is Budget usage gauge for non-warning states; warning drawing and text unchanged.",
+        "swift build of ccusage-gauge-menubar and swiftlint exit 0; throwaway render of six states records isTemplate true and expected accessibility text, with visual check lines recorded."
+      ],
+      "verification": [
+        "mkdir -p tmp/light-theme-flat-icons-20260930/LTF-03 && swift build --product ccusage-gauge-menubar > tmp/light-theme-flat-icons-20260930/LTF-03/build.log 2>&1",
+        "swiftlint lint --quiet Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift > tmp/light-theme-flat-icons-20260930/LTF-03/swiftlint.log 2>&1",
+        "cat Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift tmp/light-theme-flat-icons-20260930/LTF-03/render-main.swift > tmp/light-theme-flat-icons-20260930/LTF-03/render.swift && swift tmp/light-theme-flat-icons-20260930/LTF-03/render.swift > tmp/light-theme-flat-icons-20260930/LTF-03/render.log 2>&1",
+        "test \"$(wc -l < Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift)\" -lt 1000",
+        "! grep -q 'move(to: center)' Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift",
+        "grep -q '\\.butt' Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift",
+        "test \"$(grep -c 'isTemplate = true' Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift)\" -eq 1",
+        "test \"$(grep -c 'Budget usage gauge' Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift)\" -eq 1",
+        "git diff --quiet -- Sources/CCUsageGaugeMenuBar/MenuBarApp.swift"
+      ]
+    },
+    {
+      "planId": "LTF-04",
+      "planPath": "impl-plans/active/ltf-04-finalize-assets-gate.md",
+      "wave": 2,
+      "dependsOn": [
+        "LTF-01",
+        "LTF-02",
+        "LTF-03"
+      ],
+      "writePaths": [
+        "Sources/AppCore/Resources/Web",
+        "frontend/dist",
+        "design-docs/specs/design-dashboard-light-theme-and-flat-icons.md",
+        "impl-plans/active/light-theme-flat-icons-overview.md",
+        "impl-plans/active/ltf-04-finalize-assets-gate.md",
+        "tmp/light-theme-flat-icons-20260930/LTF-04"
+      ],
+      "sharedPaths": [
+        "frontend/src/styles.css",
+        "frontend/src/DashboardLayout.tsx",
+        "frontend/tests/seriesColors.test.ts",
+        "frontend/src/seriesColors.ts",
+        "scripts/render-app-icon.swift",
+        "Resources/AppIcon.png",
+        "Resources/AppIcon.icns",
+        "Resources/DashboardIcon.png",
+        "Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift",
+        ".build",
+        "frontend/node_modules"
+      ],
+      "sharedPathNotes": [
+        {
+          "path": "frontend/src/styles.css",
+          "intendedEdit": "Repair-only: fix a concrete failure found in LTF-04 steps 1-7, recorded with its cause."
+        },
+        {
+          "path": "frontend/src/DashboardLayout.tsx",
+          "intendedEdit": "Repair-only: fix a concrete failure found in LTF-04 steps 1-7, recorded with its cause."
+        },
+        {
+          "path": "frontend/tests/seriesColors.test.ts",
+          "intendedEdit": "Repair-only after LTF-01 completes; reconcile drift or failures."
+        },
+        {
+          "path": "frontend/src/seriesColors.ts",
+          "intendedEdit": "Repair-only after LTF-01 completes; light values only."
+        },
+        {
+          "path": "scripts/render-app-icon.swift",
+          "intendedEdit": "Repair-only after LTF-02 completes; any repair requires rerunning the script and the full LTF-02 verification with logs under evidenceRoot/LTF-04."
+        },
+        {
+          "path": "Resources/AppIcon.png",
+          "intendedEdit": "Regenerated only by rerunning swift scripts/render-app-icon.swift after a serial script repair; never hand-edited."
+        },
+        {
+          "path": "Resources/AppIcon.icns",
+          "intendedEdit": "Regenerated only by rerunning swift scripts/render-app-icon.swift after a serial script repair; never hand-edited."
+        },
+        {
+          "path": "Resources/DashboardIcon.png",
+          "intendedEdit": "Regenerated only by rerunning swift scripts/render-app-icon.swift after a serial script repair; never hand-edited."
+        },
+        {
+          "path": "Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift",
+          "intendedEdit": "Repair-only after LTF-03 completes; reconcile drift or failures."
+        },
+        {
+          "path": ".build",
+          "intendedEdit": "SwiftPM build cache for swift build and swift test."
+        },
+        {
+          "path": "frontend/node_modules",
+          "intendedEdit": "Populated by bun install --frozen-lockfile inside mise run frontend:build; no dependency changes."
+        }
+      ],
+      "acceptanceCriteria": [
+        "All wave-1 DRIFT, BLOCKED-BY-FOREIGN, and failed checks reconciled, with owning-plan verification re-run and logged.",
+        "Adopted theme contracts hold: storage key ccusage-gauge-theme present once in colorScheme.ts, legacy key absent from frontend/src, applyColorScheme before render in index.tsx, dark color-scheme meta in index.html, exactly one light token block, no hard-coded date-input color-scheme rule.",
+        "App.tsx <= 1330 lines; MenuBar Swift files and render script under 1000 lines.",
+        "Frontend gate (bun test, bun run check, mise run frontend:build) and Swift gate (swift build, swift test, swiftlint on changed Swift files, mise run lint, mise run test) exit 0 with logs recorded.",
+        "diff -r frontend/dist Sources/AppCore/Resources/Web is empty; bundled CSS contains data-theme and bundled JS contains ccusage-gauge-theme.",
+        "Playwright theme-check prints only PASS lines (dark first load, toggle to light persists across reload, toggle back to dark, legacy key ignored) and four screenshots (dark/light at 1440x900 and 390x844) are reviewed with one recorded line each; if the browser check cannot run, status stays In Progress with BLOCKED recorded.",
+        "Design doc Status set to Implemented and stale section 3/6 lines corrected; no emojis in changed files; nothing committed or pushed."
+      ],
+      "verification": [
+        "mkdir -p tmp/light-theme-flat-icons-20260930/LTF-04 && (cd frontend && bun test) > tmp/light-theme-flat-icons-20260930/LTF-04/bun-test.log 2>&1",
+        "(cd frontend && bun run check) > tmp/light-theme-flat-icons-20260930/LTF-04/bun-check.log 2>&1",
+        "mise run frontend:build > tmp/light-theme-flat-icons-20260930/LTF-04/frontend-build.log 2>&1",
+        "diff -r frontend/dist Sources/AppCore/Resources/Web",
+        "test \"$(grep -l 'data-theme' Sources/AppCore/Resources/Web/assets/*.css | wc -l | tr -d ' ')\" -eq 1",
+        "test \"$(grep -l 'ccusage-gauge-theme' Sources/AppCore/Resources/Web/assets/*.js | wc -l | tr -d ' ')\" -eq 1",
+        "test \"$(grep -c 'ccusage-gauge-theme' frontend/src/colorScheme.ts)\" -eq 1",
+        "! grep -rq 'ccusage-gauge-color-scheme' frontend/src",
+        "grep -q 'applyColorScheme(document.documentElement, readStoredColorScheme())' frontend/src/index.tsx",
+        "grep -q '<meta name=\"color-scheme\" content=\"dark\" />' frontend/index.html",
+        "test \"$(grep -c ':root\\[data-theme=\"light\"\\]' frontend/src/styles.css)\" -eq 1",
+        "! grep -q 'color-scheme: dark; }' frontend/src/styles.css",
+        "test \"$(wc -l < frontend/src/App.tsx)\" -le 1330",
+        "swift build > tmp/light-theme-flat-icons-20260930/LTF-04/swift-build.log 2>&1",
+        "swift test > tmp/light-theme-flat-icons-20260930/LTF-04/swift-test.log 2>&1",
+        "swiftlint lint --quiet Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift scripts/render-app-icon.swift > tmp/light-theme-flat-icons-20260930/LTF-04/swiftlint.log 2>&1",
+        "mise run lint > tmp/light-theme-flat-icons-20260930/LTF-04/mise-lint.log 2>&1",
+        "mise run test > tmp/light-theme-flat-icons-20260930/LTF-04/mise-test.log 2>&1",
+        "! LC_ALL=C grep -rln $'\\xF0\\x9F' frontend/src frontend/tests scripts/render-app-icon.swift Sources/CCUsageGaugeMenuBar design-docs/specs/design-dashboard-light-theme-and-flat-icons.md impl-plans/active/ltf-01-light-series-color-tests.md impl-plans/active/ltf-02-app-icon-renderer.md impl-plans/active/ltf-03-menubar-ring-gauge.md impl-plans/active/ltf-04-finalize-assets-gate.md impl-plans/active/light-theme-flat-icons-overview.md"
+      ]
+    }
+  ]
+}

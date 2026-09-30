@@ -10,8 +10,13 @@ changing the rest of the design.
 
 ## Default decisions (confirm or override)
 
-1. Dark-only theme. The light theme and the light/dark toggle are removed, and
-   the stored `ccusage-gauge-color-scheme` browser value is ignored.
+1. Dark is the default theme. (Revised 2026-09-30: the user asked for an
+   optional light theme. See
+   `design-docs/specs/design-dashboard-light-theme-and-flat-icons.md`.) The
+   original default was dark-only, recorded below. The stored
+   `ccusage-gauge-color-scheme` browser value stays ignored, and the new
+   explicit-choice key is `ccusage-gauge-theme`.
+   - Original default: the light theme and the light/dark toggle were removed.
    - Reason: the request says "dark base", and restyling two flat themes would
      double the work with no accepted requirement for it.
    - The `chartColors.light` configuration stays valid, but the SPA no longer
@@ -41,5 +46,8 @@ changing the rest of the design.
    - If the implementation's check of a current transcript finds a recorded
      field, parsing it is a follow-up requiring confirmation. It is not added
      speculatively.
-2. Should the light theme come back as an option later? It is not planned in
-   this change.
+2. Should the light theme come back as an option later?
+   - Answered 2026-09-30: yes. Dark stays the default, and light is an
+     explicit option.
+   - The icons are reconsidered too: the app icon and the menu-bar glyph become
+     flat, with a dark base and a white gauge rail.
