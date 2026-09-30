@@ -23,14 +23,19 @@ This plan runs serially after wave 1. It does six things:
 
 - `Sources/AppCore/Resources/Web` (directory; regenerated only by
   `mise run frontend:build`)
-- `frontend/dist` (git-ignored build output)
 - `design-docs/specs/design-dashboard-light-theme-and-flat-icons.md` (the
-  Status line, and the stale lines listed in step 8)
+  Status line, and the lines listed in step 8)
 - `impl-plans/active/light-theme-flat-icons-overview.md` (Status and Progress
   Log)
 - `impl-plans/active/ltf-04-finalize-assets-gate.md` (Status and Progress Log)
-- `tmp/light-theme-flat-icons-20260930/LTF-04` (logs, the isolated server root, the Playwright harness,
-  and the screenshots)
+
+Not write paths. These are git-ignored and are produced only as side effects
+of commands (overview protocol 6 and 7):
+
+- `frontend/dist` (written by `bun run build` inside `mise run frontend:build`);
+- `tmp/light-theme-flat-icons-20260930/LTF-04` (logs, the isolated server root,
+  and the screenshots, created by `mkdir -p`);
+- the Playwright harness, which lives outside the repository (step 7).
 
 Repair-only paths. Edit these only to fix a concrete failure found in steps 1
 to 7, and record each repair with its cause:
@@ -64,6 +69,27 @@ the visual check) and write its logs under `tmp/light-theme-flat-icons-20260930/
 
 1. **Collect.**
    - Read the Progress Logs of LTF-01, LTF-02, and LTF-03.
+   - **Survival check.** Run it before any repair. Write logs under
+     `tmp/light-theme-flat-icons-20260930/LTF-04/` and record every exit
+     status in the Progress Log.
+     - For every file written by LTF-01, LTF-02, and LTF-03, compare the
+       current `shasum -a 256 <file>` with the post-hash recorded in that
+       plan's Progress Log. On a mismatch not caused by LTF-04, record
+       `DRIFT <path> <recorded-hash> <current-hash>` and re-run the owning
+       plan's full verification.
+     - `shasum -a 256 -c tmp/light-theme-flat-icons-20260930/LTF-02/hash-2.txt`
+       (the PNG hashes from LTF-02's second render) must exit 0.
+     - Re-run the LTF-03 contract checks:
+       - `grep -c 'move(to: center)' Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`
+         is 0;
+       - `grep -c '\.butt' Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`
+         is at least 1;
+       - `grep -c 'isTemplate = true' Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`
+         is 1;
+       - `grep -c 'Budget usage gauge' Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`
+         is 1;
+       - `git diff --quiet -- Sources/CCUsageGaugeMenuBar/MenuBarApp.swift`
+         exits 0.
    - Fix every `DRIFT`, `BLOCKED-BY-FOREIGN`, and failed check.
    - Re-run the owning plan's verification commands and record the log paths.
    - If LTF-01 changed `effortLadders.light`, note the new offsets for step 8.
@@ -126,11 +152,15 @@ the visual check) and write its logs under `tmp/light-theme-flat-icons-20260930/
      - Wait until `curl -fsS http://127.0.0.1:18182/api/health` succeeds.
      - If port 18182 is busy, pick another free port and record it.
    - **Harness.**
-     - Create `tmp/light-theme-flat-icons-20260930/LTF-04/pw/` and run `bun init -y` and
-       `bun add playwright` there.
+     - Create the harness outside the repository, at
+       `"${TMPDIR:-/tmp}/ccusage-gauge-ltf04-pw/"`, and run `bun init -y` and
+       `bun add playwright` there. Its `node_modules` contains symlinks, so it
+       must never sit inside the repository.
      - Run `bunx playwright install chromium` inside that directory. Never
        inside `frontend/`.
-     - Write `tmp/light-theme-flat-icons-20260930/LTF-04/pw/theme-check.ts`. Using a fresh browser context
+     - Write `theme-check.ts` in that directory, and copy it to
+       `tmp/light-theme-flat-icons-20260930/LTF-04/theme-check.ts` as evidence
+       after the run. Using a fresh browser context
        with empty storage, it checks:
        - on first load, `document.documentElement.dataset.theme === "dark"`;
        - clicking `button[aria-label="Switch to light theme"]` sets the theme
@@ -168,13 +198,9 @@ the visual check) and write its logs under `tmp/light-theme-flat-icons-20260930/
 8. **Update the design document**
    (`design-docs/specs/design-dashboard-light-theme-and-flat-icons.md`).
    - Set the `**Status**` line to `Implemented`.
-   - Section 3, last bullet: the light contrast floors are already asserted
-     by the `test.each` over dark and light in
-     `frontend/tests/flatThemeStyles.test.ts`. State that both blocks are
-     asserted, and remove the text saying the light assertions still have to
-     be added.
-   - Section 6: mark the `flatThemeStyles.test.ts` and `seriesColors.test.ts`
-     items as implemented.
+   - Section 6: mark the `seriesColors.test.ts` item as implemented. (The
+     section 3 and section 6 `flatThemeStyles.test.ts` lines were already
+     corrected in the design step of session 220.)
    - If LTF-01 changed `effortLadders.light`, update the ladder numbers in
      section 4.
    - Make no other design edits.
@@ -195,6 +221,9 @@ the visual check) and write its logs under `tmp/light-theme-flat-icons-20260930/
 
 ## Completion criteria
 
+- [ ] The step 1 survival check passes: wave-1 post-hashes match or DRIFT is
+      reconciled, `shasum -c` of LTF-02 `hash-2.txt` exits 0, and the LTF-03
+      contract greps hold.
 - [ ] Every gate command in steps 4 and 6 exits 0, and its log paths are
       recorded.
 - [ ] Every item in steps 2, 3, and 5 holds.

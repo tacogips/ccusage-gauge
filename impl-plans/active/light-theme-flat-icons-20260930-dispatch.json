@@ -4,7 +4,7 @@
   "implementationBranch": "main",
   "baseBranch": "main",
   "remote": "origin",
-  "originalHead": "d34c4fcf36ea9fd558ae82755d274419f05f859f",
+  "originalHead": "97163956a456c5dd1ea7e9b643a25392277c3617",
   "designDocPaths": [
     "design-docs/specs/design-dashboard-light-theme-and-flat-icons.md",
     "design-docs/user-qa/2026-09-29-dashboard-theme-effort-decisions.md",
@@ -12,9 +12,9 @@
   ],
   "overviewPlanPath": "impl-plans/active/light-theme-flat-icons-overview.md",
   "evidenceRoot": "tmp/light-theme-flat-icons-20260930",
-  "evidenceLayout": "Dispatcher evidence goes under evidenceRoot/<planId>/attempt-<n>/ (untracked; tmp/ is git-ignored). Plan verification commands write complete logs to evidenceRoot/<PLAN-ID>/<step>.log per overview protocol 7; copy or reference those logs from the per-attempt directory.",
+  "evidenceLayout": "Dispatcher evidence goes under evidenceRoot/<planId>/attempt-<n>/ (untracked; tmp/ is git-ignored). Plan verification commands write complete logs to evidenceRoot/<PLAN-ID>/<step>.log per overview protocol 7; copy or reference those logs from the per-attempt directory. evidenceRoot and the git-ignored build caches (.build, frontend/node_modules, frontend/dist) are never listed in writePaths, sharedPaths, or trackedPaths; they are created only as command side effects. The LTF-04 Playwright harness lives outside the repository.",
   "reviewContext": {
-    "issueReference": "none (no GitHub issue supplied); user request 2026-09-30, follow-up to commit d34c4fc; plan review communication comm-002765",
+    "issueReference": "none (no GitHub issue supplied); user request 2026-09-30, follow-up to commit d34c4fc; workflow session opus-luna-design-and-implement-review-loop-session-220 resuming session 218 (commit 9716395); accepted plan review communication comm-002774",
     "userProblem": "After commit d34c4fc the dashboard is dark-only, and the user wants an optional light theme while dark stays the default. The app icon, the Tauri dashboard icon, and the menu-bar glyph do not match the flat dark style; the user asked for dark icons with a white gauge rail.",
     "requiredOutcomes": [
       "Dark theme on first load with empty storage, whatever the OS appearance; a square theme-toggle button in the header stats-actions switches to light, the choice persists across reload under localStorage key ccusage-gauge-theme, and toggling back returns to dark.",
@@ -55,7 +55,7 @@
     "intentionalTradeoffs": [
       "Icon colors are duplicated as literals in the render script because it cannot read CSS; the icon must be regenerated if --color-bg or --color-accent changes.",
       "Icon geometry may be adjusted by up to 0.02 S for 16 px legibility, keeping the 270-degree opening, butt caps, and no-effects rule.",
-      "Menu-bar render harness and Playwright screenshots live under the git-ignored evidenceRoot instead of outside the repository; same not-committed intent as design section 6.",
+      "Menu-bar render harness and Playwright screenshots live under the git-ignored evidenceRoot instead of outside the repository; same not-committed intent as design section 6. The Playwright harness itself (with its symlinked node_modules) lives outside the repository.",
       "swiftlint on scripts/render-app-icon.swift may report No lintable files found because .swiftlint.yml includes only Package.swift, Sources, and Tests; recorded verbatim, not a failure.",
       "Light machine and subdirectory contrast margin is narrow (about 3.13 for #a5913c)."
     ],
@@ -103,17 +103,10 @@
       "writePaths": [
         "frontend/tests/seriesColors.test.ts",
         "frontend/src/seriesColors.ts",
-        "impl-plans/active/ltf-01-light-series-color-tests.md",
-        "tmp/light-theme-flat-icons-20260930/LTF-01"
+        "impl-plans/active/ltf-01-light-series-color-tests.md"
       ],
-      "sharedPaths": [
-        "frontend/node_modules"
-      ],
+      "sharedPaths": [],
       "sharedPathNotes": [
-        {
-          "path": "frontend/node_modules",
-          "intendedEdit": "Read-only use by bun test and bun run check; shared with LTF-04; no installs."
-        },
         {
           "path": "frontend/src/seriesColors.ts",
           "intendedEdit": "Light palette literals and effortLadders.light only, and only when a new test proves a value defective; dark values untouched."
@@ -143,8 +136,7 @@
         "Resources/AppIcon.png",
         "Resources/AppIcon.icns",
         "Resources/DashboardIcon.png",
-        "impl-plans/active/ltf-02-app-icon-renderer.md",
-        "tmp/light-theme-flat-icons-20260930/LTF-02"
+        "impl-plans/active/ltf-02-app-icon-renderer.md"
       ],
       "sharedPaths": [],
       "acceptanceCriteria": [
@@ -173,18 +165,9 @@
       "dependsOn": [],
       "writePaths": [
         "Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift",
-        "impl-plans/active/ltf-03-menubar-ring-gauge.md",
-        "tmp/light-theme-flat-icons-20260930/LTF-03"
+        "impl-plans/active/ltf-03-menubar-ring-gauge.md"
       ],
-      "sharedPaths": [
-        ".build"
-      ],
-      "sharedPathNotes": [
-        {
-          "path": ".build",
-          "intendedEdit": "SwiftPM build cache written by swift build; shared with LTF-04; no manual edits."
-        }
-      ],
+      "sharedPaths": [],
       "acceptanceCriteria": [
         "MenuBarPieIcon.image(fraction:hasBudget:warning:) signature, enum name, 18x18 size, and isTemplate = true unchanged; MenuBarApp.swift untouched.",
         "Non-warning states draw a 0.35-alpha full rail on circle inset 2 pt, width 2.5, butt caps; fraction known draws a solid clockwise arc from 12 o'clock (rail only at 0, full ring at >=1); unknown fraction draws a solid 12-to-3 quarter; no budget draws the butt-capped vertical marker.",
@@ -214,11 +197,9 @@
       ],
       "writePaths": [
         "Sources/AppCore/Resources/Web",
-        "frontend/dist",
         "design-docs/specs/design-dashboard-light-theme-and-flat-icons.md",
         "impl-plans/active/light-theme-flat-icons-overview.md",
-        "impl-plans/active/ltf-04-finalize-assets-gate.md",
-        "tmp/light-theme-flat-icons-20260930/LTF-04"
+        "impl-plans/active/ltf-04-finalize-assets-gate.md"
       ],
       "sharedPaths": [
         "frontend/src/styles.css",
@@ -229,9 +210,7 @@
         "Resources/AppIcon.png",
         "Resources/AppIcon.icns",
         "Resources/DashboardIcon.png",
-        "Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift",
-        ".build",
-        "frontend/node_modules"
+        "Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift"
       ],
       "sharedPathNotes": [
         {
@@ -269,18 +248,11 @@
         {
           "path": "Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift",
           "intendedEdit": "Repair-only after LTF-03 completes; reconcile drift or failures."
-        },
-        {
-          "path": ".build",
-          "intendedEdit": "SwiftPM build cache for swift build and swift test."
-        },
-        {
-          "path": "frontend/node_modules",
-          "intendedEdit": "Populated by bun install --frozen-lockfile inside mise run frontend:build; no dependency changes."
         }
       ],
       "acceptanceCriteria": [
         "All wave-1 DRIFT, BLOCKED-BY-FOREIGN, and failed checks reconciled, with owning-plan verification re-run and logged.",
+        "Survival check before any repair: wave-1 file post-hashes match the owning plans' Progress Logs or DRIFT is recorded and reconciled, shasum -c of LTF-02 hash-2.txt exits 0, and the LTF-03 ring-gauge contract holds (no move(to: center), one Budget usage gauge label, MenuBarApp.swift unchanged).",
         "Adopted theme contracts hold: storage key ccusage-gauge-theme present once in colorScheme.ts, legacy key absent from frontend/src, applyColorScheme before render in index.tsx, dark color-scheme meta in index.html, exactly one light token block, no hard-coded date-input color-scheme rule.",
         "App.tsx <= 1330 lines; MenuBar Swift files and render script under 1000 lines.",
         "Frontend gate (bun test, bun run check, mise run frontend:build) and Swift gate (swift build, swift test, swiftlint on changed Swift files, mise run lint, mise run test) exit 0 with logs recorded.",
@@ -290,6 +262,10 @@
       ],
       "verification": [
         "mkdir -p tmp/light-theme-flat-icons-20260930/LTF-04 && (cd frontend && bun test) > tmp/light-theme-flat-icons-20260930/LTF-04/bun-test.log 2>&1",
+        "shasum -a 256 -c tmp/light-theme-flat-icons-20260930/LTF-02/hash-2.txt > tmp/light-theme-flat-icons-20260930/LTF-04/icon-hash-check.log 2>&1",
+        "! grep -q 'move(to: center)' Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift",
+        "test \"$(grep -c 'Budget usage gauge' Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift)\" -eq 1",
+        "git diff --quiet -- Sources/CCUsageGaugeMenuBar/MenuBarApp.swift",
         "(cd frontend && bun run check) > tmp/light-theme-flat-icons-20260930/LTF-04/bun-check.log 2>&1",
         "mise run frontend:build > tmp/light-theme-flat-icons-20260930/LTF-04/frontend-build.log 2>&1",
         "diff -r frontend/dist Sources/AppCore/Resources/Web",

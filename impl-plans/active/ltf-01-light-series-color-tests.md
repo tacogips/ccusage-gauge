@@ -23,7 +23,10 @@ light palette values only if a new test fails.
   defective.
 - `impl-plans/active/ltf-01-light-series-color-tests.md` (Status and Progress
   Log)
-- `tmp/light-theme-flat-icons-20260930/LTF-01` (logs)
+
+Evidence logs go to `tmp/light-theme-flat-icons-20260930/LTF-01`, created by
+`mkdir -p` in the verification commands. `tmp/` is git-ignored, so it is not a
+write path (overview protocol 7).
 
 ## Read-only context
 
@@ -80,8 +83,9 @@ outcome:
 6. The dark default is unchanged. For a sample of dark family colors:
    - `effortShade(c, "high")` equals `effortShade(c, "high", "dark")`;
    - `allocateModelColors(catalog)(m)` equals
-     `allocateModelColors(catalog, undefined, "dark")(m)` for the catalog used
-     in the existing sol/luna test.
+     `allocateModelColors(catalog, undefined, "dark")(m)` for every model `m`
+     in `catalog = ["gpt-5.6-sol", "gpt-6-luna", "claude-opus-4-8", "gemini-2"]`
+     (the catalog already used at `frontend/tests/seriesColors.test.ts:118`).
 7. Slot parity. For that catalog, the index of each model's light color in
    `LIGHT_MODEL_COLOR_FAMILIES[vendor]` equals the index of its dark color in
    `MODEL_COLOR_FAMILIES[vendor]`.

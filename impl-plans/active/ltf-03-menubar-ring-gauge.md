@@ -18,8 +18,11 @@ template image, and the unknown, no-budget, and warning states are kept.
 
 - `Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`
 - `impl-plans/active/ltf-03-menubar-ring-gauge.md` (Status and Progress Log)
-- `tmp/light-theme-flat-icons-20260930/LTF-03` (logs, the throwaway render script, and the rendered
-  PNGs)
+
+Logs, the throwaway render script, and the rendered PNGs go to
+`tmp/light-theme-flat-icons-20260930/LTF-03`, created by `mkdir -p` in the
+verification commands. `tmp/` is git-ignored, so it is not a write path
+(overview protocol 7).
 
 ## Non-goals
 

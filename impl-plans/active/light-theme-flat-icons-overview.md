@@ -93,8 +93,12 @@ module. LTF-04 is the only serial reconciliation point.
    - Never revert content you did not write.
 5. **Record post-hashes.** When you finish, record `shasum -a 256` for every
    file you wrote.
-6. **Foreign breakage.** Wave-1 workers share `.build` and
-   `frontend/node_modules`.
+6. **Foreign breakage.** Wave-1 commands implicitly share the git-ignored
+   build caches `.build` and `frontend/node_modules` (and LTF-04 writes
+   `frontend/dist`).
+   - These caches contain symlinks. They are never listed as write, shared,
+     or tracked paths in any plan or in the dispatch manifest; commands create
+     and use them as side effects only. Do not edit them by hand.
    - If a command fails only because of files outside your Write paths, rerun
      it up to 3 times, about 2 minutes apart.
    - If it still fails, record
@@ -102,7 +106,9 @@ module. LTF-04 is the only serial reconciliation point.
      checks, and leave the repair to LTF-04.
 7. **Logs.** Every verification command writes its complete output to
    `tmp/light-theme-flat-icons-20260930/<PLAN-ID>/<step>.log` and then prints `exit=$?`. `tmp/` is
-   git-ignored.
+   git-ignored. Commands create it with `mkdir -p`; it is not a write,
+   shared, or tracked path, and nothing that creates symlinks (such as a
+   `bun add` or `npm install`) runs inside it.
    - The Progress Log records the command, the exit status, and the log path.
    - A truncated log is not a pass.
 8. **Foreground only.** Do not use `&`, `nohup`, `disown`, or `setsid`.
@@ -144,3 +150,11 @@ module. LTF-04 is the only serial reconciliation point.
 - 2026-09-30: Plan set created from the accepted design. Main still has the
   unpushed commit `d34c4fc`; this work must land as a separate change (design
   section 7).
+- 2026-09-30 (session 220, resume of session 218): session 218 stopped at
+  step6-implement with policyBlocked "fanout change tracking refuses symlink
+  ancestry", because the dispatch manifest listed git-ignored caches
+  (`frontend/node_modules`, `.build`, `frontend/dist`, and the `tmp/` evidence
+  directories) as write or shared paths. The manifest and the plan Write paths
+  now list only tracked source and asset paths, the LTF-04 Playwright harness
+  moved outside the repository, and `originalHead` is `9716395`. The design is
+  unchanged apart from correcting its stale status and test-coverage lines.

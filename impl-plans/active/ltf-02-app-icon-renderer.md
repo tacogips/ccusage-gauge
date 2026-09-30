@@ -25,7 +25,10 @@ and three vendor bars. The script regenerates:
 - `Resources/AppIcon.icns`
 - `Resources/DashboardIcon.png`
 - `impl-plans/active/ltf-02-app-icon-renderer.md` (Status and Progress Log)
-- `tmp/light-theme-flat-icons-20260930/LTF-02` (logs and round-trip output)
+
+Logs and the round-trip output go to `tmp/light-theme-flat-icons-20260930/LTF-02`,
+created by `mkdir -p` in the verification commands. `tmp/` is git-ignored, so
+it is not a write path (overview protocol 7).
 
 ## Non-goals
 

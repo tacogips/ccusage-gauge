@@ -1,7 +1,9 @@
 # Optional Light Theme and Flat Icons
 
-**Status**: Accepted. The frontend theme work is partly implemented and not yet
-committed. The icons and the light-theme tests are not implemented yet.
+**Status**: Accepted. The frontend theme work (sections 2 and 3, and the light
+palettes of section 4) is implemented in the working tree and not yet
+committed. The light assertions in `seriesColors.test.ts`, the icons, the
+bundled assets, and the browser check are not implemented yet.
 **Amends**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md`
 section 2 (Dark Flat Theme). That spec removed the light theme. This addendum
 brings light back as an explicit option. Dark stays the default, and every
@@ -94,8 +96,7 @@ Out of scope:
 | `--color-border` on `--color-surface` | 1.5 |
 
 - `flatThemeStyles.test.ts` parses both blocks and asserts every row for each
-  theme. The current test covers dark only, so the light assertions still have
-  to be added.
+  theme through one `test.each` over dark and light. This is implemented.
 
 ## 4. Series Colors per Theme
 
@@ -207,7 +208,7 @@ Light uses fixed palettes. It does not adapt dark colors at runtime.
   - `flatThemeStyles.test.ts`:
     - flat geometry and literal confinement are implemented;
     - every dark token is redefined for light, which is implemented;
-    - the section 3 contrast floors must be added for the light block.
+    - the section 3 contrast floors for both blocks, which is implemented.
   - `seriesColors.test.ts`: the section 4 light rules must be added, and the
     dark rules stay as they are.
   - `appMarkupGuards.test.ts` covers the toggle markup and the stats-actions
@@ -219,15 +220,17 @@ Light uses fixed palettes. It does not adapt dark colors at runtime.
   - `iconutil -c iconset Resources/AppIcon.icns` round-trips to ten entries;
   - view the PNGs visually, because binary assets cannot be reviewed in a diff;
   - for the menu-bar glyph, render the four states to PNG with a throwaway
-    script outside the repository, view them, and report the result as
-    evidence. The menu-bar target has no test target.
+    script in the git-ignored `tmp/` evidence directory (never committed),
+    view them, and report the result as evidence. The menu-bar target has no test target.
 - Bundled assets: run `scripts/sync-frontend-assets.sh` after
   `cd frontend && bun run build`. `Sources/AppCore/Resources/Web` must then have
   no diff against a fresh build.
 - Visual check: take Playwright screenshots of the dashboard in dark and light,
   at 1440 px and 390 px widths, and look for clipping, overflow, and invisible
-  borders or text. Write the screenshots outside the repository as review
-  evidence. Do not overwrite the existing `design-docs/screenshots/*.png`.
+  borders or text. The Playwright harness and its dependencies live outside the
+  repository. Screenshots are uncommitted review evidence under the git-ignored
+  `tmp/` evidence directory. Do not overwrite the existing
+  `design-docs/screenshots/*.png`.
 - Gate:
   - `cd frontend && bun test && bun run check && bun run build`
   - `swift build`
@@ -244,3 +247,10 @@ Light uses fixed palettes. It does not adapt dark colors at runtime.
 - `frontend/src/App.tsx` stays under its current size plus about 10 lines. Any
   further theme wiring goes into `DashboardLayout.tsx` or `colorScheme.ts`.
 - Keep Swift files under 1000 lines.
+- Implementation path lists (plan Write paths and the dispatch manifest
+  `writePaths`, `sharedPaths`, and `trackedPaths`) name only tracked source
+  and asset paths, with `Sources/AppCore/Resources/Web` as a write path. The
+  git-ignored caches and outputs `.build`, `frontend/node_modules`,
+  `frontend/dist`, and `tmp/` contain or may contain symlinks. They are
+  produced only as side effects of the gate commands and are never listed.
+  Session 218 stopped at implementation because they were listed.
