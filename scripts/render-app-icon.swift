@@ -31,14 +31,12 @@ private enum RenderError: Error, LocalizedError {
   }
 }
 
-// The base and progress mirror --color-bg and --color-accent; bars mirror the first slot of MODEL_COLOR_FAMILIES.
+// Flat usage pie: the base mirrors --color-bg; the used wedge is solid white over a translucent white rail.
 private enum IconColors {
   static let base = CGColor(red: 15 / 255, green: 17 / 255, blue: 21 / 255, alpha: 1)
-  static let rail = CGColor(red: 1, green: 1, blue: 1, alpha: 1)
-  static let progress = CGColor(red: 39 / 255, green: 123 / 255, blue: 90 / 255, alpha: 1)
-  static let anthropic = CGColor(red: 215 / 255, green: 140 / 255, blue: 87 / 255, alpha: 1)
-  static let openAI = CGColor(red: 85 / 255, green: 189 / 255, blue: 207 / 255, alpha: 1)
-  static let other = CGColor(red: 205 / 255, green: 103 / 255, blue: 215 / 255, alpha: 1)
+  static let used = CGColor(red: 1, green: 1, blue: 1, alpha: 1)
+  static let rail = CGColor(red: 1, green: 1, blue: 1, alpha: 0.24)
+  static let usedFraction: CGFloat = 0.68
 }
 
 private func radians(_ degrees: CGFloat) -> CGFloat {
@@ -65,50 +63,35 @@ private func drawIcon(size: Int) throws -> CGImage {
   context.setFillColor(IconColors.base)
   context.fill(CGRect(x: 0, y: 0, width: side, height: side))
 
-  let center = CGPoint(x: side * 0.5, y: side * 0.5)
-  let radius = side * 0.32
-  let lineWidth = side * 0.085
+  let radius = side * 0.34
+  let explode = side * 0.03
+  let startAngle: CGFloat = 90
+  let endAngle = startAngle - IconColors.usedFraction * 360
+  // Shift the pie back by half the explode offset so the composition stays optically centered.
+  let usedBisector = radians((startAngle + endAngle) / 2)
+  let center = CGPoint(
+    x: side * 0.5 - cos(usedBisector) * explode * 0.5,
+    y: side * 0.5 - sin(usedBisector) * explode * 0.5
+  )
 
-  func strokeArc(start: CGFloat, end: CGFloat, color: CGColor) {
+  // The used wedge is pulled out along its bisector, which leaves a clean gap without any outline stroke.
+  func sector(from start: CGFloat, to end: CGFloat, offset: CGFloat) -> CGPath {
+    let bisector = radians((start + end) / 2)
+    let origin = CGPoint(x: center.x + cos(bisector) * offset, y: center.y + sin(bisector) * offset)
     let path = CGMutablePath()
-    path.addArc(
-      center: center,
-      radius: radius,
-      startAngle: radians(start),
-      endAngle: radians(end),
-      clockwise: true
-    )
-    context.addPath(path)
-    context.setStrokeColor(color)
-    context.setLineWidth(lineWidth)
-    context.setLineCap(.butt)
-    context.strokePath()
+    path.move(to: origin)
+    path.addArc(center: origin, radius: radius, startAngle: radians(start), endAngle: radians(end), clockwise: true)
+    path.closeSubpath()
+    return path
   }
 
-  strokeArc(start: 225, end: -45, color: IconColors.rail)
-  strokeArc(start: 225, end: 225 - (0.62 * 270), color: IconColors.progress)
+  context.addPath(sector(from: endAngle, to: startAngle - 360, offset: 0))
+  context.setFillColor(IconColors.rail)
+  context.fillPath()
 
-  let barWidth = side * 0.075
-  let gap = side * 0.035
-  let groupWidth = barWidth * 3 + gap * 2
-  let firstX = (side - groupWidth) * 0.5
-  let baseline = side * 0.30
-  let bars: [(height: CGFloat, color: CGColor)] = [
-    (0.14, IconColors.anthropic),
-    (0.22, IconColors.openAI),
-    (0.18, IconColors.other)
-  ]
-
-  for (index, bar) in bars.enumerated() {
-    let rect = CGRect(
-      x: firstX + CGFloat(index) * (barWidth + gap),
-      y: baseline,
-      width: barWidth,
-      height: side * bar.height
-    )
-    context.setFillColor(bar.color)
-    context.fill(rect)
-  }
+  context.addPath(sector(from: startAngle, to: endAngle, offset: explode))
+  context.setFillColor(IconColors.used)
+  context.fillPath()
 
   guard let image = context.makeImage() else {
     throw RenderError.cannotCreateImage(size: size)

@@ -190,22 +190,20 @@ Light uses fixed palettes. It does not adapt dark colors at runtime.
   - Each size is rendered from vector geometry at that size, not downscaled
     from the 1024 master.
   - Output is deterministic for a given macOS toolchain.
-- **Geometry**. Units are fractions of the canvas side S. The origin is at
-  bottom-left, and the center is at (0.5 S, 0.5 S).
+- **Geometry** (revised 2026-09-30 at the user's request for a white usage
+  pie chart on a dark flat base). Units are fractions of the canvas side S, with
+  the origin at bottom-left.
 
 | Element | Specification |
 |---|---|
-| Base | Full-bleed square filled with `#0f1115` (the dashboard `--color-bg`). No drawn rounded tile, bevel, shadow, gradient, or border. macOS applies its own mask. |
-| Rail | Arc of radius 0.32 S and stroke width 0.085 S in `#ffffff`, with butt caps. It spans 270 degrees and leaves a 90-degree opening centered at the bottom, running clockwise from 225 degrees to -45 degrees (standard math angles). |
-| Progress | The same radius and width in accent green `#277b5a` (the dark `--color-accent`), with butt caps. It is drawn over the rail from the 225-degree start and covers 62% of the rail sweep. |
-| Bars | Three squared-off bars with no rounding, standing on a shared baseline at y = 0.30 S inside the ring, clear of the rail's inner edge. Each is 0.075 S wide, with a 0.035 S gap, and the group is centered horizontally. Heights are 0.14 S, 0.22 S, and 0.18 S. Colors, left to right, are vendor families Anthropic `#d78c57`, OpenAI `#55bdcf`, and other `#cd67d7` (the first dark slot of each family). |
+| Base | A full-bleed square filled with `#0f1115` (the dashboard `--color-bg`). There is no drawn rounded tile, bevel, shadow, gradient, or border. macOS applies its own mask. |
+| Remaining share (rail) | A pie sector of radius 0.34 S filled with white at alpha 0.24. It covers the 32% not used. |
+| Used share | A solid white pie sector of radius 0.34 S covering 68%. It runs clockwise from 12 o'clock and is pulled out 0.03 S along its bisector, which leaves a clean dark gap with no outline stroke. |
+| Centering | The whole pie is shifted back by half the pull-out offset, so the composition stays optically centered. |
 
-- The script repeats the icon colors as literals, because it cannot read CSS.
-  If `--color-bg` or `--color-accent` changes later, the icon must be
-  regenerated.
-- The geometry values are starting points. The implementer may adjust them by
-  up to 0.02 S so the icon reads at 16 px. Any adjustment must keep the
-  270-degree opening, the butt caps, and the no-effects rule.
+- The script repeats `--color-bg` as a literal, because it cannot read CSS. If
+  that token changes, regenerate the icon.
+- The earlier gauge-and-bars geometry was replaced before release.
 
 ### 5.2 Menu-bar glyph (`Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`)
 
@@ -214,17 +212,18 @@ Light uses fixed palettes. It does not adapt dark colors at runtime.
   one.
 - The public API `image(fraction:hasBudget:warning:)` is unchanged, so
   `MenuBarApp.swift` needs no changes.
-- The ring is the circle inset 2 pt from the bounds, stroked 2.5 pt with butt
-  caps, going clockwise from 12 o'clock.
+- It is a flat pie, matching the app icon. The pie is the circle inset 2 pt
+  from the bounds, and wedges run clockwise from 12 o'clock.
 
 | State | Drawing |
 |---|---|
-| Fraction known | Full 360-degree rail at alpha 0.35, plus a solid (alpha 1) arc for the clamped fraction in [0, 1]. A fraction of 0 draws the rail only. |
-| Budget but unknown fraction | Rail at alpha 0.35, plus a solid quarter arc from 12 to 3 o'clock. |
-| No budget | Rail at alpha 0.35, plus the existing vertical marker, a 1.5 pt butt-capped line through the center that stays inside the ring. |
-| Warning | The existing outlined triangle and exclamation mark, unchanged. |
+| Fraction known | A full disc at alpha 0.35 (the rail), plus a solid (alpha 1) wedge for the clamped fraction in [0, 1]. A fraction of 0 draws the disc only. |
+| Budget but unknown fraction | The disc at alpha 0.35, plus a solid quarter wedge from 12 to 3 o'clock. |
+| No budget | The disc at alpha 0.35, plus the vertical marker, a 1.5 pt butt-capped line through the center. |
+| Warning | The outlined triangle and exclamation mark. The mark has a butt cap and a square dot. |
 
-- The accessibility description is "Budget usage gauge" for non-warning states.
+- The accessibility description stays "Budget usage pie chart" for
+  non-warning states. This matches the E2E window labels in `MenuBarApp.swift`.
   The warning text is unchanged.
 
 ## 6. Verification

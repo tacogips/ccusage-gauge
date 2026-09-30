@@ -1,6 +1,6 @@
 # LTF-02: Flat App Icon Renderer and Regenerated Icons
 
-**Status**: Complete (2026-09-30). The riela gate rejected the script evidence. It was re-verified directly: a re-render is byte-identical, sizes are 1024 and 128, the iconset round-trips to 10 entries, and the result was reviewed visually.
+**Status**: Complete (2026-09-30). The riela gate rejected the script evidence. It was re-verified directly: a re-render is byte-identical, sizes are 1024 and 128, the iconset round-trips to 10 entries, and the result was reviewed visually. Superseded 2026-09-30 before release: the gauge-and-bars geometry was replaced by a flat white usage pie (design section 5.1) at the user's request.
 **Plan ID**: LTF-02
 **Wave**: 1
 **Depends on**: none

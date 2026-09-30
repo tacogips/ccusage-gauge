@@ -1,6 +1,6 @@
 # LTF-03: Menu-Bar Ring Gauge Glyph
 
-**Status**: Complete (2026-09-30). The riela gate rejected the six-state render evidence as materially unverified. Verification was redone directly: contract greps, a visual review of the rendered states, swift build, strict swiftlint, and swift test.
+**Status**: Complete (2026-09-30). The riela gate rejected the six-state render evidence as materially unverified. Verification was redone directly: contract greps, a visual review of the rendered states, swift build, strict swiftlint, and swift test. Superseded 2026-09-30 before release: the ring gauge was replaced by a flat pie matching the app icon, and the label "Budget usage pie chart" was restored (design section 5.2) at the user's request.
 **Plan ID**: LTF-03
 **Wave**: 1
 **Depends on**: none

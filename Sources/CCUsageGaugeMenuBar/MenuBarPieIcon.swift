@@ -14,25 +14,23 @@ enum MenuBarPieIcon {
       drawRail(circle: circle)
 
       if let fraction {
-        drawUsedArc(fraction: fraction, circle: circle)
+        drawUsedWedge(fraction: fraction, circle: circle)
       } else if hasBudget {
-        drawUnknownArc(circle: circle)
+        drawUnknownWedge(circle: circle)
       } else {
         drawBudgetMarker(circle: circle)
       }
       return true
     }
     image.isTemplate = true
-    image.accessibilityDescription = warning ? "Warning: ccusage unavailable" : "Budget usage gauge"
+    image.accessibilityDescription = warning ? "Warning: ccusage unavailable" : "Budget usage pie chart"
     return image
   }
 
+  // Flat pie: the remaining share is a translucent disc and the used share a solid wedge.
   private static func drawRail(circle: NSRect) {
-    let rail = NSBezierPath(ovalIn: circle)
-    rail.lineWidth = 2.5
-    rail.lineCapStyle = .butt
-    NSColor.black.withAlphaComponent(0.35).setStroke()
-    rail.stroke()
+    NSColor.black.withAlphaComponent(0.35).setFill()
+    NSBezierPath(ovalIn: circle).fill()
   }
 
   private static func drawWarning(in bounds: NSRect) {
@@ -49,38 +47,30 @@ enum MenuBarPieIcon {
     mark.move(to: NSPoint(x: bounds.midX, y: bounds.minY + 5))
     mark.line(to: NSPoint(x: bounds.midX, y: bounds.minY + 10.5))
     mark.lineWidth = 1.6
-    mark.lineCapStyle = .round
+    mark.lineCapStyle = .butt
     mark.stroke()
     NSColor.black.setFill()
-    NSBezierPath(ovalIn: NSRect(x: bounds.midX - 0.9, y: bounds.minY + 2.5, width: 1.8, height: 1.8)).fill()
+    NSRect(x: bounds.midX - 0.9, y: bounds.minY + 2.5, width: 1.8, height: 1.8).fill()
   }
 
-  private static func drawUsedArc(fraction: Decimal, circle: NSRect) {
+  private static func drawUsedWedge(fraction: Decimal, circle: NSRect) {
     let normalized = min(max(CGFloat(truncating: fraction as NSDecimalNumber), 0), 1)
     guard normalized > 0 else { return }
-    let center = NSPoint(x: circle.midX, y: circle.midY)
-    let arc = NSBezierPath()
-    arc.appendArc(
-      withCenter: center,
-      radius: circle.width / 2,
-      startAngle: 90,
-      endAngle: 90 - normalized * 360,
-      clockwise: true
-    )
-    arc.lineWidth = 2.5
-    arc.lineCapStyle = .butt
-    NSColor.black.setStroke()
-    arc.stroke()
+    fillWedge(circle: circle, endAngle: 90 - normalized * 360)
   }
 
-  private static func drawUnknownArc(circle: NSRect) {
+  private static func drawUnknownWedge(circle: NSRect) {
+    fillWedge(circle: circle, endAngle: 0)
+  }
+
+  private static func fillWedge(circle: NSRect, endAngle: CGFloat) {
     let center = NSPoint(x: circle.midX, y: circle.midY)
-    let arc = NSBezierPath()
-    arc.appendArc(withCenter: center, radius: circle.width / 2, startAngle: 90, endAngle: 0, clockwise: true)
-    arc.lineWidth = 2.5
-    arc.lineCapStyle = .butt
-    NSColor.black.setStroke()
-    arc.stroke()
+    let wedge = NSBezierPath()
+    wedge.move(to: center)
+    wedge.appendArc(withCenter: center, radius: circle.width / 2, startAngle: 90, endAngle: endAngle, clockwise: true)
+    wedge.close()
+    NSColor.black.setFill()
+    wedge.fill()
   }
 
   private static func drawBudgetMarker(circle: NSRect) {
