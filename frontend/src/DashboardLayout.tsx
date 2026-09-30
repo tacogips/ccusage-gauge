@@ -1,4 +1,5 @@
 import type { JSX } from "solid-js";
+import type { ColorScheme } from "./colorScheme";
 
 export function PaneFoldBar(props: {
   collapsed: boolean;
@@ -42,5 +43,16 @@ export function HeaderFoldBar(props: {
         onClick={props.onToggle}
       >{props.collapsed ? "Expand" : "Collapse"}</button>
     </div>
+  );
+}
+
+export function ThemeToggle(props: { scheme: ColorScheme; onToggle: () => void }) {
+  const label = () => props.scheme === "dark" ? "Switch to light theme" : "Switch to dark theme";
+  return (
+    <button type="button" class="theme-toggle" aria-label={label()} title={label()} onClick={props.onToggle}>
+      {props.scheme === "dark"
+        ? <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="8" height="8" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" /></svg>
+        : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.2A8.5 8.5 0 1 1 9.8 4a7 7 0 0 0 10.2 10.2Z" /></svg>}
+    </button>
   );
 }

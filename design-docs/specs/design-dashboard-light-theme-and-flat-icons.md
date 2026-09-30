@@ -1,9 +1,10 @@
 # Optional Light Theme and Flat Icons
 
-**Status**: Accepted. The frontend theme work (sections 2 and 3, and the light
-palettes of section 4) is implemented in the working tree and not yet
-committed. The light assertions in `seriesColors.test.ts`, the icons, the
-bundled assets, and the browser check are not implemented yet.
+**Status**: Implemented (2026-09-30). The riela opus-luna workflow (session
+220) accepted LTF-01. Its gate refused script-based evidence for LTF-02 and
+LTF-03 (`implementation-materially-unverified`), so verifying them and running
+LTF-04 were done directly. Section 4 was also revised after a CIEDE2000 audit
+of the model palettes.
 **Amends**: `design-docs/specs/design-dashboard-dark-flat-effort-grouping.md`
 section 2 (Dark Flat Theme). That spec removed the light theme. This addendum
 brings light back as an explicit option. Dark stays the default, and every
@@ -103,42 +104,69 @@ Out of scope:
 This section describes what is implemented in `frontend/src/seriesColors.ts`.
 Light uses fixed palettes. It does not adapt dark colors at runtime.
 
-- Dark palettes do not change:
-  - `MODEL_COLOR_FAMILIES`;
-  - the dark machine and subdirectory palettes;
-  - the dark effort ladder;
-  - `CHART_BACKGROUND` (`#15171c`).
-- The light model palette is `LIGHT_MODEL_COLOR_FAMILIES`.
-  - Each slot keeps the hue and saturation of the matching dark slot.
-  - Lightness is lowered so that each color reaches at least 3:1 on
-    `LIGHT_CHART_BACKGROUND` (`#ffffff`, which equals the light
-    `--color-surface`).
-  - `modelColorFamilies(scheme)` selects the palette, and
-    `allocateModelColors(catalog, overrides, scheme)` uses it. Slot allocation
-    by stable hash is the same in both themes, so a model keeps the same slot
-    index in both.
+### Model palette revision (2026-09-30)
+
+- **Why.** A CIEDE2000 audit of the five-per-vendor families from `d34c4fc`
+  found near-duplicates, such as the dark violets `#8d07fb`/`#7a47df` at 6.8
+  and the dark oranges `#d78c57`/`#fb7b09` at 9.7. The Playwright check also
+  showed that `gpt-6-sol` and `gpt-6.1-sol` rendered as two similar blues.
+  - CIE76, used by the earlier tests, overstates differences between blues.
+  - This contradicted the original requirement that model colors be clearly
+    different.
+- **Search results.** A search under the existing constraints (dark contrast
+  at least 3 on `#15171c`, dark HSL lightness 48 to 66, light contrast at least
+  3 on `#ffffff`, and effort-ladder separation in both themes) showed:
+  - five colors per vendor top out near 13 CIEDE2000;
+  - three per vendor reach 24.6 within a family and 19.7 across all nine.
+- **Palette.** The model palette is now nine colors, three per vendor family,
+  chosen jointly for both themes:
+
+  | Vendor | Dark | Light |
+  |---|---|---|
+  | Anthropic (red, orange, yellow) | `#ff4754 #ffae51 #fff129` | `#b8000c #e07800 #857c00` |
+  | OpenAI (cyan, blue, green) | `#2fc3da #2f7fda #63dc38` | `#20a2b6 #1f61ad #3a931a` |
+  | Other (magenta, rose, violet) | `#f651ff #be3774 #6949df` | `#e900f5 #8e2957 #4723c7` |
+
+  - Each light slot keeps the hue and saturation of its dark slot, so a model
+    keeps its identity across themes.
+- **Allocation.** `allocateModelColors(catalog, overrides, scheme)`:
+  - each vendor fills its own family first, by stable-hash preferred slot with
+    linear probing;
+  - models beyond a family's three borrow unused colors from the other
+    families in sorted order, again by hash-preferred index;
+  - no two models share a color until all nine are in use, and only after
+    that do colors repeat;
+  - vendor hue families are a preference, and distinctness wins. The user
+    allowed vendor families but did not require them.
+  - Overrides still win without using a slot.
+
+### Other series colors
+
+- The dark machine and subdirectory palettes, the dark effort ladder, and
+  `CHART_BACKGROUND` (`#15171c`) do not change.
 - The light machine and subdirectory palettes are `lightSeriesColors`.
   `seriesColor(kind, key, overrides, scheme)` selects between the two.
 - `effortShade(base, effort, scheme)` uses a ladder for each scheme.
-  - The light ladder is `minimal -18, low -9, medium 0, high +17, xhigh +32`.
-    It is clamped to lightness 8 to 94.
-  - The light ladder reaches further up than down, because light bases already
-    sit at lower lightness.
+  - The light ladder is `minimal -18, low -9, medium 0, high +17, xhigh +32`,
+    clamped to lightness 8 to 94.
   - Unknown efforts use the four-step unranked offsets of the scheme, and
-    missing effort desaturates. Both work as in dark.
+    missing effort desaturates.
 - User `chartColors` overrides come from `chartColors[scheme]` and are used
-  verbatim for models and machines. This means the `light` configuration is
-  used again.
-  - Subdirectory series had no override path before this change and still have
-    none.
-- Validation rules, enforced in `seriesColors.test.ts`:
-  - every `LIGHT_MODEL_COLOR_FAMILIES` color is at least 3:1 on `#ffffff`;
-  - every light machine and subdirectory color is at least 3:1 on `#ffffff`;
-  - within each vendor, light family colors are pairwise CIE76 dE of at least
-    20 (the current palette is designed for at least 35);
-  - for each light family color, the ranked effort shades `minimal` to `xhigh`
-    have strictly increasing HSL lightness and are pairwise dE of at least 11;
-  - the existing dark assertions stay unchanged and must pass.
+  verbatim for models and machines.
+
+### Validation rules (`seriesColors.test.ts`)
+
+- All nine model colors are pairwise CIEDE2000 at least 19 in each theme.
+  Within a vendor family the floor is 24.
+- Dark model colors keep contrast at least 3 on `#15171c` and HSL lightness 48
+  to 66. Light model, machine, and subdirectory colors are at least 3:1 on
+  `#ffffff`.
+- Effort shades: ranked lightness strictly increases, and variants are
+  pairwise CIE76 dE of at least 11, in both themes.
+- Allocation: three models of one vendor stay in that family. A mixed catalog
+  of seven models gets seven distinct colors, all pairwise at least 19. Nine
+  models get nine distinct colors, and only beyond nine do colors repeat.
+- Slot indexes in the combined palette match between themes.
 
 ## 5. Flat Icons
 
@@ -209,8 +237,8 @@ Light uses fixed palettes. It does not adapt dark colors at runtime.
     - flat geometry and literal confinement are implemented;
     - every dark token is redefined for light, which is implemented;
     - the section 3 contrast floors for both blocks, which is implemented.
-  - `seriesColors.test.ts`: the section 4 light rules must be added, and the
-    dark rules stay as they are.
+  - `seriesColors.test.ts` implements the section 4 validation rules
+    (CIEDE2000 distinctness, contrast, effort ladders, and allocation).
   - `appMarkupGuards.test.ts` covers the toggle markup and the stats-actions
     placement. It is implemented.
 - Icons:

@@ -21,6 +21,24 @@
   background: var(--color-bg);
   font-synthesis: none;
 }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f3f4f6;
+  --color-surface: #ffffff;
+  --color-surface-raised: #e7e9ee;
+  --color-border: #c5cad3;
+  --color-control-border: #7a8494;
+  --color-text: #14171c;
+  --color-text-muted: #5a6270;
+  --color-accent: #1f6e50;
+  --color-accent-text: #ffffff;
+  --color-danger: #b3261e;
+  --color-warning: #9a6200;
+  --color-focus: #1f5fd1;
+  --color-chart-grid: #d9dde4;
+  --color-chart-axis: #5a6270;
+  --color-tooltip-bg: #ffffff;
+}
 html { scrollbar-width: none; }
 html::-webkit-scrollbar { width: 0; height: 0; }
 * { box-sizing: border-box; }
@@ -33,7 +51,6 @@ button:active:not(:disabled) { background: var(--color-bg); }
 button:disabled { color: var(--color-text-muted); cursor: not-allowed; }
 .toggle-group button[aria-pressed="true"] { background: var(--color-accent); color: var(--color-accent-text); border-color: var(--color-accent-text); }
 input, select, textarea { border: 1px solid var(--color-control-border); border-radius: 0; background: var(--color-surface); color: var(--color-text); accent-color: var(--color-accent); }
-input[type="date"] { color-scheme: dark; }
 details > summary { border-radius: 0; color: var(--color-text); }
 h1, h2, p { margin: 0; }
 h1 { font-size: clamp(1.65rem, 3vw, 2.45rem); letter-spacing: -.045em; }
@@ -151,6 +168,8 @@ input[type="date"] { padding: 7px 8px; text-transform: none; letter-spacing: 0; 
 .stats article { padding: 17px 18px; display: grid; gap: 5px; }
 .stats-actions { position: absolute; top: 0; right: 0; z-index: 3; display: grid; gap: 7px; }
 .stats-actions .refresh-icon { position: static; width: 32px; height: 32px; }
+.theme-toggle { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; }
+.theme-toggle svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: square; stroke-linejoin: miter; }
 .stats article > span { font-size: .78rem; }
 .stats article > small { font-size: .7rem; }
 .stats strong { font-size: 1.48rem; }

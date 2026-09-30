@@ -1,6 +1,6 @@
 # LTF-01: Light Series Color Tests
 
-**Status**: Ready
+**Status**: Complete
 **Plan ID**: LTF-01
 **Wave**: 1
 **Depends on**: none
@@ -129,16 +129,20 @@ Expected evidence:
 
 ## Completion criteria
 
-- [ ] `grep -c 'describe("light series colors"' frontend/tests/seriesColors.test.ts`
+- [x] `grep -c 'describe("light series colors"' frontend/tests/seriesColors.test.ts`
       is 1.
-- [ ] `grep -c '"light"' frontend/tests/seriesColors.test.ts` is at least 8.
-- [ ] `git diff -- frontend/src/seriesColors.ts` shows no change to
+- [x] `grep -c '"light"' frontend/tests/seriesColors.test.ts` is at least 8.
+- [x] `git diff -- frontend/src/seriesColors.ts` shows no change to
       `MODEL_COLOR_FAMILIES`, `darkSeriesColors`, or `effortLadders.dark`.
-- [ ] All three verification commands exit 0, and their log paths are
+- [x] All three verification commands exit 0, and their log paths are
       recorded.
-- [ ] The Progress Log has the intent snapshot, the post-hashes, and any
+- [x] The Progress Log has the intent snapshot, the post-hashes, and any
       palette changes with old and new values.
 
 ## Progress Log
 
 - 2026-09-30: Plan created.
+- 2026-09-30: Implemented the light series color assertions from design section 4. Added palette selection and dark default checks; vendor family length/hex/contrast/CIE76 checks; circular hue parity; machine/subdirectory palette count and contrast; light effort ordering, pairwise separation, missing-effort desaturation, and deterministic unknown effort; explicit dark equivalence; cross-theme slot parity; and light overrides. Existing dark test suite matches the pre-edit snapshot exactly. No palette values changed because all assertions passed.
+- Intent snapshot: `tmp/light-theme-flat-icons-20260930/LTF-01/intent-snapshot.sha256` (pre-edit SHA-256: `frontend/tests/seriesColors.test.ts` `a321f2cc332fc42ad71c613eb8bdcc2e46878db7e279bf83e69063eb5d60da5c`; `frontend/src/seriesColors.ts` `57272a3b095770df478e5a13bbd4da326454e1eb6ea3f1339d305f8910744e52`; this plan `30a80c9f0c25811fa2cb29dfe7a06ddc874f4d210bed0e8e02a5bb8e67ddb325`). Per-edit intentions are in `tmp/light-theme-flat-icons-20260930/LTF-01/edit-intent.md`.
+- Verification: `(cd frontend && bun test tests/seriesColors.test.ts)` exit 0, 16 passed / 0 failed; complete log `tmp/light-theme-flat-icons-20260930/LTF-01/series.log`. `(cd frontend && bun test)` exit 0, 130 passed / 0 failed across 21 files; complete log `tmp/light-theme-flat-icons-20260930/LTF-01/all.log`. `(cd frontend && bun run check)` exit 0; complete log `tmp/light-theme-flat-icons-20260930/LTF-01/check.log`. Mechanical criteria: exactly one light describe block and at least 8 explicit light arguments.
+- Post-edit SHA-256: `frontend/tests/seriesColors.test.ts` `6ac58c1e6279942c74b441ed920206e81c7e2d83af3bffe809d129435a5e5046`; `frontend/src/seriesColors.ts` `57272a3b095770df478e5a13bbd4da326454e1eb6ea3f1339d305f8910744e52` (unchanged from intent snapshot). `git diff --check -- frontend/tests/seriesColors.test.ts` passed.

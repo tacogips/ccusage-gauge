@@ -57,7 +57,8 @@ import { UsageChart } from "./UsageChart";
 import { RangeControls } from "./RangeControls.tsx";
 // @ts-expect-error TS5097: explicit .ts disambiguates the case-only rangeControls.ts and RangeControls.tsx modules.
 import { rangeSummaryLabel, type QuickRange, type Range } from "./rangeControls.ts";
-import { HeaderFoldBar, PaneFoldBar } from "./DashboardLayout";
+import { HeaderFoldBar, PaneFoldBar, ThemeToggle } from "./DashboardLayout";
+import { applyColorScheme, oppositeColorScheme, readStoredColorScheme, storeColorScheme, type ColorScheme } from "./colorScheme";
 import { restoredFoldState } from "./dashboardLayoutState";
 
 type Granularity = "15min" | "hourly" | "6hour" | "daily";
@@ -122,6 +123,13 @@ export default function App() {
   const [machineActionInFlight, setMachineActionInFlight] = createSignal<Record<string, boolean>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   const [headerCollapsed, setHeaderCollapsed] = createSignal(false);
+  const [colorScheme, setColorScheme] = createSignal<ColorScheme>(readStoredColorScheme());
+  const toggleColorScheme = () => {
+    const next = oppositeColorScheme(colorScheme());
+    setColorScheme(next);
+    applyColorScheme(document.documentElement, next);
+    storeColorScheme(next);
+  };
   const [machinesResource, { refetch: refreshMachines }] = createResource(() => getJSON<MachinesResponse>("/api/machines"));
   const machines = shieldResource(machinesResource);
   const metadataCleanupWarning = createMemo(() =>
@@ -230,17 +238,18 @@ export default function App() {
   const models = createMemo(() => [...new Set(machineFilteredRows().map((row) => row.model))].sort());
   const agents = createMemo(() => [...new Set(machineFilteredRows().map((row) => row.agent))].sort());
   const chartModels = createMemo(() => new Set(machineFilteredCostRows().map((row) => row.model)));
-  const modelColor = createMemo(() => allocateModelColors(models(), chartColors()?.dark?.models));
-  const colorForMachine = (machine: string) => seriesColor("machine", machine, chartColors()?.dark?.machines);
+  const activeChartColors = () => chartColors()?.[colorScheme()];
+  const modelColor = createMemo(() => allocateModelColors(models(), activeChartColors()?.models, colorScheme()));
+  const colorForMachine = (machine: string) => seriesColor("machine", machine, activeChartColors()?.machines, colorScheme());
   const colorForModel = (model: string) => modelColor()(model);
   const colorForSeries = (identity: string): string => {
     switch (stackBy()) {
       case "model": return modelColor()(identity);
       case "machine": return colorForMachine(identity);
-      case "subdirectory": return seriesColor("subdirectory", identity);
+      case "subdirectory": return seriesColor("subdirectory", identity, undefined, colorScheme());
       case "modelEffort": {
         const { model, effort } = modelEffortParts(identity);
-        return effortShade(modelColor()(model), effort);
+        return effortShade(modelColor()(model), effort, colorScheme());
       }
     }
   };
@@ -1225,6 +1234,7 @@ export default function App() {
                   <path d="M20 11a8 8 0 0 0-14.9-4M4 4v6h6M4 13a8 8 0 0 0 14.9 4M20 20v-6h-6" />
                 </svg>
               </button>
+              <ThemeToggle scheme={colorScheme()} onToggle={toggleColorScheme} />
 
             </div>
             </section>

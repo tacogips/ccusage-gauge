@@ -51,3 +51,15 @@ changing the rest of the design.
      explicit option.
    - The icons are reconsidered too: the app icon and the menu-bar glyph become
      flat, with a dark base and a white gauge rail.
+
+## Follow-up decisions (2026-09-30)
+
+1. Model colors: distinctness takes priority over vendor hue families.
+   - The palette is nine colors, three per vendor family. Extra models borrow
+     unused colors from other families before any color repeats.
+   - Reason: five similar hues per vendor could not be made clearly different
+     (about 13 CIEDE2000 at most). The request allows vendor families but
+     requires clearly different model colors.
+   - See `design-docs/specs/design-dashboard-light-theme-and-flat-icons.md`
+     section 4.
+

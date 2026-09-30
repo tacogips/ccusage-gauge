@@ -15,13 +15,13 @@ describe("dashboard app markup contract", () => {
     expect(radii.every((radius) => radius === "0")).toBe(true);
   });
 
-  test("has no light/dark scheme selection or persistence", () => {
-    for (const removedThemeHook of [
-      "colorScheme",
-      "dataset.colorScheme",
-      "ccusage-gauge-color-scheme",
-      "prefers-color-scheme",
-    ]) expect(app).not.toContain(removedThemeHook);
+  test("offers an explicit light theme while dark stays the default", () => {
+    expect(app).toContain("<ThemeToggle scheme={colorScheme()} onToggle={toggleColorScheme} />");
+    expect(app).toContain("readStoredColorScheme()");
+    expect(layout).toContain('"Switch to light theme"');
+    expect(layout).toContain('"Switch to dark theme"');
+    for (const legacyThemeHook of ["dataset.colorScheme", "ccusage-gauge-color-scheme", "prefers-color-scheme"])
+      expect(app + layout).not.toContain(legacyThemeHook);
     expect(html).toContain('<meta name="color-scheme" content="dark" />');
   });
 

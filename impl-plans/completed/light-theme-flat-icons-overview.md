@@ -1,6 +1,6 @@
 # Optional Light Theme and Flat Icons - Plan Overview
 
-**Status**: In Progress
+**Status**: Complete (2026-09-30).
 **Design Reference**: `design-docs/specs/design-dashboard-light-theme-and-flat-icons.md`
 (accepted by the Step 3 design review with no findings)
 **User decisions**: `design-docs/user-qa/2026-09-29-dashboard-theme-effort-decisions.md`

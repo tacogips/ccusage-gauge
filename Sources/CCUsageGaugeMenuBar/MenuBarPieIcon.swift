@@ -11,23 +11,28 @@ enum MenuBarPieIcon {
         return true
       }
       let circle = bounds.insetBy(dx: 2, dy: 2)
-      NSColor.black.setStroke()
-      let outline = NSBezierPath(ovalIn: circle)
-      outline.lineWidth = 1.5
-      outline.stroke()
+      drawRail(circle: circle)
 
       if let fraction {
-        drawSlice(fraction: fraction, circle: circle)
+        drawUsedArc(fraction: fraction, circle: circle)
       } else if hasBudget {
-        drawUnknownSlice(circle: circle)
+        drawUnknownArc(circle: circle)
       } else {
         drawBudgetMarker(circle: circle)
       }
       return true
     }
     image.isTemplate = true
-    image.accessibilityDescription = warning ? "Warning: ccusage unavailable" : "Budget usage pie chart"
+    image.accessibilityDescription = warning ? "Warning: ccusage unavailable" : "Budget usage gauge"
     return image
+  }
+
+  private static func drawRail(circle: NSRect) {
+    let rail = NSBezierPath(ovalIn: circle)
+    rail.lineWidth = 2.5
+    rail.lineCapStyle = .butt
+    NSColor.black.withAlphaComponent(0.35).setStroke()
+    rail.stroke()
   }
 
   private static func drawWarning(in bounds: NSRect) {
@@ -50,32 +55,32 @@ enum MenuBarPieIcon {
     NSBezierPath(ovalIn: NSRect(x: bounds.midX - 0.9, y: bounds.minY + 2.5, width: 1.8, height: 1.8)).fill()
   }
 
-  private static func drawSlice(fraction: Decimal, circle: NSRect) {
+  private static func drawUsedArc(fraction: Decimal, circle: NSRect) {
     let normalized = min(max(CGFloat(truncating: fraction as NSDecimalNumber), 0), 1)
     guard normalized > 0 else { return }
     let center = NSPoint(x: circle.midX, y: circle.midY)
-    let slice = NSBezierPath()
-    slice.move(to: center)
-    slice.appendArc(
+    let arc = NSBezierPath()
+    arc.appendArc(
       withCenter: center,
       radius: circle.width / 2,
       startAngle: 90,
       endAngle: 90 - normalized * 360,
       clockwise: true
     )
-    slice.close()
-    NSColor.black.setFill()
-    slice.fill()
+    arc.lineWidth = 2.5
+    arc.lineCapStyle = .butt
+    NSColor.black.setStroke()
+    arc.stroke()
   }
 
-  private static func drawUnknownSlice(circle: NSRect) {
+  private static func drawUnknownArc(circle: NSRect) {
     let center = NSPoint(x: circle.midX, y: circle.midY)
-    let slice = NSBezierPath()
-    slice.move(to: center)
-    slice.appendArc(withCenter: center, radius: circle.width / 2, startAngle: 90, endAngle: 0, clockwise: true)
-    slice.close()
-    NSColor.black.setFill()
-    slice.fill()
+    let arc = NSBezierPath()
+    arc.appendArc(withCenter: center, radius: circle.width / 2, startAngle: 90, endAngle: 0, clockwise: true)
+    arc.lineWidth = 2.5
+    arc.lineCapStyle = .butt
+    NSColor.black.setStroke()
+    arc.stroke()
   }
 
   private static func drawBudgetMarker(circle: NSRect) {
@@ -83,6 +88,7 @@ enum MenuBarPieIcon {
     marker.move(to: NSPoint(x: circle.midX, y: circle.minY + 2))
     marker.line(to: NSPoint(x: circle.midX, y: circle.maxY - 2))
     marker.lineWidth = 1.5
+    marker.lineCapStyle = .butt
     NSColor.black.setStroke()
     marker.stroke()
   }

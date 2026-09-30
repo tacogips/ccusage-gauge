@@ -5,11 +5,17 @@ import { join } from "node:path";
 const css = readFileSync(join(import.meta.dir, "../src/styles.css"), "utf8");
 const rootMatch = css.match(/^:root\s*\{([^}]*)\}/);
 const root = rootMatch?.[1] ?? "";
+const lightMatch = css.match(/^:root\[data-theme="light"\]\s*\{([^}]*)\}/m);
+const lightRoot = lightMatch?.[1] ?? "";
+
+function tokenIn(block: string, name: string): string {
+  const value = block.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1];
+  if (!value) throw new Error(`Missing six-digit token ${name}`);
+  return value;
+}
 
 function token(name: string): string {
-  const value = root.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1];
-  if (!value) throw new Error(`Missing six-digit root token ${name}`);
-  return value;
+  return tokenIn(root, name);
 }
 
 function luminance(hex: string): number {
@@ -26,7 +32,7 @@ function contrast(first: string, second: string): number {
 }
 
 describe("dark flat stylesheet contract", () => {
-  test("uses square geometry and removes effects and theme overrides", () => {
+  test("uses square geometry and removes effects and the legacy scheme hook", () => {
     const radiusValues = [...css.matchAll(/border-radius\s*:\s*([^;}]+)/g)].map((match) => match[1].trim());
     expect(radiusValues.every((value) => value === "0" || value === "0px")).toBe(true);
     expect(css.match(/(?:box-shadow|text-shadow)\s*:\s*(?!none\s*[;}])[^;}]+/g) ?? []).toEqual([]);
@@ -56,23 +62,37 @@ describe("dark flat stylesheet contract", () => {
     expect(css.match(/\.toggle-group button\[aria-pressed="true"\]/g)?.length).toBe(1);
   });
 
-  test("keeps color literals only in the initial root token block", () => {
+  test("keeps color literals only in the dark root and light theme token blocks", () => {
     expect(rootMatch).not.toBeNull();
-    const outsideRoot = css.replace(rootMatch?.[0] ?? "", "");
-    expect(outsideRoot.match(/#[0-9a-fA-F]{3,8}\b|\brgba?\s*\(/gi) ?? []).toEqual([]);
+    expect(lightMatch).not.toBeNull();
+    const outsideTokens = css.replace(rootMatch?.[0] ?? "", "").replace(lightMatch?.[0] ?? "", "");
+    expect(outsideTokens.match(/#[0-9a-fA-F]{3,8}\b|\brgba?\s*\(/gi) ?? []).toEqual([]);
+    expect(css).not.toContain('input[type="date"] { color-scheme: dark; }');
   });
 
-  test("meets the specified text, control, chart, and separator contrast ratios", () => {
-    const bg = token("--color-bg");
-    const surface = token("--color-surface");
-    const raised = token("--color-surface-raised");
-    const border = token("--color-border");
-    const controlBorder = token("--color-control-border");
-    const text = token("--color-text");
-    const muted = token("--color-text-muted");
-    const accent = token("--color-accent");
-    const accentText = token("--color-accent-text");
-    const chartAxis = token("--color-chart-axis");
+  test("redefines every dark color token for the light theme", () => {
+    expect(lightRoot).toContain("color-scheme: light");
+    const darkTokens = [...root.matchAll(/(--color-[a-z-]+):\s*#/g)].map((match) => match[1]);
+    expect(darkTokens.length).toBeGreaterThan(10);
+    for (const name of darkTokens) expect(tokenIn(lightRoot, name)).toMatch(/^#[0-9a-fA-F]{6}$/);
+    for (const name of ["--color-bg", "--color-surface", "--color-text"]) expect(tokenIn(lightRoot, name)).not.toBe(token(name));
+  });
+
+  test.each([
+    ["dark", () => root],
+    ["light", () => lightRoot],
+  ] as const)("meets the specified text, control, chart, and separator contrast ratios (%s)", (_scheme, block) => {
+    const read = (name: string) => tokenIn(block(), name);
+    const bg = read("--color-bg");
+    const surface = read("--color-surface");
+    const raised = read("--color-surface-raised");
+    const border = read("--color-border");
+    const controlBorder = read("--color-control-border");
+    const text = read("--color-text");
+    const muted = read("--color-text-muted");
+    const accent = read("--color-accent");
+    const accentText = read("--color-accent-text");
+    const chartAxis = read("--color-chart-axis");
     expect(raised).toBeTruthy();
     expect(contrast(text, bg)).toBeGreaterThanOrEqual(4.5);
     expect(contrast(text, surface)).toBeGreaterThanOrEqual(4.5);

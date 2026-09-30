@@ -1,6 +1,6 @@
 # LTF-03: Menu-Bar Ring Gauge Glyph
 
-**Status**: Ready
+**Status**: Complete (2026-09-30). The riela gate rejected the six-state render evidence as materially unverified. Verification was redone directly: contract greps, a visual review of the rendered states, swift build, strict swiftlint, and swift test.
 **Plan ID**: LTF-03
 **Wave**: 1
 **Depends on**: none
@@ -100,7 +100,7 @@ Throwaway render. Nothing outside `tmp/` is committed.
 ```text
 mkdir -p tmp/light-theme-flat-icons-20260930/LTF-03
 swift build --product ccusage-gauge-menubar > tmp/light-theme-flat-icons-20260930/LTF-03/build.log 2>&1; echo "exit=$?"
-swiftlint lint --quiet Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift > tmp/light-theme-flat-icons-20260930/LTF-03/swiftlint.log 2>&1; echo "exit=$?"
+if [ -s tmp/light-theme-flat-icons-20260930/LTF-03/changed-swift-files.nul ]; then xargs -0 swiftlint lint --strict --quiet --no-cache < tmp/light-theme-flat-icons-20260930/LTF-03/changed-swift-files.nul > tmp/light-theme-flat-icons-20260930/LTF-03/swiftlint.log 2>&1; echo "exit=$?"; fi
 cat Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift tmp/light-theme-flat-icons-20260930/LTF-03/render-main.swift > tmp/light-theme-flat-icons-20260930/LTF-03/render.swift
 swift tmp/light-theme-flat-icons-20260930/LTF-03/render.swift > tmp/light-theme-flat-icons-20260930/LTF-03/render.log 2>&1; echo "exit=$?"
 wc -l Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift
@@ -125,18 +125,57 @@ Expected evidence:
 
 ## Completion criteria
 
-- [ ] `grep -c "move(to: center)" Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`
+- [x] `grep -c "move(to: center)" Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`
       is 0.
-- [ ] `grep -c "\.butt" Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift` is
+- [x] `grep -c "\.butt" Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift` is
       at least 1.
-- [ ] `grep -c "isTemplate = true" Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`
+- [x] `grep -c "isTemplate = true" Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`
       is 1.
-- [ ] `grep -c "Budget usage gauge" Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`
+- [x] `grep -c "Budget usage gauge" Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`
       is 1.
-- [ ] `git diff --stat -- Sources/CCUsageGaugeMenuBar/MenuBarApp.swift` is
+- [x] `git diff --stat -- Sources/CCUsageGaugeMenuBar/MenuBarApp.swift` is
       empty.
-- [ ] All verification items pass, and their log and PNG paths are recorded.
+- [x] All verification items pass, and their log and PNG paths are recorded.
 
 ## Progress Log
 
 - 2026-09-30: Plan created.
+- 2026-09-30 (session 220): Implemented the menu-bar rail and arc gauge in
+  `Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift`; preserved the image API,
+  template flag, warning drawing/text, and `MenuBarApp.swift`.
+  Source SHA-256: `2779ee0462db5216a29b042e8e9f493daf37a0a0eded67d4a3ecfd5457b4978d`.
+  - `swift build --product ccusage-gauge-menubar`: exit 0;
+    full log `tmp/light-theme-flat-icons-20260930/LTF-03/build.log`.
+  - Selected-file `swiftlint lint --strict --quiet --no-cache` using
+    `changed-swift-files.nul`: exit 0, empty diagnostics;
+    full log `tmp/light-theme-flat-icons-20260930/LTF-03/swiftlint.log`.
+  - `swift tmp/light-theme-flat-icons-20260930/LTF-03/render.swift`: exit 0;
+    `render.log` reports all six template images, five
+    `Budget usage gauge` descriptions, and the unchanged warning description.
+    PNGs: `zero.png`, `partial.png`, `full.png`, `unknown.png`,
+    `no-budget.png`, and `warning.png` in the same evidence directory.
+    Visual review confirms rail-only zero, clockwise 0.4 arc, solid full ring,
+    12-to-3 unknown quarter, vertical no-budget marker, and the warning
+    triangle; no state has a filled wedge.
+  - Invariant checks all exit 0; full log
+    `tmp/light-theme-flat-icons-20260930/LTF-03/invariants.log`. Source remains
+    under 1000 lines, no `move(to: center)` remains, butt caps are present,
+    the template/accessibility strings occur once, and `MenuBarApp.swift` has
+    no diff.
+  - Awaiting independent implementation review and downstream integration.
+- 2026-09-30 (Step 6 verification rerun): Re-ran the assigned behavioral and
+  static gates against source SHA-256
+  `2779ee0462db5216a29b042e8e9f493daf37a0a0eded67d4a3ecfd5457b4978d`.
+  `swift build --product ccusage-gauge-menubar` exited 0;
+  `tmp/light-theme-flat-icons-20260930/LTF-03/rerun-01/build.log` is complete.
+  Selected-file strict SwiftLint exited 0 with an empty log at
+  `tmp/light-theme-flat-icons-20260930/LTF-03/rerun-01/swiftlint.log`.
+  The throwaway renderer exited 0 and rendered six states, each with
+  `isTemplate=true`; five report `Budget usage gauge`, while warning retains
+  `Warning: ccusage unavailable`. Complete output:
+  `tmp/light-theme-flat-icons-20260930/LTF-03/rerun-01/render.log`; PNGs are
+  `zero.png`, `partial.png`, `full.png`, `unknown.png`, `no-budget.png`, and
+  `warning.png` under `tmp/light-theme-flat-icons-20260930/LTF-03/`.
+  Visual inspection confirmed the expected six shapes and no filled wedge.
+  Structural checks passed, and `MenuBarApp.swift` remains untouched. The plan
+  remains awaiting independent review and downstream integration.

@@ -1,3 +1,4 @@
+import type { ColorScheme } from "./colorScheme";
 import { EFFORT_ORDER, effortRank } from "./effort";
 
 export type ModelVendor = "anthropic" | "openai" | "other";
@@ -11,19 +12,40 @@ export function vendorForModel(model: string): ModelVendor {
   return "other";
 }
 
+// Nine colors chosen together so every pair is >= 19 CIEDE2000 apart in both themes; vendor hue
+// families (Anthropic warm, OpenAI cyan/blue/green, other magenta/rose/violet) are a preference only.
 export const MODEL_COLOR_FAMILIES: Readonly<Record<ModelVendor, readonly string[]>> = {
-  anthropic: ["#d78c57", "#fb0906", "#fad20b", "#c83837", "#fb7b09"],
-  openai: ["#55bdcf", "#154ffa", "#09fb5e", "#2f70c7", "#17f9c2"],
-  other: ["#cd67d7", "#8d07fb", "#f6047d", "#fa14ee", "#7a47df"],
+  anthropic: ["#ff4754", "#ffae51", "#fff129"],
+  openai: ["#2fc3da", "#2f7fda", "#63dc38"],
+  other: ["#f651ff", "#be3774", "#6949df"],
 };
+
+// Same hue and saturation per slot as the dark families, with lightness chosen for >=3:1 on a white chart.
+export const LIGHT_MODEL_COLOR_FAMILIES: Readonly<Record<ModelVendor, readonly string[]>> = {
+  anthropic: ["#b8000c", "#e07800", "#857c00"],
+  openai: ["#20a2b6", "#1f61ad", "#3a931a"],
+  other: ["#e900f5", "#8e2957", "#4723c7"],
+};
+
+const MODEL_VENDORS = ["anthropic", "openai", "other"] as const satisfies readonly ModelVendor[];
+
+export function modelColorFamilies(scheme: ColorScheme = "dark"): Readonly<Record<ModelVendor, readonly string[]>> {
+  return scheme === "light" ? LIGHT_MODEL_COLOR_FAMILIES : MODEL_COLOR_FAMILIES;
+}
 
 export type SeriesKind = "machine" | "subdirectory";
 
 export const CHART_BACKGROUND = "#15171c";
+export const LIGHT_CHART_BACKGROUND = "#ffffff";
 
 const darkSeriesColors: Record<SeriesKind, readonly string[]> = {
   machine: ["#55c98a", "#70a7e8", "#e6a15c", "#a98ae8", "#e77b9d", "#70c7c1", "#c2ae57", "#8fa6b5"],
   subdirectory: ["#a98ae8", "#55c98a", "#e6a15c", "#70a7e8", "#e77b9d", "#70c7c1", "#c2ae57", "#8fa6b5"],
+};
+
+const lightSeriesColors: Record<SeriesKind, readonly string[]> = {
+  machine: ["#33a266", "#3583de", "#d27920", "#7c4cdc", "#dc3f71", "#3fa09a", "#a5913c", "#68879b"],
+  subdirectory: ["#7c4cdc", "#33a266", "#d27920", "#3583de", "#dc3f71", "#3fa09a", "#a5913c", "#68879b"],
 };
 
 function stableHash(value: string) {
@@ -40,33 +62,50 @@ function preferredSlot(model: string, size: number): number {
 }
 
 // Allocation is stable for a fixed model catalog; contested colors can shift when it changes.
+// Each vendor fills its own family first; extra models borrow unused colors from other families,
+// so no two models share a color until all nine are in use.
 export function allocateModelColors(
   catalog: readonly string[],
   overrides?: Readonly<Record<string, string>>,
+  scheme: ColorScheme = "dark",
 ): (model: string) => string {
+  const families = modelColorFamilies(scheme);
+  const palette = MODEL_VENDORS.flatMap((vendor) => families[vendor]);
   const modelsByVendor: Record<ModelVendor, string[]> = {
     anthropic: [],
     openai: [],
     other: [],
   };
   for (const model of [...new Set(catalog)].sort()) {
+    if (typeof overrides?.[model] === "string") continue;
     modelsByVendor[vendorForModel(model)].push(model);
   }
 
   const allocated = new Map<string, string>();
-  for (const vendor of ["anthropic", "openai", "other"] as const) {
-    const family = MODEL_COLOR_FAMILIES[vendor];
+  const usedColors = new Set<string>();
+  const overflow: string[] = [];
+  for (const vendor of MODEL_VENDORS) {
+    const family = families[vendor];
     const used = new Set<number>();
     for (const model of modelsByVendor[vendor]) {
-      if (typeof overrides?.[model] === "string") continue;
-      if (used.size === family.length) used.clear();
-
-      const preferred = preferredSlot(model, family.length);
-      let slot = preferred;
+      if (used.size === family.length) {
+        overflow.push(model);
+        continue;
+      }
+      let slot = preferredSlot(model, family.length);
       while (used.has(slot)) slot = (slot + 1) % family.length;
       used.add(slot);
       allocated.set(model, family[slot]);
+      usedColors.add(family[slot]);
     }
+  }
+
+  for (const model of overflow.sort()) {
+    if (usedColors.size === palette.length) usedColors.clear();
+    let index = preferredSlot(model, palette.length);
+    while (usedColors.has(palette[index])) index = (index + 1) % palette.length;
+    usedColors.add(palette[index]);
+    allocated.set(model, palette[index]);
   }
 
   return (model: string): string => {
@@ -74,7 +113,7 @@ export function allocateModelColors(
     if (typeof override === "string") return override;
     const color = allocated.get(model);
     if (color !== undefined) return color;
-    const family = MODEL_COLOR_FAMILIES[vendorForModel(model)];
+    const family = families[vendorForModel(model)];
     return family[preferredSlot(model, family.length)];
   };
 }
@@ -121,24 +160,40 @@ function fromHsl(hue: number, saturation: number, lightness: number): string {
     .join("")}`;
 }
 
-export function effortShade(baseColor: string, effort?: string): string {
+interface EffortLadder {
+  ranked: Readonly<Record<string, number>>;
+  unranked: readonly number[];
+  minLightness: number;
+  maxLightness: number;
+}
+
+const effortLadders: Readonly<Record<ColorScheme, EffortLadder>> = {
+  dark: {
+    ranked: { minimal: -30, low: -16, medium: 0, high: 16, xhigh: 28 },
+    unranked: [-23, -8, 8, 23],
+    minLightness: 20,
+    maxLightness: 90,
+  },
+  // Light bases sit lower in lightness, so the ladder reaches further up than down.
+  light: {
+    ranked: { minimal: -18, low: -9, medium: 0, high: 17, xhigh: 32 },
+    unranked: [-13, -4, 8, 24],
+    minLightness: 8,
+    maxLightness: 94,
+  },
+};
+
+export function effortShade(baseColor: string, effort?: string, scheme: ColorScheme = "dark"): string {
   const [hue, saturation, lightness] = toHsl(baseColor);
   if (effort === undefined || effort === "") {
     return fromHsl(hue, saturation * 0.35, lightness);
   }
 
-  const rank = effortRank(effort);
-  const rankedOffsets: Readonly<Record<string, number>> = {
-    minimal: -30,
-    low: -16,
-    medium: 0,
-    high: 16,
-    xhigh: 28,
-  };
-  const offset = rank < EFFORT_ORDER.length
-    ? rankedOffsets[effort]
-    : [-23, -8, 8, 23][stableHash(`effort:${effort}`) % 4];
-  const shadedLightness = Math.max(20, Math.min(90, lightness * 100 + offset)) / 100;
+  const ladder = effortLadders[scheme];
+  const offset = effortRank(effort) < EFFORT_ORDER.length
+    ? ladder.ranked[effort]
+    : ladder.unranked[stableHash(`effort:${effort}`) % ladder.unranked.length];
+  const shadedLightness = Math.max(ladder.minLightness, Math.min(ladder.maxLightness, lightness * 100 + offset)) / 100;
   return fromHsl(hue, saturation, shadedLightness);
 }
 
@@ -146,9 +201,10 @@ export function seriesColor(
   kind: SeriesKind,
   key: string,
   overrides?: Readonly<Record<string, string>>,
+  scheme: ColorScheme = "dark",
 ): string {
   const override = overrides?.[key];
   if (typeof override === "string") return override;
-  const colors = darkSeriesColors[kind];
+  const colors = (scheme === "light" ? lightSeriesColors : darkSeriesColors)[kind];
   return colors[stableHash(`${kind}:${key}`) % colors.length];
 }
