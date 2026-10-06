@@ -415,7 +415,30 @@ public actor UsageAggregationCache {
         throw error
       }
     }
+    try resetProvenanceForClaudeEffortIfNeeded(in: database)
   }
+
+  /// Claude effort parsing arrived after the effort column. Local caches migrated before it
+  /// re-derive their session partitions once, so cached Claude history picks up effort.
+  private func resetProvenanceForClaudeEffortIfNeeded(in database: OpaquePointer) throws {
+    let statement = try prepare("PRAGMA user_version", in: database)
+    let version = sqlite3_step(statement) == SQLITE_ROW ? sqlite3_column_int(statement, 0) : 0
+    sqlite3_finalize(statement)
+    guard version < Self.claudeEffortSchemaVersion else { return }
+    try execute("BEGIN IMMEDIATE", in: database)
+    do {
+      if machineID == MachineDescriptor.local.id {
+        try execute("DELETE FROM directory_coverage_ranges", in: database)
+      }
+      try execute("PRAGMA user_version = \(Self.claudeEffortSchemaVersion)", in: database)
+      try execute("COMMIT", in: database)
+    } catch {
+      try? execute("ROLLBACK", in: database)
+      throw error
+    }
+  }
+
+  private static let claudeEffortSchemaVersion: Int32 = 1
 
   private func readDirectoryCoveredRanges(from database: OpaquePointer) throws -> [AggregationCacheRange] {
     let statement = try prepare(

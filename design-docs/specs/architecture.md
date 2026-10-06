@@ -298,7 +298,8 @@ directory, with `nil` as a distinct identity, so otherwise equal rows from two
 projects cannot collapse.
 
 Optional reasoning `effort` is session-level provenance parsed from Codex
-`turn_context`. It follows the per-turn model context rather than the
+`turn_context` and from the `effort` (or `perTurnEffort`) field of Claude Code
+assistant lines. It follows the per-turn model context rather than the
 per-session directory.
 
 - It is carried through `TimestampedUsageEvent` and session records. Session
@@ -306,8 +307,10 @@ per-session directory.
   `session_metrics` cache column stores it.
 - Adding that column to the local cache resets directory-provenance coverage
   once, so the existing backfill re-derives session partitions with effort.
-- Claude, SSH-machine, and `ccusage` aggregate rows have `nil` (unknown)
-  effort.
+- A later one-time reset (SQLite `PRAGMA user_version = 1`, local cache only)
+  re-derives partitions again so cached Claude history picks up effort.
+- SSH-machine and `ccusage` aggregate rows, and event lines without a
+  recorded effort, have `nil` (unknown) effort.
 
 `design-dashboard-dark-flat-effort-grouping.md` holds the full contract.
 

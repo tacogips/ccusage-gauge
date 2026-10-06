@@ -46,6 +46,8 @@ changing the rest of the design.
    - If the implementation's check of a current transcript finds a recorded
      field, parsing it is a follow-up requiring confirmation. It is not added
      speculatively.
+   - Answered 2026-10-02: yes. Assistant lines carry `effort` and
+     `perTurnEffort`; Claude effort is now parsed (user asked to resolve it).
 2. Should the light theme come back as an option later?
    - Answered 2026-09-30: yes. Dark stays the default, and light is an
      explicit option.

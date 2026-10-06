@@ -199,7 +199,8 @@ public struct ClaudeUsageEventLoader: Sendable {
       cacheReadTokens: usage.cacheReadInputTokens,
       cacheCreationFiveMinuteTokens: usage.cacheCreation?.fiveMinuteInputTokens ?? 0,
       cacheCreationOneHourTokens: usage.cacheCreation?.oneHourInputTokens ?? 0,
-      directory: envelope.cwd
+      directory: envelope.cwd,
+      effort: envelope.effort
     )
   }
 
@@ -342,12 +343,28 @@ private struct EventEnvelope: Decodable {
   let sessionID: String?
   let requestID: String?
   let cwd: String?
+  let effort: String?
   let message: EventMessage
 
   enum CodingKeys: String, CodingKey {
-    case type, timestamp, cwd, message
+    case type, timestamp, cwd, message, effort, perTurnEffort
     case sessionID = "sessionId"
     case requestID = "requestId"
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    type = try container.decode(String.self, forKey: .type)
+    timestamp = try container.decode(String.self, forKey: .timestamp)
+    sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
+    requestID = try container.decodeIfPresent(String.self, forKey: .requestID)
+    cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
+    message = try container.decode(EventMessage.self, forKey: .message)
+    // Claude Code records the reasoning effort of each assistant turn. A non-string value must
+    // not drop the usage line, so it decodes as unknown instead.
+    let turnEffort = (try? container.decodeIfPresent(String.self, forKey: .effort)) ?? nil
+    let perTurnEffort = (try? container.decodeIfPresent(String.self, forKey: .perTurnEffort)) ?? nil
+    effort = turnEffort ?? perTurnEffort
   }
 }
 

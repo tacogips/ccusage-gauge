@@ -182,13 +182,15 @@ default whenever the OS prefers dark, so the bug is visible by default.
   against a sanitized current rollout sample and records it in a test fixture.
   If the key differs, only the decoded key name changes. The contract below
   does not.
-- Claude: `ClaudeUsageEvents.swift` decodes only `type`, `timestamp`,
-  `sessionId`, `requestId`, `cwd`, and `message` (`id`, `role`, `model`,
-  `usage`). Claude Code transcript lines are not known to record a
-  reasoning-effort level. In this change, every Claude event has
-  `effort == nil` and falls into the unknown bucket. Parsing a Claude field is
-  out of scope unless the plan's verification of a current transcript finds a
-  recorded effort key (see the user-QA open question).
+- Claude (revised 2026-10-02): current Claude Code assistant lines record a
+  top-level `effort` (and `perTurnEffort`) string, confirmed in a local
+  transcript. `ClaudeUsageEvents.swift` decodes `effort`, falling back to
+  `perTurnEffort`, with the same tolerant decoding and normalization as Codex.
+  A missing or non-string value gives `effort == nil` (the unknown bucket) and
+  never drops the usage line. Local caches already migrated to the effort
+  column re-derive their session partitions once (tracked by SQLite
+  `PRAGMA user_version = 1`), so cached Claude history picks up effort where
+  the event logs still exist.
 - SSH machines: remote collection uses only `ccusage` aggregates and has no
   event loaders, so all remote rows have `effort == nil`.
 - `ccusage` aggregate rows (daily metrics and fallback sessions) never carry
@@ -427,7 +429,7 @@ Swift (`Tests/AppCoreTests`, extending the existing suites):
   - a `turn_context` without effort resets it to `nil`;
   - normalization and rejection of invalid values;
   - forward, reverse, and resume parity (`UsageEventIncrementalScanTests`).
-- Claude events carry `effort == nil`.
+- Claude events carry the recorded `effort` (or `perTurnEffort`); lines without one stay `nil`.
 - Reconciliation splits buckets by effort while leaving per-model and total
   cost and tokens unchanged.
 - Coalescing and snapshot-merge keep rows that differ only in effort
