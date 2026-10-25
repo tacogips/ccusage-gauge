@@ -8,7 +8,7 @@ COPY Sources ./Sources
 COPY Tests ./Tests
 RUN swift build -c release --product ccusage-gauge
 
-FROM node:22-bookworm-slim AS ccusage-runtime
+FROM node:22.23.4-bookworm-slim AS ccusage-runtime
 RUN npm install --global ccusage@20.0.17 \
   && test "$(ccusage --version | head -n1)" = "ccusage 20.0.17"
 
