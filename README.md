@@ -1,15 +1,18 @@
 # ccusage-gauge
 
 A cross-platform local dashboard and CLI, plus a macOS menu-bar cost gauge,
-backed exclusively by `ccusage --json`.
+with usage costs from `ccusage --json` and subscription limits from the local
+Claude Code and Codex accounts.
 
 ccusage-gauge supports ccusage 20.0.17 and later. It automatically uses the
 20.0.17 `--by-agent` daily report and the flag-free daily report introduced by
 ccusage 20.1.0.
 
-The status item shows a budget-progress pie followed by cost in the selected
-aggregation period. The pies and the ratio text it shows are configurable; see
-[Subscription rate limits and pie charts](#subscription-rate-limits-and-pie-charts).
+By default, the status item shows a budget-progress pie and cost for the selected
+aggregation period. You can instead show just the spending amount and Claude
+Code/Codex usage icons that fill from bottom to top as subscription usage rises.
+Percentages beside the icons are optional; see
+[Subscription usage and display controls](#subscription-usage-and-display-controls).
 Its menu supports budget editing, hourly/daily/weekly/
 monthly/custom-hour aggregation periods, Launch at Login, dashboard start/stop/open,
 refresh, and quit. Missing or invalid `ccusage` configuration changes the
@@ -48,19 +51,39 @@ brew install --cask tacogips/tap/ccusage-gauge
 
 The Cask installs the macOS menu-bar app and the `ccusage-gauge` command-line
 tool. Open **CCUsage Gauge** from Applications after installation, or run
-`ccusage-gauge serve` to start the local dashboard.
+`ccusage-gauge dashboard` to open the native dashboard. Use
+`ccusage-gauge serve` for the optional browser dashboard.
+
+To update both the app and its data source:
+
+```bash
+brew upgrade ccusage
+brew upgrade --cask tacogips/tap/ccusage-gauge
+```
+
+Quit and reopen **CCUsage Gauge** after upgrading so it uses the installed version.
 
 The SolidJS dashboard provides:
 
 - exact per-agent and per-model rows from `ccusage daily --json --by-agent` on
   ccusage 20.0.17 and `ccusage daily --json` on ccusage 20.1.0 and later;
+- a **Subscription usage** panel above the cost cards, with chart selection
+  controls at the upper right and percentages always visible;
+- one compact line per provider, showing only enabled windows and their reset
+  countdowns; disabling Codex 5h, for example, hides it from both chart and text;
+- independent subscription refresh every 60 seconds and countdown updates every
+  30 seconds;
+- compact chevron controls for collapsing sections and individual metric cards,
+  with section choices remembered locally;
 - left-side model and agent filters;
 - top-right Last 12 hours, Today, Yesterday, This week, This month, and Custom date controls;
 - cost-over-time graph with a rolling 12-hour Hourly default, 15-minute,
   6-hour, and Daily aggregation, and hover details for each bar;
+- horizontal touch swipes, trackpad scrolling, and mouse dragging with momentum,
+  without a visible graph scrollbar;
 - selected-period cost/token totals and detailed agent/model rows;
-- budget and aggregation-period summaries from the same AppCore snapshot.
-- automatic data refresh using the menu bar's effective refresh interval.
+- budget and aggregation-period summaries from the same AppCore snapshot;
+- automatic cost-data refresh using the menu bar's effective refresh interval;
 - an All machines aggregate, per-machine filtering and row attribution, SSH
   machine registration, enable/disable/remove controls, and sanitized collection
   health without exposing command, connection, or credential details.
@@ -316,15 +339,18 @@ Mutable budget/aggregation-period state is stored separately at
 not rewrite the static configuration. The **Refresh interval** submenu can set
 a persistent positive whole-number override in seconds or return to the
 `pollIntervalSeconds` configuration default. The dashboard automatically uses
-the same effective interval and adopts menu-bar interval changes after its next
-refresh.
+the same effective interval for cost data and adopts menu-bar interval changes
+after its next refresh. Subscription limits use a separate 60-second refresh
+cycle, so cost-history loading does not delay their updates.
 
-## Subscription rate limits and pie charts
+## Subscription usage and display controls
 
 The dashboard shows Claude Code and Codex subscription usage for the local
-machine's accounts: 5-hour and weekly percent used, percent remaining, and time
-until reset. These windows are also available as optional pie charts; each filled
-wedge represents the used share. Rate limits do not include remote machines.
+machine's accounts. Enabled 5-hour and weekly windows show the percentage used
+and a compact reset countdown, such as `reset in 3d` or `reset in 2h`. Exact
+reset dates and times are omitted to keep the panel small. Dashboard pies show
+the used share; menu-bar provider icons fill from bottom to top. Subscription
+limits do not include remote machines.
 
 Data comes from the following sources:
 
@@ -343,29 +369,32 @@ are never refreshed, logged, stored, or returned by the app. The
 types, and timestamps, not credentials or account IDs. Requests are limited to
 at most one attempt per provider every 60 seconds, including failures. Opening
 the dashboard triggers rate-limit requests; the menu bar requests them only when
-a rate-limit pie or a rate-limit ratio text is selected.
+a subscription usage icon or subscription percentage is selected.
 
 The status `ok` indicates a successful observation; `stale` shows a previous
 observation with its "as of" time; `unauthorized` indicates a login problem;
 and `unavailable` means no usable observation is available. If a token is
 expired or authorization fails, run the relevant CLI to refresh its login.
 
-In the dashboard pie chart section, use the toggle buttons to select any
-combination of budget, Claude Code 5h, Claude Code weekly, Codex 5h, and Codex
-weekly. The selection is saved in dashboard state. In the menu bar, use
-**Settings > Usage icons**; its independent selection is saved as
-`menuBarPieCharts` in `~/.local/ccusage-gauge/state.json`. Both selections
-default to the budget pie only, and at least one pie remains selected.
+In the dashboard's **Subscription usage** panel, use the upper-right buttons to
+select budget, Claude Code 5h, Claude Code weekly, Codex 5h, and Codex weekly.
+The selection controls both the charts and the provider summary text and is
+saved in dashboard state.
 
-The ratio text is selected separately from the pies. In the menu bar, use
-**Settings > Ratio text**, which follows **Usage icons**, to choose which ratios
-appear in the status item. Choose a cost display and toggle subscription
-ratios independently:
+In the menu bar, use **Settings > Usage icons**. This independent selection is
+saved as `menuBarPieCharts` in `~/.local/ccusage-gauge/state.json` for backward
+compatibility. Both displays default to budget only, and each keeps at least
+one indicator selected. Subscription indicators in the menu bar use the
+provider artwork rather than a separate pie.
+
+Under **Settings > Ratio text**, choose a cost display and select subscription
+percentages independently of the usage icons:
 
 - **Cost only** shows just the amount spent in the selected period, without
   a budget percentage. It works even when no budget is configured.
 - **Cost and budget ratio** shows the amount spent and puts the budget
-  percentage beside its pie, including the cost warning marker. These two cost display options are mutually exclusive.
+  percentage beside its pie, including the cost warning marker. These two cost
+  display options are mutually exclusive.
 - Each subscription is shown using its provider's official menu-bar mark:
   Claude's burst or the ChatGPT knot for Codex. The icon is outlined at 0%
   and fills from bottom to top as usage increases; 100% is fully filled.
@@ -374,24 +403,38 @@ ratios independently:
   Enable a subscription under **Ratio text** to put its percentage immediately
   to the right of the icon; leave it disabled for an icon-only display.
 
-Groups appear in a fixed order. An empty ratio selection
-leaves only the selected usage icons. The selection is saved as `menuBarRatioLabels` in
-`state.json`. If the key is missing, it defaults to budget text only, which is
-the previous status title. The cost-only preference is saved as `menuBarCostOnly`.
-When budget text is hidden, its warning marker is
-hidden too, but the warning remains in the tooltip, in the accessibility label,
-and on the budget pie when that pie is shown.
+Groups appear in a fixed order. An empty ratio selection leaves only the selected
+usage icons. The selection is saved as `menuBarRatioLabels` in `state.json`;
+legacy state defaults to budget text. The cost-only preference is saved as
+`menuBarCostOnly`. Hiding cost text also hides its warning marker, while the
+warning remains in the tooltip, accessibility label, and selected budget pie.
 
-For example, to show only the Claude Code weekly and Codex weekly pies with
-their ratios, select only those two items under both **Usage icons** and
-**Ratio text**. Each provider icon fills to match usage and is followed by its
-percentage (`59%` and `83%`), with no budget pie or cost text.
+To show today's spending amount with only the two weekly usage icons:
 
-The dashboard puts **Subscription usage** above the cost summaries, with chart
-selection buttons at the upper right. Percentages are always visible. Each provider has one compact summary line with the enabled
-weekly/5-hour percentages and reset countdowns in days, hours, or minutes.
-Disabling a window also hides its summary text. Subscription data refreshes every minute independently
-of cost-history loading; countdowns update every 30 seconds.
+1. Choose **Aggregation period > Daily**.
+2. Under **Settings > Usage icons**, enable **Claude Code weekly** and
+   **Codex weekly**, then disable **Budget** and both **5h** items.
+3. Under **Settings > Ratio text**, select **Cost only** and disable all
+   subscription percentages.
+
+The menu bar then shows the two provider icons filling with weekly usage,
+followed by today's spending amount. To add a percentage immediately to an
+icon's right, enable its weekly item under **Ratio text**.
+
+The dashboard puts **Subscription usage** above the cost summaries. It always
+shows chart percentages and has no per-chart **Ratio** buttons. Each provider
+has one compact line, for example:
+
+```text
+Claude Code  Weekly 61% used reset in 3d  5h 27% used reset in 2h
+Codex        Weekly 34% used reset in 5d
+```
+
+Only enabled windows appear: turning off **Codex 5h** removes both its chart and
+its 5-hour text while preserving the weekly display. Reset countdowns use days,
+hours, or minutes rather than a full date/time. Subscription data refreshes
+every minute independently of cost-history loading; countdowns update every
+30 seconds.
 
 Use the compact chevron buttons to collapse dashboard sections and individual
 cost/token cards. Section choices are remembered locally across reloads. The
@@ -669,13 +712,13 @@ mise run build:homebrew -- darwin-arm64 darwin-x64
 Render a formula after both platform archives exist:
 
 ```bash
-mise run homebrew:formula -- 0.1.8
+mise run homebrew:formula -- "$(cat VERSION)"
 ```
 
 Render directly into the default sibling tap checkout:
 
 ```bash
-mise run homebrew:tap-formula -- 0.1.8
+mise run homebrew:tap-formula -- "$(cat VERSION)"
 ```
 
 Install from the tap after the formula is published:
@@ -688,8 +731,9 @@ brew install ccusage-gauge
 ## Homebrew Cask
 
 The Cask workflow builds signed, notarized, and stapled macOS app archives with
-the project icon for Apple Silicon and Intel Macs. Release assets are hosted in
-the shared `tacogips/homebrew-tap` repository, following `bifrost-gauge`.
+the project icon for Apple Silicon and Intel Macs. Assets are published to
+[ccusage-gauge releases](https://github.com/tacogips/ccusage-gauge/releases);
+the Formula and Cask definitions live in `tacogips/homebrew-tap`.
 Apple signing credentials must stay local and must not be committed.
 
 Check the build plan:
@@ -708,14 +752,14 @@ kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID --
 Render a Cask:
 
 ```bash
-mise run homebrew:cask -- 0.1.8
+mise run homebrew:cask -- "$(cat VERSION)"
 ```
 
 For a tagged release, build, upload, and render the tap Cask:
 
 ```bash
 kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID -- \
-  mise run release:homebrew-cask-local -- v0.1.8
+  mise run release:homebrew-cask-local -- "v$(cat VERSION)"
 ```
 
 See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.
