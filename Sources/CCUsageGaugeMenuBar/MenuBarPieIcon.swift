@@ -28,12 +28,12 @@ enum MenuBarPieIcon {
   }
 
   // Flat pie: the remaining share is a translucent disc and the used share a solid wedge.
-  private static func drawRail(circle: NSRect) {
+  static func drawRail(circle: NSRect) {
     NSColor.black.withAlphaComponent(0.35).setFill()
     NSBezierPath(ovalIn: circle).fill()
   }
 
-  private static func drawWarning(in bounds: NSRect) {
+  static func drawWarning(in bounds: NSRect) {
     let triangle = NSBezierPath()
     triangle.move(to: NSPoint(x: bounds.midX, y: bounds.maxY - 1.5))
     triangle.line(to: NSPoint(x: bounds.maxX - 1, y: bounds.minY + 1.5))
@@ -53,13 +53,13 @@ enum MenuBarPieIcon {
     NSRect(x: bounds.midX - 0.9, y: bounds.minY + 2.5, width: 1.8, height: 1.8).fill()
   }
 
-  private static func drawUsedWedge(fraction: Decimal, circle: NSRect) {
+  static func drawUsedWedge(fraction: Decimal, circle: NSRect) {
     let normalized = min(max(CGFloat(truncating: fraction as NSDecimalNumber), 0), 1)
     guard normalized > 0 else { return }
     fillWedge(circle: circle, endAngle: 90 - normalized * 360)
   }
 
-  private static func drawUnknownWedge(circle: NSRect) {
+  static func drawUnknownWedge(circle: NSRect) {
     fillWedge(circle: circle, endAngle: 0)
   }
 
@@ -73,7 +73,7 @@ enum MenuBarPieIcon {
     wedge.fill()
   }
 
-  private static func drawBudgetMarker(circle: NSRect) {
+  static func drawBudgetMarker(circle: NSRect) {
     let marker = NSBezierPath()
     marker.move(to: NSPoint(x: circle.midX, y: circle.minY + 2))
     marker.line(to: NSPoint(x: circle.midX, y: circle.maxY - 2))

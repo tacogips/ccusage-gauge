@@ -80,8 +80,8 @@ enum CommandRuntime {
           runner = try remoteRunner(connection: connection, configuration: config)
         }
         _ = try await runner.run(arguments: ["--version"], timeoutSeconds: 30)
-      }
-    ) { descriptor in
+      },
+      serviceFactory: { descriptor in
       let client = CCUsageClient(
         commandRunner: try sourceRunner(
           descriptor: descriptor,
@@ -114,7 +114,7 @@ enum CommandRuntime {
           ).resolveSessionSourcePlan(descriptor: descriptor, timeoutSeconds: 30)
         }
       )
-    }
+    })
     let directoryNameStore = DashboardDirectoryNameStore(fileURL: paths.dashboardStateFile)
     try await directoryNameStore.reconcileMachineRegistry(
       machineIDs: registry.machines.map(\.id)
@@ -133,7 +133,8 @@ enum CommandRuntime {
       paths: paths,
       dashboardStateStore: DashboardStateStore(fileURL: paths.dashboardStateFile),
       directoryNameStore: directoryNameStore,
-      chartColors: config.chartColors
+      chartColors: config.chartColors,
+      rateLimitService: RateLimitUsageService.production()
     )
     if desktop {
       let window = DesktopDashboard()

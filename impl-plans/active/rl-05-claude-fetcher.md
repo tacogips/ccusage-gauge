@@ -162,3 +162,4 @@ All tests use fakes only: `RecordingRateLimitTransport`, a fake
 ## Progress Log
 
 - 2026-10-31: Plan created.
+- 2026-10-31: Implemented both contract types and all listed fixture cases. Implementation done criteria are met; formal review and integration remain downstream. On the shared tree, `swift build` exited 0 (`tmp/subscription-rate-limits-20261031/rl-05/build-final.log`); `swift test --filter RateLimitUsageClaudeTests` exited 0 with 4 tests and 0 failures (`claude-tests-final.log`); the plan's selected-file SwiftLint command exited 0 (`swiftlint.log`), as did strict selected-file lint (`swiftlint-strict-final.log`, manifest `changed-swift.nul`); forbidden-pattern check exited 0 with no matches (`no-forbidden.log`). Initial strict lint findings were corrected before final verification (`swiftlint-strict.log`). All log names without a directory are under `tmp/subscription-rate-limits-20261031/rl-05/`.

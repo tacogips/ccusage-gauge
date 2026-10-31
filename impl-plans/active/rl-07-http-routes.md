@@ -141,3 +141,6 @@ is an internal free function.
 ## Progress Log
 
 - 2026-10-31: Plan created.
+- 2026-10-31: Implemented shared response helper and early dispatch in both routers, including the delegating router. Done criteria met for implementation; formal review and integration remain downstream.
+- Verification on the shared tree: `swift build` exit 0 (`rl-07/build.log`); `swift test --filter RateLimitRoutesTests` exit 0, 2 tests (`rl-07/routes-tests-final.log`); `swift test --filter DashboardTests` exit 0, 22 tests (`rl-07/dashboard-tests.log`); `swift test --filter DesktopDashboardTests` exit 0, 3 tests (`rl-07/desktop-dashboard-tests.log`); strict selected-file SwiftLint exit 0 (`rl-07/swiftlint-final.log`, manifest `rl-07/changed-swift.nul`); line counts 704 and 759, both under 1000 (`rl-07/wc.log`). Logs are under `tmp/subscription-rate-limits-20261031/`.
+- Earlier route compilation and lint attempts failed due to test syntax and lint; corrected and superseded by final logs. Shared-tree verification is subject to serial integration revalidation.

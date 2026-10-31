@@ -149,3 +149,15 @@ This plan builds the self-contained menu-bar pieces that rl-09 wires into
 ## Progress Log
 
 - 2026-10-31: Plan created.
+- 2026-10-31: Implemented all named formatting and menu-bar view contracts;
+  single-budget rendering delegates directly to the existing icon. Verification
+  on the shared tree: `swift build` exit 0 (`rl-08/build.log`);
+  `swift test --filter RateLimitDisplayFormattingTests` exit 0, 2 tests, 0
+  failures (`rl-08/formatting-tests.log`); specified SwiftLint command exit 0
+  (`rl-08/swiftlint.log`); strict changed-file SwiftLint exit 0
+  (`rl-08/swiftlint-strict.log`, manifest `rl-08/changed-swift.nul`);
+  icon diff exit 0 and contains only access changes (`rl-08/menubar-pie-icon.diff`);
+  `git diff --quiet -- Sources/CCUsageGaugeMenuBar/MenuBarApp.swift` exit 0
+  (`rl-08/menubar-app-diff.log`). Paths are under
+  `tmp/subscription-rate-limits-20261031/`. rl-09 owns integration and the
+  stable combined-tree gate; formal review remains downstream.

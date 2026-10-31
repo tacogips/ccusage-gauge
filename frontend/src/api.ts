@@ -92,7 +92,20 @@ export interface LoadStatusResponse {
     coverageStart?: string; requestedCoverageStart?: string; requestedCoverageEnd?: string;
   }>;
 }
+export type PieChartID = "budget" | "claude5h" | "claudeWeekly" | "codex5h" | "codexWeekly";
+export interface RateLimitWindow {
+  kind: "fiveHour" | "weekly" | "other"; windowSeconds: number; usedPercent: number;
+  remainingPercent: number; resetsAt?: string | null;
+}
+export interface ProviderRateLimits {
+  provider: "claude" | "codex"; status: "ok" | "stale" | "unauthorized" | "unavailable";
+  errorCode?: string | null; message?: string | null; planType?: string | null;
+  fetchedAt?: string | null; stale: boolean; fiveHour?: RateLimitWindow | null;
+  weekly?: RateLimitWindow | null; otherWindows: RateLimitWindow[];
+}
+export interface RateLimitsResponse { generatedAt: string; scope: "local"; providers: ProviderRateLimits[] }
 export interface DashboardUIState {
+  pieCharts?: PieChartID[];
   range: "recent12h" | "today" | "yesterday" | "week" | "month" | "custom";
   customStart: string;
   customEnd: string;

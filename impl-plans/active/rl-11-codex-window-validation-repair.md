@@ -127,3 +127,22 @@ example, sibling rl-09 is mid-edit), record the failure, wait, and re-run.
 
 - 2026-10-31: Plan created after the continuation-run review of rl-06 against
   the design.
+- 2026-10-31: Implemented throwing live-window validation and added three
+  invalid-window cases. Missing fields and the weekly sample remain covered;
+  the fallback SHA-256 matched before and after. Completion criteria are met
+  for implementation; formal review and workflow finalization remain pending.
+  Evidence under `tmp/subscription-rate-limits-20261031/rl-11/`:
+  1. `swift build`: exit 0, `build.log`; initial exit 1 in
+     `build-attempt1.log` while sibling `Runtime.swift` referenced the not-yet
+     present production factory; retry passed after the sibling change landed.
+  2. `swift test --filter RateLimitUsageCodexTests`: exit 0, 5 tests,
+     0 failures, `codex-tests.log`.
+  3. `swift test --filter RateLimitUsageCodexFallbackTests`: exit 0, 1 test,
+     0 failures, `codex-fallback-tests.log`.
+  4. Selected-file `swiftlint lint`: exit 0, `swiftlint.log`; strict selected-file
+     lint through `changed-swift.nul`: exit 0, `swiftlint-strict.log`.
+  5. No `try? RateLimitWindow`: exit 0, `try-grep.log`; prohibited credential
+     patterns absent: exit 0, `secret-grep.log`.
+  6. Fallback `git diff --quiet`: exit 0, `fallback-diff.log`; pre/post SHA-256
+     comparison: exit 0, `fallback-before.log`, `fallback-sha256.log`, and
+     `fallback-hash-compare.log`. The fallback was untracked at baseline.

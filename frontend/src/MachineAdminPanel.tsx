@@ -3,9 +3,8 @@ import type { Machine, MachineStatus } from "./api";
 import type { MachineActionDiagnostic } from "./machineActions";
 import type { MachineDraft, MachineProxyKind } from "./machineForm";
 
-export function machineControlsDisabled(inFlight: Record<string, boolean>, machineID: string) {
-  return inFlight[machineID] === true;
-}
+import { machineControlsDisabled } from "./machineAdminControls";
+export { machineControlsDisabled } from "./machineAdminControls";
 
 export function MachineAdminPanel(props: {
   machines: Machine[];

@@ -50,9 +50,8 @@ struct CCUsageGaugeMenuBarApp {
 @MainActor
 final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private struct StatusIconState: Equatable {
-    let fraction: Decimal?
-    let hasBudget: Bool
-    let warning: Bool
+    let entries: [MenuBarPieEntry]
+    let accessibility: String
   }
 
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -71,11 +70,13 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var machineRouter: MachineDashboardRouter?
   private let desktopDashboard = DesktopDashboard()
   private var pollingTask: Task<Void, Never>?
-  private var latestSnapshot: CostSnapshot?
-  private var currentState: AppState?
+  let rateLimitService = RateLimitUsageService.production()
+  var latestRateLimits: RateLimitsResponse?
+  var latestSnapshot: CostSnapshot?
+  var currentState: AppState?
   private var errorMessage: String?
-  private var isUsageUnavailable = false
-  private var collectionWarnings: [MachineStatusResponseItem] = []
+  var isUsageUnavailable = false
+  var collectionWarnings: [MachineStatusResponseItem] = []
   private var launchAtLoginError: String?
   private var stateMutationGeneration = 0
   private var e2eWindow: NSWindow?
@@ -186,8 +187,8 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             runner = try Self.remoteRunner(connection: connection, configuration: loaded)
           }
           _ = try await runner.run(arguments: ["--version"], timeoutSeconds: 30)
-        }
-      ) { [paths, loaded, store] descriptor in
+        },
+        serviceFactory: { [paths, loaded, store] descriptor in
         if descriptor.kind == .local {
           // Rebuild from the fresh descriptor so registry edits to the local
           // machine's session sources take effect without an app restart.
@@ -240,7 +241,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ).resolveSessionSourcePlan(descriptor: descriptor, timeoutSeconds: 30)
           }
         )
-      }
+      })
       let directoryNameStore = DashboardDirectoryNameStore(fileURL: paths.dashboardStateFile)
       try await directoryNameStore.reconcileMachineRegistry(
         machineIDs: registry.machines.map(\.id)
@@ -260,7 +261,8 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         paths: paths,
         dashboardStateStore: DashboardStateStore(fileURL: paths.dashboardStateFile),
         directoryNameStore: directoryNameStore,
-        chartColors: loaded.chartColors
+        chartColors: loaded.chartColors,
+        rateLimitService: rateLimitService
       )
       errorMessage = nil
       isUsageUnavailable = false
@@ -327,6 +329,11 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func refresh() async {
+    await refreshSnapshot()
+    await refreshRateLimitsIfNeeded()
+  }
+
+  private func refreshSnapshot() async {
     let refreshGeneration = stateMutationGeneration
     guard let machineSnapshotStore else {
       refreshE2EWindow()
@@ -358,20 +365,24 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   private func populateMenu(_ menu: NSMenu) {
     menu.removeAllItems()
-    if let snapshot = latestSnapshot {
-      let budgetItem = NSMenuItem()
-      budgetItem.view = BudgetMenuView(snapshot: snapshot)
-      menu.addItem(budgetItem)
-    } else if let budget = currentState?.budgetUSD {
-      let item = NSMenuItem(title: "Budget: \(formatUSDCurrency(budget)) (usage unavailable)", action: nil, keyEquivalent: "")
-      item.isEnabled = false
-      menu.addItem(item)
-    } else {
-      menu.addItem(withTitle: "Budget: unavailable", action: nil, keyEquivalent: "")
+    let selection = menuBarPieSelection()
+    if selection.contains(.budget) {
+      if let snapshot = latestSnapshot {
+        let budgetItem = NSMenuItem()
+        budgetItem.view = BudgetMenuView(snapshot: snapshot)
+        menu.addItem(budgetItem)
+      } else if let budget = currentState?.budgetUSD {
+        let item = NSMenuItem(title: "Budget: \(formatUSDCurrency(budget)) (usage unavailable)", action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        menu.addItem(item)
+      } else {
+        menu.addItem(withTitle: "Budget: unavailable", action: nil, keyEquivalent: "")
+      }
     }
     if let errorMessage {
       menu.addItem(errorDetailsItem(message: errorMessage))
     }
+    RateLimitMenuView.items(selection: selection, response: latestRateLimits, now: Date()).forEach { menu.addItem($0) }
     menu.addItem(.separator())
     let budgetItem = menu.addItem(withTitle: "Set budget…", action: #selector(setBudget), keyEquivalent: "b")
     budgetItem.target = self
@@ -429,6 +440,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       error.isEnabled = false
       submenu.addItem(error)
     }
+    submenu.addItem(PieChartMenu.item(selection: menuBarPieSelection(), target: self, action: #selector(togglePieChart(_:))))
     root.submenu = submenu
     return root
   }
@@ -553,7 +565,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   @discardableResult
-  private func mutateState(_ mutation: (inout AppState) throws -> Void) async -> Bool {
+  func mutateState(_ mutation: (inout AppState) throws -> Void) async -> Bool {
     guard let stateStore else {
       showError("State storage is unavailable. Check the configuration and relaunch ccusage-gauge.")
       return false
@@ -748,21 +760,15 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     updateStatusIcon()
   }
 
-  private func updateStatusIcon() {
+  func updateStatusIcon() {
     let hasWarning = isUsageUnavailable || !collectionWarnings.isEmpty
-    let iconState = StatusIconState(
-      fraction: latestSnapshot?.budget.visualFraction,
-      hasBudget: currentState?.budgetUSD != nil,
-      warning: hasWarning
-    )
+    let iconState = StatusIconState(entries: pieEntries(), accessibility: pieAccessibilityDescription())
     // Regenerating and reassigning the pie image every poll is what makes the
     // icon flicker, so skip it unless the rendered inputs changed.
     if appliedIconState != iconState {
       appliedIconState = iconState
-      statusItem.button?.image = MenuBarPieIcon.image(
-        fraction: iconState.fraction,
-        hasBudget: iconState.hasBudget,
-        warning: iconState.warning
+      statusItem.button?.image = MenuBarPieStrip.image(
+        entries: iconState.entries, accessibilityDescription: iconState.accessibility
       )
       e2eIconView?.image = statusItem.button?.image
     }

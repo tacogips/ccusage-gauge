@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { machineControlsDisabled } from "../src/MachineAdminPanel";
+import { machineControlsDisabled } from "../src/machineAdminControls";
 
 describe("machine administration controls", () => {
   test("disables every row control only for the active machine lifecycle", () => {

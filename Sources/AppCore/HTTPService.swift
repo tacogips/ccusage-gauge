@@ -370,6 +370,7 @@ public struct DashboardRouter: Sendable {
   let dashboardStateStore: DashboardStateStore?
   let directoryNameStore: DashboardDirectoryNameStore?
   private let machineRouter: MachineDashboardRouter?
+  let rateLimitService: RateLimitUsageService?
 
   public init(
     snapshotProvider: @escaping SnapshotProvider,
@@ -378,7 +379,8 @@ public struct DashboardRouter: Sendable {
     assetResolver: StaticAssetResolver,
     dashboardStateStore: DashboardStateStore? = nil,
     directoryNameStore: DashboardDirectoryNameStore? = nil,
-    cacheClearer: @escaping CacheClearer = {}
+    cacheClearer: @escaping CacheClearer = {},
+    rateLimitService: RateLimitUsageService? = nil
   ) {
     snapshotCache = DashboardSnapshotCache(maxAgeSeconds: snapshotCacheMaxAgeSeconds) { _ in try await snapshotProvider() }
     self.queryService = queryService
@@ -388,6 +390,7 @@ public struct DashboardRouter: Sendable {
       ?? dashboardStateStore.map { DashboardDirectoryNameStore(fileURL: $0.fileURL) }
     self.cacheClearer = cacheClearer
     machineRouter = nil
+    self.rateLimitService = rateLimitService
   }
 
   public init(
@@ -397,7 +400,8 @@ public struct DashboardRouter: Sendable {
     assetResolver: StaticAssetResolver,
     dashboardStateStore: DashboardStateStore? = nil,
     directoryNameStore: DashboardDirectoryNameStore? = nil,
-    cacheClearer: @escaping CacheClearer = {}
+    cacheClearer: @escaping CacheClearer = {},
+    rateLimitService: RateLimitUsageService? = nil
   ) {
     snapshotCache = DashboardSnapshotCache(
       maxAgeSeconds: snapshotCacheMaxAgeSeconds,
@@ -410,6 +414,7 @@ public struct DashboardRouter: Sendable {
       ?? dashboardStateStore.map { DashboardDirectoryNameStore(fileURL: $0.fileURL) }
     self.cacheClearer = cacheClearer
     machineRouter = nil
+    self.rateLimitService = rateLimitService
   }
 
   public init(
@@ -419,7 +424,8 @@ public struct DashboardRouter: Sendable {
     assetResolver: StaticAssetResolver,
     dashboardStateStore: DashboardStateStore? = nil,
     directoryNameStore: DashboardDirectoryNameStore? = nil,
-    cacheClearer: @escaping CacheClearer = {}
+    cacheClearer: @escaping CacheClearer = {},
+    rateLimitService: RateLimitUsageService? = nil
   ) {
     snapshotCache = DashboardSnapshotCache(maxAgeSeconds: snapshotCacheMaxAgeSeconds, loader: rangeSnapshotProvider)
     self.queryService = queryService
@@ -429,6 +435,7 @@ public struct DashboardRouter: Sendable {
       ?? dashboardStateStore.map { DashboardDirectoryNameStore(fileURL: $0.fileURL) }
     self.cacheClearer = cacheClearer
     machineRouter = nil
+    self.rateLimitService = rateLimitService
   }
 
   public init(machineRouter: MachineDashboardRouter, assetResolver: StaticAssetResolver) {
@@ -439,6 +446,7 @@ public struct DashboardRouter: Sendable {
     dashboardStateStore = nil
     directoryNameStore = nil
     self.machineRouter = machineRouter
+    rateLimitService = nil
   }
 
   public func preloadSnapshot() async {
@@ -466,6 +474,9 @@ public struct DashboardRouter: Sendable {
         body: body,
         listenerPort: listenerPort
       )
+    }
+    if path == "/api/rate-limits" {
+      return await rateLimitsHTTPResponse(service: rateLimitService, method: method)
     }
     if let response = await directoryNameMutationResponse(
       path: path,

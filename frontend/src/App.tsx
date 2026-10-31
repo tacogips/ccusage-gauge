@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
-import { type BudgetResponse, type ChartColorsResponse, type CostRow, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type Machine, type MachineConnectionTestResponse, type MachineDataGap, type MachineLatestEvent, type MachineRefreshResponse, type MachinesResponse, type MachineStatusResponse, type MetricKey, type MetricRow, type MetricsResponse, type SubdirectoriesResponse, getJSON, mutationJSON, renameSubdirectory, requestJSON } from "./api";
+import { type PieChartID, type RateLimitsResponse, type BudgetResponse, type ChartColorsResponse, type CostRow, type DashboardUIState, type DashboardUIStateResponse, type LoadStatusResponse, type Machine, type MachineConnectionTestResponse, type MachineDataGap, type MachineLatestEvent, type MachineRefreshResponse, type MachinesResponse, type MachineStatusResponse, type MetricKey, type MetricRow, type MetricsResponse, type SubdirectoriesResponse, getJSON, mutationJSON, renameSubdirectory, requestJSON } from "./api";
 import {
   machineSaveErrors,
   machineMetadataCleanupWarning,
@@ -61,6 +61,10 @@ import { HeaderFoldBar, PaneFoldBar, ThemeToggle } from "./DashboardLayout";
 import { applyColorScheme, oppositeColorScheme, readStoredColorScheme, storeColorScheme, type ColorScheme } from "./colorScheme";
 import { restoredFoldState } from "./dashboardLayoutState";
 
+import { RateLimitPanel } from "./RateLimitPanel";
+import { PieChartPanel } from "./PieChartPanel";
+import { normalizePieCharts, togglePieChart } from "./rateLimits";
+
 type Granularity = "15min" | "hourly" | "6hour" | "daily";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -84,6 +88,7 @@ export default function App() {
   let configMenu: HTMLDetailsElement | undefined;
   const initialCustomStart = daysAgo(6);
   const initialCustomEnd = localDate();
+  const [pieCharts, setPieCharts] = createSignal<PieChartID[]>(["budget"]);
   const [range, setRange] = createSignal<Range>("recent12h");
   const [customStart, setCustomStart] = createSignal(initialCustomStart);
   const [customEnd, setCustomEnd] = createSignal(initialCustomEnd);
@@ -195,6 +200,8 @@ export default function App() {
     : dashboardDataPath("/api/budget", requestedMachineScope(), selectedDirectories()));
   const [budgetResource, { refetch: refreshBudget }] = createResource(budgetPath, (path) => getJSON<BudgetResponse>(path));
   const budget = shieldResource(budgetResource);
+  const [rateLimitsResource, { refetch: refreshRateLimits }] = createResource(() => getJSON<RateLimitsResponse>("/api/rate-limits"));
+  const rateLimits = shieldResource(rateLimitsResource);
   const loadStatusPath = createMemo(() => {
     if (machineSuffix() == null) return undefined;
     return range() === "custom"
@@ -545,6 +552,7 @@ export default function App() {
         refreshPeriod(),
         refreshCostSeries(),
         refreshBudget(),
+        Promise.resolve(refreshRateLimits()).catch(() => undefined),
         refreshMachineStatuses(),
         refreshSubdirectories(),
       ]))
@@ -566,10 +574,10 @@ export default function App() {
       beginRangeLoad();
       let reload: Promise<unknown>;
       if (wasShowingThisWeek) {
-        reload = Promise.all([refreshPeriod(), refreshCostSeries(), refreshBudget()]);
+        reload = Promise.all([refreshPeriod(), refreshCostSeries(), refreshBudget(), Promise.resolve(refreshRateLimits()).catch(() => undefined)]);
       } else {
         setRange("week");
-        reload = Promise.resolve(refreshBudget());
+        reload = Promise.all([refreshBudget(), Promise.resolve(refreshRateLimits()).catch(() => undefined)]);
       }
       void reload.catch((error) => setCacheStatus(error instanceof Error ? error.message : "Background reload failed."));
       setCacheStatus("Cache cleared. Reloading this week in the background.");
@@ -709,6 +717,7 @@ export default function App() {
         refreshPeriod(),
         refreshCostSeries(),
         refreshBudget(),
+        Promise.resolve(refreshRateLimits()).catch(() => undefined),
         refreshSubdirectories(),
       ]),
       setDiagnostic: (diagnostic) => {
@@ -784,6 +793,7 @@ export default function App() {
       refreshPeriod(),
       refreshCostSeries(),
       refreshBudget(),
+      Promise.resolve(refreshRateLimits()).catch(() => undefined),
       refreshMachineStatuses(),
       refreshSubdirectories(),
     ]);
@@ -792,6 +802,7 @@ export default function App() {
     void initializeDashboardState({
       load: () => getJSON<DashboardUIStateResponse>("/api/dashboard-state"),
       apply: (state) => {
+        setPieCharts(normalizePieCharts(state.pieCharts));
         setRange(state.range);
         setCustomStart(state.customStart);
         setCustomEnd(state.customEnd);
@@ -827,6 +838,7 @@ export default function App() {
   createEffect(() => {
     if (!isDashboardStateLoaded() || !isDashboardStatePersistenceEnabled()) return;
     const state: DashboardUIState = {
+      pieCharts: pieCharts(),
       range: range(),
       customStart: appliedCustomRange().start,
       customEnd: appliedCustomRange().end,
@@ -1319,6 +1331,8 @@ export default function App() {
             </div>
             </section>
 
+            <PieChartPanel selection={pieCharts} onToggle={(id) => setPieCharts(togglePieChart(id, pieCharts()))} budget={budget} response={rateLimits} />
+            <RateLimitPanel response={rateLimits} error={rateLimits.error != null} now={() => new Date()} />
             <section class="budget-note">
               Menu budget: {currency.format(budget()?.spentUSD ?? 0)} in selected period · {budget()?.usagePercentage == null ? "No budget set" : `${percentage.format(budget()!.usagePercentage!)}% used`} · {budget()?.remainingUSD == null ? "No remaining amount" : `${currency.format(budget()!.remainingUSD!)} remaining`}
             </section>

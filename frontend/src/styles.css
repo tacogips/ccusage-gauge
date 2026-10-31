@@ -294,3 +294,15 @@ input[type="date"] { padding: 7px 8px; text-transform: none; letter-spacing: 0; 
 @media (min-width: 1181px) { .header-fold-toggle, .header-range-summary { display: none; }header.header-collapsed .header-content { display: flex; } }
 @media (max-width: 980px) { .app-shell, .app-shell.sidebar-collapsed { grid-template-columns: 1fr; }.model-sidebar { position: static; max-height: none; }.model-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }.sidebar-collapsed .model-sidebar { padding: 8px 12px; }.sidebar-collapsed .pane-fold-bar { flex-direction: row; }.sidebar-collapsed .pane-fold-summary { writing-mode: horizontal-tb; }.sidebar-collapsed .model-sidebar-content { display: none; }.pane-fold-bar { width: 100%; min-height: 36px; } }
 @media (max-width: 700px) { .range-buttons { flex-wrap: wrap; overflow-x: visible; overflow-y: visible; }.app-shell { width: min(100% - 20px, 1440px); padding-top: 8px; }.stats, .stats.metric-stats { grid-template-columns: 1fr; }.panel { padding: 18px; }.panel-title { flex-direction: column; }.granularity-control { width: 100%; }.custom-calendar { width: 100%; flex-wrap: wrap; }.model-list { grid-template-columns: 1fr; }.breakdown-grid { grid-template-columns: 1fr; row-gap: 22px; }.machine-health-item { grid-template-columns: 1fr; }.machine-event-markers { margin-left: 0; } }
+
+.rate-limit-panel, .pie-chart-panel { margin-bottom: 1rem; }
+.rate-limit-providers, .pie-list, .pie-toggles { display: flex; flex-wrap: wrap; gap: 1rem; }
+.rate-limit-providers > div { flex: 1 1 16rem; }
+.rate-limit-row { display: flex; flex-wrap: wrap; gap: .5rem 1rem; padding: .4rem 0; }
+.pie-toggles { gap: .5rem; margin-bottom: 1rem; }
+.pie-toggles button[aria-pressed="true"] { font-weight: 700; }
+.pie-item { display: flex; flex-direction: column; align-items: center; gap: .25rem; }
+.pie-item svg { width: 80px; height: 80px; }
+.pie-track, .pie-fill { fill: none; stroke-width: 4; }
+.pie-track { stroke: currentColor; opacity: .2; }
+.pie-fill { stroke: currentColor; stroke-width: 16; }

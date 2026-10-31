@@ -217,3 +217,29 @@ edit that file.
 - 2026-10-31: Plan created (the original combined rl-09).
 - 2026-10-31: Narrowed in the continuation run. The menu-bar hook-in moved to
   rl-10, and the asset rebuild and full gate moved to rl-12.
+- 2026-10-31: Implemented the production factory, one runtime router injection,
+  and the two-router integration test. On the shared working tree, verification
+  steps 1–7 exited 0 respectively; logs: `tmp/subscription-rate-limits-20261031/rl-09/`
+  `build.log`, `integration-tests.log` (1 test), `routes-tests.log` (2 tests),
+  `swiftlint.log`, `refresh-grep.log`, `wc.log`, and `factory-count.log`.
+  Files have 14, 255, and 75 lines respectively. The additional required strict
+  changed-file lint exited 1 (`strict-lint.log`): the pre-existing
+  `Runtime.swift:84` multiple-closures warning becomes an error under strict
+  lint. `baseline-strict-lint.log` confirms the same violation on HEAD (exit 2).
+  The plan restricts Runtime changes to the router injection, so this unrelated
+  existing hunk was not changed. Formal review and downstream plans remain pending.
+- 2026-10-31: Scope amendment authorized by integration review session-572
+  wave-001 (IR-RL09-STRICT-LINT-RUNTIME-84): baseline
+  multiple_closures_with_trailing_closure at Runtime.swift:84 fixed by labeling
+  serviceFactory; behavior unchanged. Runtime SHA-256 before:
+  `19bb2ed7bada960dcf80fbd419483b8e99b6bd35b38ea91d3401e3670efb5f6c`;
+  after: `559ce9e99f99cf32785e91603a846af373e770a6a724b0abcc00eb781b955930`.
+  The scope and unchanged closure bodies check exited 0 (`amendment-scope.log`);
+  the pre-edit strict lint reproduction exited 2 (`amendment-reproduction.log`).
+  On the final shared-tree source, verification steps 1–7 each exited 0:
+  `build.log`, `integration-tests.log` (1 passed), `routes-tests.log` (2 passed),
+  `swiftlint.log`, `refresh-grep.log`, `wc.log`, and `factory-count.log`.
+  Strict selected-file lint also exited 0 (`strict-lint.log`). All logs are in
+  `tmp/subscription-rate-limits-20261031/rl-09/`; prior logs are retained with
+  the `prior-` prefix. All four Done Criteria are met; independent review and
+  downstream work remain pending.

@@ -266,10 +266,14 @@ Service (all with an injected clock):
 
 ## Done Criteria
 
-- [ ] All contract symbols above exist with the exact names and signatures.
-- [ ] Every listed test case exists and passes.
-- [ ] Verification steps 1-6 recorded in the Progress Log with exit codes.
+- [x] All contract symbols exist with the authorized RW2-H1 slots return-type refinement.
+- [x] Every listed test case exists and passes.
+- [x] Verification steps 1-6 recorded in the Progress Log with exit codes.
 
 ## Progress Log
 
 - 2026-10-31: Plan created.
+- 2026-10-31: Implemented the seven core source and test files. Final-source verification logs under `tmp/subscription-rate-limits-20261031/rl-01/`: `build-final.log` (swift build exit 0), `models-tests-final.log` (exit 0, 3 tests), `service-tests-final.log` (exit 0, 6 tests), `swiftlint-final.log` (exit 0, one violation), `swiftlint-strict-final.log` (exit 1), `wc-final.log` (exit 0, all under 1000 lines), `no-refresh-final.log` (negated grep exit 0). Strict lint flags the plan-required three-element `slots` tuple as `large_tuple`; the dispatch prohibits rule suppression and requires the exact tuple signature. Completion awaits resolution of that conflict and review of the service's overlapping-flight edge case. Earlier failed test and lint logs are retained as attempt-1 evidence.
+- 2026-10-31: IR RW2-H1 authorizes `RateLimitWindowSlots` in place of the tuple; first-wins behavior remains unchanged. RW2-M1: shared tasks now finalize their own generation once and return their own result to waiters. Verification: `build-rw2.log` exit 0; `models-tests-rw2.log` exit 0 (3 tests); `service-tests-rw2-final.log` exit 0 (7 tests); `swiftlint-strict-rw2.log` exit 0; `wc-rw2.log`, `no-suppression-rw2.log`, `no-refresh-rw2.log` exit 0. The continuation-controlled sequential-flight test verifies newer cache and last-good after a failure, but does not force an earlier waiter to resume after the next flight starts. Earlier `service-tests-rw2.log` failed due to an insufficient fixture and was corrected.
+
+- 2026-10-31: Continuation adds a controlled waiter gate: A joins and pauses after its result, B starts, A resumes, then B completes; the test checks B, its cache and subsequent last-good fallback. In-flight work now takes precedence over a throttled cache. Final-source commands and logs under `tmp/subscription-rate-limits-20261031/rl-01/`: `swift build` (build-cont1.log, exit 0); `swift test --filter RateLimitUsageModelsTests` (models-tests-cont1.log, exit 0, 3 tests); `swift test --filter RateLimitUsageServiceTests` (service-tests-cont1.log, exit 0, 7 tests); strict selected-file SwiftLint (swiftlint-strict-cont1.log, exit 0); `wc -l` (wc-cont1.log, exit 0, all under 1000); negated suppression and refresh searches (no-suppression-cont1.log and no-refresh-cont1.log, both exit 0). Formal review and integration remain downstream.

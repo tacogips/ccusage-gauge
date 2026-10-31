@@ -317,6 +317,75 @@ a persistent positive whole-number override in seconds or return to the
 the same effective interval and adopts menu-bar interval changes after its next
 refresh.
 
+## Subscription rate limits and pie charts
+
+The dashboard shows Claude Code and Codex subscription usage for the local
+machine's accounts: 5-hour and weekly percent used, percent remaining, and time
+until reset. These windows are also available as optional pie charts; each filled
+wedge represents the used share. Rate limits do not include remote machines.
+
+Data comes from the following sources:
+
+- Claude Code requests `https://api.anthropic.com/api/oauth/usage`. On macOS,
+  credentials are read from the Keychain item `Claude Code-credentials` via
+  `/usr/bin/security`; otherwise, or if that read fails, they are read from
+  `$CLAUDE_CONFIG_DIR/.credentials.json` (default `~/.claude/.credentials.json`).
+- Codex requests `https://chatgpt.com/backend-api/wham/usage` using credentials
+  from `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`). If the request
+  fails, the newest rate-limit event in `$CODEX_HOME/sessions/**/*.jsonl` can
+  provide a stale fallback.
+
+Credentials are read-only and held in memory only for a fetch attempt. Tokens
+are never refreshed, logged, stored, or returned by the app. The
+`GET /api/rate-limits` response contains derived usage numbers, statuses, plan
+types, and timestamps, not credentials or account IDs. Requests are limited to
+at most one attempt per provider every 60 seconds, including failures. Opening
+the dashboard triggers rate-limit requests; the menu bar requests them only when
+a rate-limit pie is selected.
+
+The status `ok` indicates a successful observation; `stale` shows a previous
+observation with its "as of" time; `unauthorized` indicates a login problem;
+and `unavailable` means no usable observation is available. If a token is
+expired or authorization fails, run the relevant CLI to refresh its login.
+
+In the dashboard pie chart section, use the toggle buttons to select any
+combination of budget, Claude Code 5h, Claude Code weekly, Codex 5h, and Codex
+weekly. The selection is saved in dashboard state. In the menu bar, use
+**Settings > Pie charts**; its independent selection is saved as
+`menuBarPieCharts` in `~/.local/ccusage-gauge/state.json`. Both selections
+default to the budget pie only, and at least one pie remains selected.
+
+For example, request the local API:
+
+```bash
+curl http://127.0.0.1:18081/api/rate-limits
+```
+
+An illustrative response with synthetic values is:
+
+```json
+{
+  "generatedAt": "2026-10-31T12:00:00Z",
+  "scope": "local",
+  "providers": [
+    {
+      "provider": "claude", "status": "ok", "errorCode": null,
+      "message": null, "planType": "max", "fetchedAt": "2026-10-31T12:00:00Z",
+      "stale": false,
+      "fiveHour": {"kind": "fiveHour", "windowSeconds": 18000, "usedPercent": 47, "remainingPercent": 53, "resetsAt": "2026-10-31T13:00:00Z"},
+      "weekly": null, "otherWindows": []
+    },
+    {
+      "provider": "codex", "status": "ok", "errorCode": null,
+      "message": null, "planType": "pro", "fetchedAt": "2026-10-31T12:00:00Z",
+      "stale": false, "fiveHour": null,
+      "weekly": {"kind": "weekly", "windowSeconds": 604800, "usedPercent": 82, "remainingPercent": 18, "resetsAt": "2026-11-01T12:00:00Z"},
+      "otherWindows": []
+    }
+  ]
+}
+```
+
 ## Remote machines
 
 `serve` always exposes the synthetic `local` machine and loads SSH descriptors

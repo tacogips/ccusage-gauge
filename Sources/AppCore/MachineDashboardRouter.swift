@@ -10,6 +10,7 @@ public struct MachineDashboardRouter: Sendable {
   private let dashboardStateStore: DashboardStateStore
   let directoryNameStore: DashboardDirectoryNameStore
   private let chartColors: ChartColorConfiguration
+  private let rateLimitService: RateLimitUsageService?
 
   public init(
     store: MachineSnapshotStore,
@@ -20,7 +21,8 @@ public struct MachineDashboardRouter: Sendable {
     cacheCoordinator: MachineCacheClearCoordinator = MachineCacheClearCoordinator(),
     dashboardStateStore: DashboardStateStore? = nil,
     directoryNameStore: DashboardDirectoryNameStore? = nil,
-    chartColors: ChartColorConfiguration = ChartColorConfiguration()
+    chartColors: ChartColorConfiguration = ChartColorConfiguration(),
+    rateLimitService: RateLimitUsageService? = nil
   ) {
     self.store = store
     self.collector = collector
@@ -32,6 +34,7 @@ public struct MachineDashboardRouter: Sendable {
     self.directoryNameStore = directoryNameStore
       ?? DashboardDirectoryNameStore(fileURL: paths.dashboardStateFile)
     self.chartColors = chartColors
+    self.rateLimitService = rateLimitService
   }
 
   public func route(
@@ -51,6 +54,9 @@ public struct MachineDashboardRouter: Sendable {
     if path == "/api/chart-colors" {
       guard method == "GET" else { return methodNotAllowed("GET") }
       return json(chartColors)
+    }
+    if path == "/api/rate-limits" {
+      return await rateLimitsHTTPResponse(service: rateLimitService, method: method)
     }
     if method == "OPTIONS",
        path == "/api/refresh"

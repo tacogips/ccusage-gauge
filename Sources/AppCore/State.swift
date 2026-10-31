@@ -31,23 +31,27 @@ public struct AppState: Codable, Equatable, Sendable {
   public var resetCycle: ResetCycle
   public var baseline: ResetBaseline?
   public var refreshIntervalSeconds: Int?
+  public var menuBarPieCharts: [PieChartID]
 
   public init(
     budgetUSD: Decimal? = nil,
     budgetMachineIDs: [String] = [],
     resetCycle: ResetCycle = .daily,
     baseline: ResetBaseline? = nil,
-    refreshIntervalSeconds: Int? = nil
+    refreshIntervalSeconds: Int? = nil,
+    menuBarPieCharts: [PieChartID] = PieChartSelection.defaultSelection
   ) {
     self.budgetUSD = budgetUSD
     self.budgetMachineIDs = budgetMachineIDs
     self.resetCycle = resetCycle
     self.baseline = baseline
     self.refreshIntervalSeconds = refreshIntervalSeconds
+    self.menuBarPieCharts = menuBarPieCharts
   }
 
   private enum CodingKeys: String, CodingKey {
     case budgetUSD, budgetMachineIDs, resetCycle, baseline, refreshIntervalSeconds
+    case menuBarPieCharts
   }
 
   public init(from decoder: Decoder) throws {
@@ -57,6 +61,9 @@ public struct AppState: Codable, Equatable, Sendable {
     resetCycle = try values.decode(ResetCycle.self, forKey: .resetCycle)
     baseline = try values.decodeIfPresent(ResetBaseline.self, forKey: .baseline)
     refreshIntervalSeconds = try values.decodeIfPresent(Int.self, forKey: .refreshIntervalSeconds)
+    menuBarPieCharts = PieChartSelection.normalized(
+      rawValues: try values.decodeIfPresent([String].self, forKey: .menuBarPieCharts) ?? []
+    )
   }
 }
 
