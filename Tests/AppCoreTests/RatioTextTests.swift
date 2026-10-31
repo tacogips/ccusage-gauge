@@ -41,7 +41,7 @@ import Testing
     let state = try JSONDecoder().decode(DashboardUIState.self, from: Data((prefix + #", "hiddenPieRatios":["codexWeekly","x","budget","budget"]}"#).utf8))
     #expect(state.hiddenPieRatios == [.budget, .codexWeekly])
     try state.validate()
-    #expect(throws: DashboardStateError.self) { try dashboard(hidden: Array(repeating: .budget, count: 6)).validate() }
+    #expect(throws: DashboardStateError.self) { try dashboard(hidden: Array(repeating: .budget, count: PieChartID.allCases.count + 1)).validate() }
   }
 
   @Test func dashboardRoundTrip() async throws {

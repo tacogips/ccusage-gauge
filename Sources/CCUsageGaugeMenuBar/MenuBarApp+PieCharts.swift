@@ -109,6 +109,13 @@ extension MenuBarDelegate {
     }
   }
 
+  /// Hover text: selected usage, ratio text, then any active extended usage (credits).
+  func statusToolTip(accessibility: String, ratioDescription: String) -> String {
+    let credits = RateLimitDisplayFormatting.creditLines(response: latestRateLimits, now: Date())
+    return (["ccusage-gauge", accessibility, ratioDescription, appliedTitle ?? ""] + credits)
+      .filter { !$0.isEmpty }.joined(separator: "\n")
+  }
+
   func pieAccessibilityDescription() -> String {
     menuBarPieSelection().map { id in
       guard id != .budget else { return "Budget" }

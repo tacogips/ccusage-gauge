@@ -36,7 +36,8 @@ struct RateLimitRoutesTests {
     let object = try JSONSerialization.jsonObject(with: first.body)
     let allowed: Set<String> = [
       "generatedAt", "scope", "providers", "provider", "status", "errorCode", "message", "planType", "fetchedAt",
-      "stale", "fiveHour", "weekly", "otherWindows", "kind", "windowSeconds", "usedPercent", "remainingPercent", "resetsAt"
+      "stale", "fiveHour", "weekly", "otherWindows", "kind", "windowSeconds", "usedPercent", "remainingPercent", "resetsAt",
+      "credits", "unit", "enabled", "unlimited", "used", "limit", "balance"
     ]
     #expect(keys(in: object).isSubset(of: allowed))
     let text = try #require(String(bytes: first.body, encoding: .utf8))

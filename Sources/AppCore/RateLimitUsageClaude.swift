@@ -33,7 +33,8 @@ public struct ClaudeRateLimitFetcher: RateLimitLiveFetching {
       var windows: [RateLimitWindow] = []
       if let window = try Self.window(payload.fiveHour, seconds: 18000) { windows.append(window) }
       if let window = try Self.window(payload.sevenDay, seconds: 604800) { windows.append(window) }
-      return RateLimitObservation(planType: credential.subscriptionType, observedAt: now, windows: windows)
+      return RateLimitObservation(planType: credential.subscriptionType, observedAt: now, windows: windows,
+                                  credits: payload.extraUsage?.value?.credits)
     } catch { throw RateLimitErrorCode.invalidResponse }
   }
 
@@ -62,6 +63,24 @@ public struct ClaudeRateLimitFetcher: RateLimitLiveFetching {
   private struct Payload: Decodable {
     let fiveHour: Window?
     let sevenDay: Window?
+    /// Extra usage is supplementary; an unexpected shape must not hide the windows.
+    let extraUsage: Lenient<ExtraUsage>?
+  }
+  private struct Lenient<Value: Decodable>: Decodable {
+    let value: Value?
+    init(from decoder: any Decoder) throws { value = try? Value(from: decoder) }
+  }
+  private struct ExtraUsage: Decodable {
+    let isEnabled: Bool?
+    let monthlyLimit: Double?
+    let usedCredits: Double?
+    let utilization: Double?
+    /// Extra usage amounts are reported in cents.
+    var credits: RateLimitCredits? {
+      guard let isEnabled else { return nil }
+      return RateLimitCredits(unit: .usd, enabled: isEnabled, used: usedCredits.map { $0 / 100 },
+                              limit: monthlyLimit.map { $0 / 100 }, usedPercent: utilization)
+    }
   }
   private struct Window: Decodable {
     let utilization: Double?

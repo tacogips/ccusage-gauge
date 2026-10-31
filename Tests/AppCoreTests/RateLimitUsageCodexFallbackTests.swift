@@ -11,7 +11,8 @@ import Testing
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let old = root.appendingPathComponent("a-old.jsonl"), new = root.appendingPathComponent("b-new.jsonl")
-    let limits = #"{"primary":{"used_percent":77,"window_minutes":10080,"resets_in_seconds":60},"secondary":null,"plan_type":"pro"}"#
+    let limits = #"{"primary":{"used_percent":77,"window_minutes":10080,"resets_in_seconds":60},"secondary":null,"#
+      + #""credits":{"has_credits":true,"unlimited":false,"balance":"62500.0000000000"},"plan_type":"pro"}"#
     let t1 = "2026-01-01T00:00:00Z", t2 = "2026-01-02T00:00:00.000Z"
     try event(t1, limits).write(to: old, atomically: true, encoding: .utf8)
     try (event(t1, limits) + "\n" + event(t2, limits) + "\n" + event(t2, "null") + "\n" + #"{"type":"token_count","broken":}"#).write(to: new, atomically: true, encoding: .utf8)
@@ -22,6 +23,7 @@ import Testing
     #expect(result.observedAt == ISO8601DateFormatter().date(from: "2026-01-02T00:00:00Z"))
     #expect(result.planType == "pro" && result.windows.first?.kind == .weekly)
     #expect(result.windows.first?.resetsAt == result.observedAt.addingTimeInterval(60))
+    #expect(result.credits == RateLimitCredits(unit: .credits, enabled: true, balance: 62500))
     try event(t2, "null").write(to: new, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 20)], ofItemAtPath: new.path)
     #expect(await fallback.latestObservation()?.observedAt == ISO8601DateFormatter().date(from: t1))

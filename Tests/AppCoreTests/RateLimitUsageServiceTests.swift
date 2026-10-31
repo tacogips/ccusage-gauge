@@ -93,13 +93,14 @@ import Testing
   @Test func staleWindowExpiry() async throws {
     let past = try RateLimitWindow(windowSeconds: 18000, usedPercent: 20, resetsAt: start)
     let future = try RateLimitWindow(windowSeconds: 604800, usedPercent: 30, resetsAt: start.addingTimeInterval(1))
-    let mixed = RateLimitObservation(planType: nil, observedAt: start, windows: [past, future])
+    let credits = RateLimitCredits(unit: .credits, enabled: true, balance: 5)
+    let mixed = RateLimitObservation(planType: nil, observedAt: start, windows: [past, future], credits: credits)
     let good = try observation(start)
     let service = RateLimitUsageService(claude: FakeRateLimitFetcher([.success(good)]),
       codex: FakeRateLimitFetcher([.failure(RateLimitErrorCode.networkError)]),
       codexFallback: FakeRateLimitFallback(observation: mixed), now: { start })
     let item = await service.current().providers[1]
-    #expect(item.status == .stale && item.fiveHour == nil && item.weekly == future)
+    #expect(item.status == .stale && item.fiveHour == nil && item.weekly == future && item.credits == credits)
     let expired = RateLimitUsageService(claude: FakeRateLimitFetcher([.success(good)]),
       codex: FakeRateLimitFetcher([.failure(RateLimitErrorCode.networkError)]),
       codexFallback: FakeRateLimitFallback(observation: RateLimitObservation(planType: nil, observedAt: start, windows: [past])),

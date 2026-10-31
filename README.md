@@ -71,6 +71,8 @@ The SolidJS dashboard provides:
   controls at the upper right and percentages always visible;
 - one compact line per provider, showing only enabled windows and their reset
   countdowns; disabling Codex 5h, for example, hides it from both chart and text;
+- optional **Claude Code credit** and **Codex credit** charts for extended usage
+  (Claude extra usage spend and Codex credit balance);
 - independent subscription refresh every 60 seconds and countdown updates every
   30 seconds;
 - compact chevron controls for collapsing sections and individual metric cards,
@@ -352,6 +354,15 @@ reset dates and times are omitted to keep the panel small. Dashboard pies show
 the used share; menu-bar provider icons fill from bottom to top. Subscription
 limits do not include remote machines.
 
+Extended usage ("credit") is reported alongside the windows:
+
+- Claude Code reads `extra_usage` from the same usage response. When extra usage
+  is enabled, the credit chart shows the monthly spend against its limit, for
+  example `$12.34 / $50 used (25%)`; otherwise it reads `not enabled`.
+- Codex reads `credits` from the usage response (or the session fallback) and
+  shows the remaining balance, for example `62,500 credits left`. Codex reports
+  no credit limit, so its pie stays empty and only the text carries the value.
+
 Data comes from the following sources:
 
 - Claude Code requests `https://api.anthropic.com/api/oauth/usage`. On macOS,
@@ -377,7 +388,8 @@ and `unavailable` means no usable observation is available. If a token is
 expired or authorization fails, run the relevant CLI to refresh its login.
 
 In the dashboard's **Subscription usage** panel, use the upper-right buttons to
-select budget, Claude Code 5h, Claude Code weekly, Codex 5h, and Codex weekly.
+select budget, Claude Code 5h, Claude Code weekly, Claude Code credit, Codex 5h,
+Codex weekly, and Codex credit.
 The selection controls both the charts and the provider summary text and is
 saved in dashboard state.
 
@@ -409,6 +421,12 @@ legacy state defaults to budget text. The cost-only preference is saved as
 `menuBarCostOnly`. Hiding cost text also hides its warning marker, while the
 warning remains in the tooltip, accessibility label, and selected budget pie.
 
+Hovering over the menu-bar item shows a tooltip with the selected indicators
+and, when subscription data has been fetched, one line for each active credit,
+such as `Claude Code credit: $12.34 / $50 used (25%)` or
+`Codex credit: 62,500 credits left`. Credits are not offered as menu-bar icons
+or ratio text.
+
 To show today's spending amount with only the two weekly usage icons:
 
 1. Choose **Aggregation period > Daily**.
@@ -426,8 +444,8 @@ shows chart percentages and has no per-chart **Ratio** buttons. Each provider
 has one compact line, for example:
 
 ```text
-Claude Code  Weekly 61% used reset in 3d  5h 27% used reset in 2h
-Codex        Weekly 34% used reset in 5d
+Claude Code  Weekly 61% used reset in 3d  5h 27% used reset in 2h  Credit $12.34 / $50 used (25%)
+Codex        Weekly 34% used reset in 5d  Credit 62,500 credits left
 ```
 
 Only enabled windows appear: turning off **Codex 5h** removes both its chart and
@@ -459,14 +477,16 @@ An illustrative response with synthetic values is:
       "message": null, "planType": "max", "fetchedAt": "2026-10-31T12:00:00Z",
       "stale": false,
       "fiveHour": {"kind": "fiveHour", "windowSeconds": 18000, "usedPercent": 47, "remainingPercent": 53, "resetsAt": "2026-10-31T13:00:00Z"},
-      "weekly": null, "otherWindows": []
+      "weekly": null, "otherWindows": [],
+      "credits": {"unit": "usd", "enabled": true, "unlimited": false, "used": 12.34, "limit": 50, "balance": null, "usedPercent": 24.68}
     },
     {
       "provider": "codex", "status": "ok", "errorCode": null,
       "message": null, "planType": "pro", "fetchedAt": "2026-10-31T12:00:00Z",
       "stale": false, "fiveHour": null,
       "weekly": {"kind": "weekly", "windowSeconds": 604800, "usedPercent": 82, "remainingPercent": 18, "resetsAt": "2026-11-01T12:00:00Z"},
-      "otherWindows": []
+      "otherWindows": [],
+      "credits": {"unit": "credits", "enabled": true, "unlimited": false, "used": null, "limit": null, "balance": 62500, "usedPercent": null}
     }
   ]
 }

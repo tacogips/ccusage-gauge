@@ -14,7 +14,7 @@ enum MenuBarUsageIcon {
   private static let codex = artwork(MenuBarProviderIcons.chatGPT)
 
   static func image(chart: PieChartID, fraction: Double?) -> NSImage {
-    let artwork = chart == .claude5h || chart == .claudeWeekly ? claude : codex
+    let artwork = chart.provider == .claude ? claude : codex
     let normalized = fraction.map { $0.isFinite ? min(max($0, 0), 1) : 0 }
     let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { bounds in
       artwork.outline.draw(in: bounds)

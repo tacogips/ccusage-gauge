@@ -10,7 +10,7 @@ enum PieChartMenu {
     cost.target = target
     cost.state = selection.contains(.budget) && costOnly ? .on : .off
     submenu.addItem(cost)
-    for id in PieChartID.allCases {
+    for id in PieChartID.menuBarCases {
       let child = NSMenuItem(title: id == .budget ? "Cost and budget ratio" : RateLimitDisplayFormatting.title(for: id), action: action, keyEquivalent: "")
       child.target = target
       child.representedObject = id.rawValue
@@ -26,7 +26,7 @@ enum PieChartMenu {
     let item = NSMenuItem(title: "Usage icons", action: nil, keyEquivalent: "")
     let submenu = NSMenu()
     submenu.autoenablesItems = false
-    for id in PieChartID.allCases {
+    for id in PieChartID.menuBarCases {
       let child = NSMenuItem(title: RateLimitDisplayFormatting.title(for: id), action: action, keyEquivalent: "")
       child.target = target
       child.representedObject = id.rawValue

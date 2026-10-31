@@ -26,6 +26,18 @@ import Testing
     let item = try #require((json["providers"] as? [[String: Any]])?.first)
     #expect(item["errorCode"] is NSNull)
     #expect((item["fiveHour"] as? [String: Any])?["resetsAt"] is NSNull)
+    #expect(item["credits"] is NSNull)
+  }
+  @Test func creditsRoundTrip() throws {
+    let credits = RateLimitCredits(unit: .usd, enabled: true, used: 1.5, limit: 10)
+    #expect(credits.usedPercent == 15 && credits.pieFraction == 0.15)
+    let provider = ProviderRateLimits(provider: .claude, status: .ok, errorCode: nil, message: nil, planType: nil,
+                                      fetchedAt: nil, stale: false, fiveHour: nil, weekly: nil, otherWindows: [], credits: credits)
+    let data = try JSONEncoder().encode(provider)
+    #expect(try JSONDecoder().decode(ProviderRateLimits.self, from: data) == provider)
+    let item = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let encoded = try #require(item["credits"] as? [String: Any])
+    #expect(encoded["unit"] as? String == "usd" && encoded["balance"] is NSNull)
   }
   @Test func redaction() {
     let secret = RedactedSecret(testClaudeToken)

@@ -77,7 +77,8 @@ public actor RateLimitUsageService {
         let instant = now()
         let windows = candidate?.windows.filter { $0.resetsAt.map { $0 > instant } ?? true } ?? []
         if let candidate, !windows.isEmpty {
-          let usable = RateLimitObservation(planType: candidate.planType, observedAt: candidate.observedAt, windows: windows)
+          let usable = RateLimitObservation(planType: candidate.planType, observedAt: candidate.observedAt, windows: windows,
+                                            credits: candidate.credits)
           result = makeEntry(provider: provider, status: .stale, code: code, observation: usable)
         } else {
           let status: RateLimitStatus = code == .unauthorized || code == .tokenExpired ? .unauthorized : .unavailable
@@ -95,6 +96,7 @@ public actor RateLimitUsageService {
     let slots = ProviderRateLimits.slots(observation?.windows ?? [])
     return ProviderRateLimits(provider: provider, status: status, errorCode: code, message: code?.message,
                               planType: observation?.planType, fetchedAt: observation?.observedAt, stale: status == .stale,
-                              fiveHour: slots.fiveHour, weekly: slots.weekly, otherWindows: slots.other)
+                              fiveHour: slots.fiveHour, weekly: slots.weekly, otherWindows: slots.other,
+                              credits: observation?.credits)
   }
 }

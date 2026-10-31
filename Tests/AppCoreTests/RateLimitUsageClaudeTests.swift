@@ -48,6 +48,18 @@ private actor ClaudeProcessFake: CCUsageProcessRunning {
     #expect(requests.count == 1 && request.0.absoluteString == "https://api.anthropic.com/api/oauth/usage")
     #expect(request.1 == ["Authorization": "Bearer \(testClaudeToken)", "anthropic-beta": "oauth-2025-04-20", "Content-Type": "application/json"])
   }
+  @Test func extraUsageCredits() async throws {
+    let enabled = #"{"five_hour":{"utilization":1},"extra_usage":{"is_enabled":true,"monthly_limit":5000,"used_credits":1234.0,"utilization":24.68}}"#
+    let credits = try #require(try await fetch(enabled).0.fetchLive(now: now).credits)
+    #expect(credits == RateLimitCredits(unit: .usd, enabled: true, used: 12.34, limit: 50, usedPercent: 24.68))
+    let disabled = #"{"extra_usage":{"is_enabled":false,"monthly_limit":null,"used_credits":null,"utilization":null}}"#
+    #expect(try await fetch(disabled).0.fetchLive(now: now).credits == RateLimitCredits(unit: .usd, enabled: false))
+    for body in [#"{"extra_usage":null}"#, #"{"extra_usage":{"x":1}}"#] {
+      #expect(try await fetch(body).0.fetchLive(now: now).credits == nil)
+    }
+    let malformed = try await fetch(#"{"five_hour":{"utilization":2},"extra_usage":"bad"}"#).0.fetchLive(now: now)
+    #expect(malformed.credits == nil && malformed.windows.first?.usedPercent == 2)
+  }
   @Test func invalidAndOptionalWindows() async throws {
     for body in [#"{"five_hour":null}"#, #"{"five_hour":{"utilization":null}}"#] {
       let (fetcher, _) = fetch(body)

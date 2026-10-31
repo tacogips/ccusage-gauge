@@ -771,7 +771,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let label = hasWarning ? "Warning: machine usage collection failed" : "ccusage-gauge cost in selected period"
     statusItem.button?.setAccessibilityLabel(label)
     statusItem.button?.toolTip = hasWarning ? errorMessage
-      : ["ccusage-gauge", iconState.accessibility, ratioDescription, appliedTitle ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
+      : statusToolTip(accessibility: iconState.accessibility, ratioDescription: ratioDescription)
   }
 
   private func openE2EWindowIfNeeded() {

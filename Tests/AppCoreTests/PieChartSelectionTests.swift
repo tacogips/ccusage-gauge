@@ -40,6 +40,8 @@ import Testing
     try legacy.validate()
     let state = try JSONDecoder().decode(DashboardUIState.self, from: Data((prefix + #", "pieCharts":["claudeWeekly","budget","bogus","budget"]}"#).utf8))
     #expect(state.pieCharts == [.budget, .claudeWeekly])
+    let credits = try JSONDecoder().decode(DashboardUIState.self, from: Data((prefix + #", "pieCharts":["codexCredit","claudeCredit"]}"#).utf8))
+    #expect(credits.pieCharts == [.claudeCredit, .codexCredit])
     try state.validate()
   }
 
@@ -50,7 +52,7 @@ import Testing
     try await store.save(state)
     #expect(try await store.load() == state)
     #expect(throws: DashboardStateError.self) { try dashboardState(pieCharts: []).validate() }
-    #expect(throws: DashboardStateError.self) { try dashboardState(pieCharts: Array(repeating: .budget, count: 6)).validate() }
+    #expect(throws: DashboardStateError.self) { try dashboardState(pieCharts: Array(repeating: .budget, count: PieChartID.allCases.count + 1)).validate() }
   }
 }
 

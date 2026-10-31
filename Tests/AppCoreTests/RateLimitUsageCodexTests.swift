@@ -25,6 +25,16 @@ private struct CodexTestCredentials: CodexCredentialProviding {
     #expect(requests.count == 1 && requests[0].0.path == "/backend-api/wham/usage")
     #expect(requests[0].1 == ["Authorization": "Bearer \(testCodexToken)", "ChatGPT-Account-Id": testCodexAccountID])
   }
+  @Test func credits() async throws {
+    let balance = try await fetch(#"{"credits":{"has_credits":true,"unlimited":false,"balance":"62500.0000000000"}}"#).credits
+    #expect(balance == RateLimitCredits(unit: .credits, enabled: true, balance: 62500))
+    #expect(try await fetch(#"{"credits":{"has_credits":true,"balance":12.5}}"#).credits?.balance == 12.5)
+    #expect(try await fetch(#"{"credits":{"has_credits":false}}"#).credits == RateLimitCredits(unit: .credits, enabled: false))
+    #expect(try await fetch(#"{"credits":{"unlimited":true}}"#).credits == RateLimitCredits(unit: .credits, enabled: true, unlimited: true))
+    #expect(try await fetch(#"{"credits":{}}"#).credits == nil)
+    let malformed = try await fetch(#"{"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":18000}},"credits":"bad"}"#)
+    #expect(malformed.credits == nil && malformed.windows.count == 1)
+  }
   @Test func classificationsAndReset() async throws {
     for (first, second) in [(18000, 604800), (604800, 18000)] {
       let json = "{\"rate_limit\":{\"primary_window\":{\"used_percent\":1,\"limit_window_seconds\":\(first)},\"secondary_window\":{\"used_percent\":2,\"limit_window_seconds\":\(second)}}}"

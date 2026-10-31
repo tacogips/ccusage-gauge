@@ -53,13 +53,43 @@ public struct CodexRateLimitFetcher: RateLimitLiveFetching {
     let payload: CodexPayload
     do { payload = try JSONDecoder().decode(CodexPayload.self, from: response.body) } catch { throw RateLimitErrorCode.invalidResponse }
     return RateLimitObservation(planType: payload.planType, observedAt: now,
-                                windows: try [payload.rateLimit?.primary, payload.rateLimit?.secondary].compactMap { try $0?.window(now: now) })
+                                windows: try [payload.rateLimit?.primary, payload.rateLimit?.secondary].compactMap { try $0?.window(now: now) },
+                                credits: payload.credits?.credits)
   }
 }
 private struct CodexPayload: Decodable {
   let planType: String?
   let rateLimit: CodexLimits?
-  enum CodingKeys: String, CodingKey { case planType = "plan_type", rateLimit = "rate_limit" }
+  let credits: CodexCreditsPayload?
+  enum CodingKeys: String, CodingKey { case planType = "plan_type", rateLimit = "rate_limit", credits }
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    planType = try container.decodeIfPresent(String.self, forKey: .planType)
+    rateLimit = try container.decodeIfPresent(CodexLimits.self, forKey: .rateLimit)
+    credits = try? container.decodeIfPresent(CodexCreditsPayload.self, forKey: .credits)
+  }
+}
+/// Codex reports a remaining credit balance (as a decimal string) rather than a capped allowance.
+struct CodexCreditsPayload: Decodable {
+  let hasCredits: Bool?
+  let unlimited: Bool?
+  let balance: Double?
+  enum CodingKeys: String, CodingKey { case hasCredits = "has_credits", unlimited, balance }
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    hasCredits = try container.decodeIfPresent(Bool.self, forKey: .hasCredits)
+    unlimited = try container.decodeIfPresent(Bool.self, forKey: .unlimited)
+    if let text = try? container.decodeIfPresent(String.self, forKey: .balance) {
+      balance = Double(text)
+    } else {
+      balance = try? container.decodeIfPresent(Double.self, forKey: .balance)
+    }
+  }
+  var credits: RateLimitCredits? {
+    guard hasCredits != nil || unlimited != nil else { return nil }
+    let unlimited = unlimited ?? false
+    return RateLimitCredits(unit: .credits, enabled: hasCredits ?? unlimited, unlimited: unlimited, balance: balance)
+  }
 }
 private struct CodexLimits: Decodable {
   let primary: CodexWindow?

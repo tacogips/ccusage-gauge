@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ProviderRateLimits, RateLimitsResponse, RateLimitWindow } from "../src/api";
-import { formatResetCompact, formatResetIn, normalizeHiddenPieRatios, normalizePieCharts, pieFraction, rateLimitStatusLabel, rateLimitWindowFor, toggleHiddenPieRatio, togglePieChart } from "../src/rateLimits";
+import { creditFraction, formatCredits, formatResetCompact, formatResetIn, normalizeHiddenPieRatios, normalizePieCharts, pieFraction, rateLimitCreditsFor, rateLimitStatusLabel, rateLimitWindowFor, toggleHiddenPieRatio, togglePieChart } from "../src/rateLimits";
 const window: RateLimitWindow = { kind: "weekly", windowSeconds: 604800, usedPercent: 47, remainingPercent: 53 };
 const provider: ProviderRateLimits = { provider: "codex", status: "ok", stale: false, weekly: window, otherWindows: [] };
 const sample: RateLimitsResponse = { generatedAt: "2026-10-31T12:00:00Z", scope: "local", providers: [provider] };
@@ -28,6 +28,23 @@ describe("rate limits", () => {
     expect(rateLimitWindowFor("codexWeekly", { ...sample, providers: [{ ...provider, weekly: null }] }).window).toBeNull();
     expect(pieFraction({ ...window, usedPercent: 120 })).toBe(1);
     expect(pieFraction(window)).toBe(0.47);
+  });
+  test("maps and formats credits", () => {
+    const credits = { unit: "credits" as const, enabled: true, unlimited: false, balance: 62500 };
+    const withCredits = { ...sample, providers: [{ ...provider, credits }] };
+    expect(normalizePieCharts(["codexCredit", "claudeCredit"])).toEqual(["claudeCredit", "codexCredit"]);
+    expect(rateLimitCreditsFor("codexCredit", withCredits).credits).toEqual(credits);
+    expect(rateLimitCreditsFor("codexWeekly", withCredits).credits).toBeUndefined();
+    expect(rateLimitWindowFor("codexCredit", withCredits).window).toBeUndefined();
+    expect(formatCredits(credits)).toBe("62,500 credits left");
+    expect(formatCredits({ ...credits, unlimited: true })).toBe("unlimited");
+    expect(formatCredits({ ...credits, enabled: false })).toBe("no credits");
+    expect(formatCredits({ unit: "usd", enabled: false, unlimited: false })).toBe("not enabled");
+    expect(formatCredits({ unit: "usd", enabled: true, unlimited: false, used: 12.34, limit: 50, usedPercent: 24.68 })).toBe("$12.34 / $50 used (25%)");
+    expect(formatCredits({ unit: "usd", enabled: true, unlimited: false, used: 3 })).toBe("$3 used");
+    expect(formatCredits({ unit: "usd", enabled: true, unlimited: false, usedPercent: 10 })).toBe("10% used");
+    expect(creditFraction({ unit: "usd", enabled: true, unlimited: false, usedPercent: 140 })).toBe(1);
+    expect(creditFraction(credits)).toBeUndefined();
   });
   test("formats reset times", () => {
     expect(formatResetIn("2026-10-31T14:13:00Z", now)).toBe("resets in 2h 13m");

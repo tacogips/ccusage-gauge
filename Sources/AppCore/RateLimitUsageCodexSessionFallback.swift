@@ -19,7 +19,8 @@ public struct CodexRateLimitSessionFallback: CodexRateLimitFallbackReading {
                 event.payload.type == "token_count", let limits = event.payload.rateLimits,
                 let timestamp = Self.parseDate(event.timestamp) else { return true }
           result = RateLimitObservation(planType: limits.planType, observedAt: timestamp,
-                                        windows: [limits.primary, limits.secondary].compactMap { $0?.window(now: timestamp) })
+                                        windows: [limits.primary, limits.secondary].compactMap { $0?.window(now: timestamp) },
+                                        credits: limits.credits?.credits)
           return false
         }
       } catch { continue }
@@ -49,7 +50,15 @@ private struct EventLimits: Decodable {
   let primary: EventWindow?
   let secondary: EventWindow?
   let planType: String?
-  enum CodingKeys: String, CodingKey { case primary, secondary, planType = "plan_type" }
+  let credits: CodexCreditsPayload?
+  enum CodingKeys: String, CodingKey { case primary, secondary, planType = "plan_type", credits }
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    primary = try container.decodeIfPresent(EventWindow.self, forKey: .primary)
+    secondary = try container.decodeIfPresent(EventWindow.self, forKey: .secondary)
+    planType = try container.decodeIfPresent(String.self, forKey: .planType)
+    credits = try? container.decodeIfPresent(CodexCreditsPayload.self, forKey: .credits)
+  }
 }
 private struct EventWindow: Decodable {
   let used: Double?

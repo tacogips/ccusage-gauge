@@ -55,12 +55,46 @@ public struct RateLimitWindow: Codable, Equatable, Sendable {
     try container.encode(resetsAt, forKey: .resetsAt)
   }
 }
+public enum RateLimitCreditUnit: String, Codable, Sendable { case usd, credits }
+/// Extended usage beyond the subscription windows: Claude extra usage (USD) or Codex credits.
+public struct RateLimitCredits: Codable, Equatable, Sendable {
+  public let unit: RateLimitCreditUnit
+  public let enabled: Bool
+  public let unlimited: Bool
+  public let used: Double?
+  public let limit: Double?
+  public let balance: Double?
+  public let usedPercent: Double?
+  public init(unit: RateLimitCreditUnit, enabled: Bool, unlimited: Bool = false, used: Double? = nil, limit: Double? = nil,
+              balance: Double? = nil, usedPercent: Double? = nil) {
+    func finite(_ value: Double?) -> Double? { value.flatMap { $0.isFinite ? $0 : nil } }
+    self.unit = unit; self.enabled = enabled; self.unlimited = unlimited
+    self.used = finite(used); self.limit = finite(limit); self.balance = finite(balance)
+    if let percent = finite(usedPercent) {
+      self.usedPercent = max(percent, 0)
+    } else if let used = finite(used), let limit = finite(limit), limit > 0 {
+      self.usedPercent = max(used / limit * 100, 0)
+    } else {
+      self.usedPercent = nil
+    }
+  }
+  public var pieFraction: Double? { usedPercent.map { min($0, 100) / 100 } }
+  private enum CodingKeys: String, CodingKey { case unit, enabled, unlimited, used, limit, balance, usedPercent }
+  public func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(unit, forKey: .unit); try container.encode(enabled, forKey: .enabled)
+    try container.encode(unlimited, forKey: .unlimited); try container.encode(used, forKey: .used)
+    try container.encode(limit, forKey: .limit); try container.encode(balance, forKey: .balance)
+    try container.encode(usedPercent, forKey: .usedPercent)
+  }
+}
 public struct RateLimitObservation: Equatable, Sendable {
   public let planType: String?
   public let observedAt: Date
   public let windows: [RateLimitWindow]
-  public init(planType: String?, observedAt: Date, windows: [RateLimitWindow]) {
-    self.planType = planType; self.observedAt = observedAt; self.windows = windows
+  public let credits: RateLimitCredits?
+  public init(planType: String?, observedAt: Date, windows: [RateLimitWindow], credits: RateLimitCredits? = nil) {
+    self.planType = planType; self.observedAt = observedAt; self.windows = windows; self.credits = credits
   }
 }
 public struct RateLimitWindowSlots: Equatable, Sendable {
@@ -79,12 +113,13 @@ public struct ProviderRateLimits: Codable, Equatable, Sendable {
   public let fiveHour: RateLimitWindow?
   public let weekly: RateLimitWindow?
   public let otherWindows: [RateLimitWindow]
+  public let credits: RateLimitCredits?
   public init(provider: RateLimitProvider, status: RateLimitStatus, errorCode: RateLimitErrorCode?, message: String?,
               planType: String?, fetchedAt: Date?, stale: Bool, fiveHour: RateLimitWindow?, weekly: RateLimitWindow?,
-              otherWindows: [RateLimitWindow]) {
+              otherWindows: [RateLimitWindow], credits: RateLimitCredits? = nil) {
     self.provider = provider; self.status = status; self.errorCode = errorCode; self.message = message
     self.planType = planType; self.fetchedAt = fetchedAt; self.stale = stale
-    self.fiveHour = fiveHour; self.weekly = weekly; self.otherWindows = otherWindows
+    self.fiveHour = fiveHour; self.weekly = weekly; self.otherWindows = otherWindows; self.credits = credits
   }
   public static func slots(_ windows: [RateLimitWindow]) -> RateLimitWindowSlots {
     var fiveHour: RateLimitWindow?; var weekly: RateLimitWindow?; var other: [RateLimitWindow] = []
@@ -97,7 +132,7 @@ public struct ProviderRateLimits: Codable, Equatable, Sendable {
     }
     return RateLimitWindowSlots(fiveHour: fiveHour, weekly: weekly, other: other)
   }
-  private enum CodingKeys: String, CodingKey { case provider, status, errorCode, message, planType, fetchedAt, stale, fiveHour, weekly, otherWindows }
+  private enum CodingKeys: String, CodingKey { case provider, status, errorCode, message, planType, fetchedAt, stale, fiveHour, weekly, otherWindows, credits }
   public func encode(to encoder: any Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(provider, forKey: .provider); try container.encode(status, forKey: .status)
@@ -105,6 +140,7 @@ public struct ProviderRateLimits: Codable, Equatable, Sendable {
     try container.encode(planType, forKey: .planType); try container.encode(fetchedAt, forKey: .fetchedAt)
     try container.encode(stale, forKey: .stale); try container.encode(fiveHour, forKey: .fiveHour)
     try container.encode(weekly, forKey: .weekly); try container.encode(otherWindows, forKey: .otherWindows)
+    try container.encode(credits, forKey: .credits)
   }
 }
 public struct RateLimitsResponse: Codable, Equatable, Sendable {
