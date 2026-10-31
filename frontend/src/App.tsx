@@ -63,7 +63,8 @@ import { restoredFoldState } from "./dashboardLayoutState";
 
 import { RateLimitPanel } from "./RateLimitPanel";
 import { PieChartPanel } from "./PieChartPanel";
-import { normalizeHiddenPieRatios, normalizePieCharts, toggleHiddenPieRatio, togglePieChart } from "./rateLimits";
+import { CollapsibleSection } from "./CollapsibleSection";
+import { normalizePieCharts, togglePieChart } from "./rateLimits";
 
 type Granularity = "15min" | "hourly" | "6hour" | "daily";
 
@@ -89,7 +90,6 @@ export default function App() {
   const initialCustomStart = daysAgo(6);
   const initialCustomEnd = localDate();
   const [pieCharts, setPieCharts] = createSignal<PieChartID[]>(["budget"]);
-  const [hiddenPieRatios, setHiddenPieRatios] = createSignal<PieChartID[]>([]);
   const [range, setRange] = createSignal<Range>("recent12h");
   const [customStart, setCustomStart] = createSignal(initialCustomStart);
   const [customEnd, setCustomEnd] = createSignal(initialCustomEnd);
@@ -804,7 +804,6 @@ export default function App() {
       load: () => getJSON<DashboardUIStateResponse>("/api/dashboard-state"),
       apply: (state) => {
         setPieCharts(normalizePieCharts(state.pieCharts));
-        setHiddenPieRatios(normalizeHiddenPieRatios(state.hiddenPieRatios));
         setRange(state.range);
         setCustomStart(state.customStart);
         setCustomEnd(state.customEnd);
@@ -841,7 +840,7 @@ export default function App() {
     if (!isDashboardStateLoaded() || !isDashboardStatePersistenceEnabled()) return;
     const state: DashboardUIState = {
       pieCharts: pieCharts(),
-      hiddenPieRatios: hiddenPieRatios(),
+      hiddenPieRatios: [],
       range: range(),
       customStart: appliedCustomRange().start,
       customEnd: appliedCustomRange().end,
@@ -871,6 +870,15 @@ export default function App() {
       refresh,
     });
     onCleanup(stopAutoRefresh);
+  });
+
+  onMount(() => {
+    const stopSubscriptionRefresh = startDashboardAutoRefresh({
+      intervalSeconds: 60,
+      isLoading: () => rateLimitsResource.loading,
+      refresh: refreshRateLimits,
+    });
+    onCleanup(stopSubscriptionRefresh);
   });
 
   return (
@@ -1210,6 +1218,10 @@ export default function App() {
           </div>
         </header>
 
+        <PieChartPanel selection={pieCharts} onToggle={(id) => setPieCharts(togglePieChart(id, pieCharts()))} budget={budget} response={rateLimits}>
+          <RateLimitPanel response={rateLimits} error={rateLimits.error != null} />
+        </PieChartPanel>
+
         <Show when={!errorMessage()} fallback={<section class="error"><span>{errorMessage()}</span><button onClick={refresh}>Retry</button></section>}>
           <Show when={!isBlockingLoading()} fallback={<LoadingState status={loadStatus()} />}>
             <Show when={visibleRangeLoad()?.isPartial}>
@@ -1227,16 +1239,18 @@ export default function App() {
               </section>
             </Show>
             <Show when={visibleStatuses().length > 0 || visibleExcludedMachineIDs().length > 0}>
+              <CollapsibleSection id="machine-health" title="Machine health" label="machine health" class="panel">
               <MachineHealthPanel
                 statuses={visibleStatuses()}
                 excludedMachineIDs={visibleExcludedMachineIDs()}
               />
+              </CollapsibleSection>
             </Show>
-            <section class="stats metric-stats">
-            <article><span>Cost for current view</span><strong>{currency.format(total("costUSD"))}</strong><small>{rangeLabel()} · {filterLabel()}</small></article>
-            <article><span>Total tokens</span><strong>{integer.format(total("totalTokens"))}</strong><small>All token categories</small></article>
-            <article><span>Input / output</span><strong>{integer.format(total("inputTokens"))} / {integer.format(total("outputTokens"))}</strong><small>Prompt and generated</small></article>
-            <article><span>Cache read / creation</span><strong>{integer.format(total("cacheReadTokens"))} / {integer.format(total("cacheCreationTokens"))}</strong><small>Reported by ccusage</small></article>
+            <section id="current-view" class="stats metric-stats current-view-panel">
+            <CollapsibleSection id="metric-cost" title="Cost for current view" label="cost for current view" class="metric-card"><strong>{currency.format(total("costUSD"))}</strong><small>{rangeLabel()} · {filterLabel()}</small></CollapsibleSection>
+            <CollapsibleSection id="metric-tokens" title="Total tokens" label="total tokens" class="metric-card"><strong>{integer.format(total("totalTokens"))}</strong><small>All token categories</small></CollapsibleSection>
+            <CollapsibleSection id="metric-input-output" title="Input / output" label="input / output" class="metric-card"><strong>{integer.format(total("inputTokens"))} / {integer.format(total("outputTokens"))}</strong><small>Prompt and generated</small></CollapsibleSection>
+            <CollapsibleSection id="metric-cache" title="Cache read / creation" label="cache read / creation" class="metric-card"><strong>{integer.format(total("cacheReadTokens"))} / {integer.format(total("cacheCreationTokens"))}</strong><small>Reported by ccusage</small></CollapsibleSection>
             <div class="stats-actions">
               <button
                 classList={{ "refresh-icon": true, refreshing: isRefreshing() }}
@@ -1254,11 +1268,10 @@ export default function App() {
             </div>
             </section>
 
-            <section class="panel usage-panel">
-            <div class="panel-title"><div><p class="eyebrow">AGGREGATED USAGE</p><div class="chart-heading"><h2>{chartTitle()}</h2>
-              <span class="data-quality-badge">{chartDataQuality()}</span>
-              <Show when={isGraphLazyLoading() || isMachineGraphRendering()}><span class="graph-loading-status" role="status" aria-label={isMachineGraphRendering() ? "Rendering selected machine data" : "Rendering earlier graph data"}><span class="graph-loading-spinner" aria-hidden="true" /></span></Show>
-            </div></div>
+            <CollapsibleSection id="usage-chart" title={chartTitle()} label="usage chart" eyebrow="AGGREGATED USAGE" class="panel usage-panel"
+              summary={<><span class="data-quality-badge">{chartDataQuality()}</span>
+                <Show when={isGraphLazyLoading() || isMachineGraphRendering()}><span class="graph-loading-status" role="status" aria-label={isMachineGraphRendering() ? "Rendering selected machine data" : "Rendering earlier graph data"}><span class="graph-loading-spinner" aria-hidden="true" /></span></Show></>}>
+            <div class="graph-controls">
               <div class="granularity-control toggle-group" aria-label="Graph aggregation">
                 <div><button aria-pressed={granularity() === "15min" ? "true" : "false"} classList={{ active: granularity() === "15min" }} onClick={() => selectGranularity("15min")}>15 min</button><button aria-pressed={granularity() === "hourly" ? "true" : "false"} classList={{ active: granularity() === "hourly" }} onClick={() => selectGranularity("hourly")}>Hourly</button><button aria-pressed={granularity() === "6hour" ? "true" : "false"} classList={{ active: granularity() === "6hour" }} onClick={() => selectGranularity("6hour")}>6 hour</button><button aria-pressed={granularity() === "daily" ? "true" : "false"} classList={{ active: granularity() === "daily" }} onClick={() => selectGranularity("daily")}>Daily</button></div>
                 <label class="metric-selector">Metric
@@ -1306,12 +1319,10 @@ export default function App() {
                 )}</For>
               </div>
             </Show>
-            </section>
+            </CollapsibleSection>
 
-            <section class="panel breakdown-panel">
-            <div class="panel-title"><div><p class="eyebrow">PERIOD BREAKDOWN</p><div class="chart-heading"><h2>{chartMetricLabel()} by host and model</h2>
-              <span class="data-quality-badge">{rangeLabel()}</span>
-            </div></div></div>
+            <CollapsibleSection id="breakdown" title={`${chartMetricLabel()} by host and model`} label="host and model breakdown" eyebrow="PERIOD BREAKDOWN" class="panel breakdown-panel"
+              summary={<span class="data-quality-badge">{rangeLabel()}</span>}>
             <div class="breakdown-grid">
               <div class="breakdown-col">
                 <h3 class="breakdown-title">By host</h3>
@@ -1322,23 +1333,22 @@ export default function App() {
                 <BreakdownBars rows={filteredCostRows()} metric={chartMetric()} keyOf={(row) => row.model} colorFor={colorForModel} label="per model" />
               </div>
             </div>
-            </section>
+            </CollapsibleSection>
 
-            <section class="panel block-panel">
-            <div class="panel-title"><div><p class="eyebrow">CCUSAGE BREAKDOWNS</p><h2>Daily agent and model detail</h2></div></div>
+            <CollapsibleSection id="daily-detail" title="Daily agent and model detail" label="daily detail" eyebrow="CCUSAGE BREAKDOWNS" class="panel block-panel">
             <div class="metric-table" role="table">
               <div classList={{ "metric-row": true, "metric-head": true, "with-machine": selectedMachines().length !== 1 }} role="row"><span>Date</span><Show when={selectedMachines().length !== 1}><span>Machine</span></Show><span>Agent</span><span>Model</span><span>Cost</span><span>Total tokens</span></div>
               <For each={filteredRows().slice().reverse()} fallback={<p class="empty compact">No matching metric rows.</p>}>{(row) => (
                 <div classList={{ "metric-row": true, "with-machine": selectedMachines().length !== 1 }} role="row"><time>{row.date}</time><Show when={selectedMachines().length !== 1}><span class="machine-tag">{row.machine}</span></Show><span class="agent-tag">{row.agent}</span><strong title={row.model}>{row.model}</strong><span>{currency.format(row.costUSD)}</span><span>{integer.format(row.totalTokens)}</span></div>
               )}</For>
             </div>
-            </section>
+            </CollapsibleSection>
 
-            <PieChartPanel selection={pieCharts} onToggle={(id) => setPieCharts(togglePieChart(id, pieCharts()))} hiddenRatios={hiddenPieRatios} onToggleRatio={(id) => setHiddenPieRatios(toggleHiddenPieRatio(id, hiddenPieRatios()))} budget={budget} response={rateLimits} />
-            <RateLimitPanel response={rateLimits} error={rateLimits.error != null} now={() => new Date()} />
-            <section class="budget-note">
+            <CollapsibleSection id="menu-budget" title="Menu budget" label="menu budget" class="panel menu-budget-panel">
+            <div class="budget-note">
               Menu budget: {currency.format(budget()?.spentUSD ?? 0)} in selected period · {budget()?.usagePercentage == null ? "No budget set" : `${percentage.format(budget()!.usagePercentage!)}% used`} · {budget()?.remainingUSD == null ? "No remaining amount" : `${currency.format(budget()!.remainingUSD!)} remaining`}
-            </section>
+            </div>
+            </CollapsibleSection>
           </Show>
         </Show>
       </main>

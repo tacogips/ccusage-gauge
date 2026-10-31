@@ -353,38 +353,50 @@ expired or authorization fails, run the relevant CLI to refresh its login.
 In the dashboard pie chart section, use the toggle buttons to select any
 combination of budget, Claude Code 5h, Claude Code weekly, Codex 5h, and Codex
 weekly. The selection is saved in dashboard state. In the menu bar, use
-**Settings > Pie charts**; its independent selection is saved as
+**Settings > Usage icons**; its independent selection is saved as
 `menuBarPieCharts` in `~/.local/ccusage-gauge/state.json`. Both selections
 default to the budget pie only, and at least one pie remains selected.
 
 The ratio text is selected separately from the pies. In the menu bar, use
-**Settings > Ratio text**, which follows **Pie charts**, to choose which ratios
-appear as text in the status item. It offers the same five items, and each one
-toggles independently:
+**Settings > Ratio text**, which follows **Usage icons**, to choose which ratios
+appear in the status item. Choose a cost display and toggle subscription
+ratios independently:
 
-- **Budget** shows the existing `<cost> · <budget %>` text, including its
-  warning marker.
-- Each rate-limit item shows a compact used-percent label: `Claude 5h n%`,
-  `Claude W n%`, `Codex 5h n%`, or `Codex W n%`. A window that is not available
-  shows `--`, for example `Codex W --`. A newly selected label shows `--` until
-  the next rate-limit fetch completes.
+- **Cost only** shows just the amount spent in the selected period, without
+  a budget percentage. It works even when no budget is configured.
+- **Cost and budget ratio** shows the amount spent and puts the budget
+  percentage beside its pie, including the cost warning marker. These two cost display options are mutually exclusive.
+- Each subscription is shown using its provider's official menu-bar mark:
+  Claude's burst or the ChatGPT knot for Codex. The icon is outlined at 0%
+  and fills from bottom to top as usage increases; 100% is fully filled.
+  Template tinting makes it white in a dark menu bar and dark in a light menu bar.
+  Unavailable values show an outlined icon with a diagonal slash.
+  Enable a subscription under **Ratio text** to put its percentage immediately
+  to the right of the icon; leave it disabled for an icon-only display.
 
-Selected labels are joined with ` · ` in a fixed order. An empty selection
-leaves only the pie glyph. The selection is saved as `menuBarRatioLabels` in
+Groups appear in a fixed order. An empty ratio selection
+leaves only the selected usage icons. The selection is saved as `menuBarRatioLabels` in
 `state.json`. If the key is missing, it defaults to budget text only, which is
-the previous status title. When budget text is hidden, its warning marker is
+the previous status title. The cost-only preference is saved as `menuBarCostOnly`.
+When budget text is hidden, its warning marker is
 hidden too, but the warning remains in the tooltip, in the accessibility label,
 and on the budget pie when that pie is shown.
 
 For example, to show only the Claude Code weekly and Codex weekly pies with
-their ratios, select only those two items under both **Pie charts** and
-**Ratio text**. The status item then shows two pies followed by text such as
-`Claude W 59% · Codex W 83%`, with no budget pie or budget text.
+their ratios, select only those two items under both **Usage icons** and
+**Ratio text**. Each provider icon fills to match usage and is followed by its
+percentage (`59%` and `83%`), with no budget pie or cost text.
 
-On the dashboard, each selected pie has a **Ratio** button that shows or hides
-its used-percent text. Hidden ratios are saved in dashboard state as
-`hiddenPieRatios`. By default every ratio is shown. The dashboard's **Menu
-budget** line is not affected.
+The dashboard puts **Subscription usage** above the cost summaries, with chart
+selection buttons at the upper right. Percentages are always visible. Each
+subscription window shows its reset date and local time zone, plus the hours
+and minutes remaining. Subscription data refreshes every minute independently
+of cost-history loading; countdowns update every 30 seconds.
+
+Use the compact chevron buttons to collapse dashboard sections and individual
+cost/token cards. Section choices are remembered locally across reloads. The
+spending graph supports native touch swipes, trackpad scrolling, and mouse
+dragging with momentum, without a visible scrollbar.
 
 For example, request the local API:
 

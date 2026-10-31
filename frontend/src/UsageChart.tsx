@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { attachChartPan } from "./chartPan";
 import type { CostRow, MachineDataGap, MachineLatestEvent, MetricKey } from "./api";
 import { alignedBucketStart, axisCurrency, bucketMilliseconds, chartDateLabel, clippedInterval, nextBucket, niceChartMaximum } from "./usageChartGeometry";
 import { chartSeriesIdentity, chartSeriesLabel, compareSeriesIdentities, type StackBy } from "./usageChartSeries";
@@ -206,10 +207,13 @@ export function UsageChart(props: {
           <For each={models()}>{(model) => <span title={displaySeries(model)}><i style={{ background: colorForSeries(model) }} />{displaySeries(model)}</span>}</For>
         </div>
         <Show when={props.granularity !== "daily"}>
-          <p class="chart-scroll-hint">Newest data is shown first. Scroll left to render earlier 12-hour windows.</p>
+          <p class="chart-scroll-hint">Swipe or drag horizontally to explore spending. Earlier data loads as you move left.</p>
         </Show>
         <div class="chart-frame">
-          <div class="chart" ref={chartElement} onScroll={loadEarlier}>
+          <div class="chart" ref={(element) => {
+            chartElement = element;
+            onCleanup(attachChartPan(element, () => setHoveredSegment(null)));
+          }} tabIndex={0} role="region" aria-label="Spending history. Swipe, drag, or use arrow keys to scroll horizontally." onScroll={loadEarlier}>
             <svg class="cost-chart" width={chartWidth()} height={chartHeight} viewBox={`0 0 ${chartWidth()} ${chartHeight}`} aria-hidden="true">
             <For each={yTicks()}>{(tick) => {
               const y = () => chartMargin.top + plotHeight - (tick / axisMaximum()) * plotHeight;

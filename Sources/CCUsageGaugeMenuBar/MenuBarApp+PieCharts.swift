@@ -4,15 +4,10 @@ import AppKit
 extension MenuBarDelegate {
   func updateStatusTitle(_ budgetText: String) {
     budgetStatusText = budgetText
-    let title = RateLimitDisplayFormatting.statusTitle(
-      selection: menuBarRatioSelection(), budgetText: budgetText, response: latestRateLimits
-    )
-    // Only touch the button when the value actually changed; reassigning an
-    // identical title forces a redraw of the menu-bar item, which reads as a blink.
+    let title = menuBarRatioSelection().contains(.budget) ? budgetText : ""
     if appliedTitle != title {
       appliedTitle = title
       statusItem.button?.title = title
-      statusItem.button?.setAccessibilityValue(title)
     }
     updateStatusIcon()
   }
@@ -44,7 +39,29 @@ extension MenuBarDelegate {
   @objc func toggleRatioLabel(_ sender: NSMenuItem) {
     guard let rawValue = sender.representedObject as? String, let id = PieChartID(rawValue: rawValue) else { return }
     Task {
-      if await mutateState({ $0.menuBarRatioLabels = RatioTextSelection.toggled(id, in: $0.menuBarRatioLabels) }) {
+      if await mutateState({ state in
+        if id == .budget && state.menuBarCostOnly {
+          state.menuBarCostOnly = false
+          state.menuBarRatioLabels = RatioTextSelection.normalized(state.menuBarRatioLabels + [.budget])
+        } else {
+          state.menuBarRatioLabels = RatioTextSelection.toggled(id, in: state.menuBarRatioLabels)
+        }
+      }) {
+        updateStatusTitle(budgetStatusText)
+      }
+    }
+  }
+
+  @objc func toggleCostOnly() {
+    Task {
+      if await mutateState({ state in
+        if state.menuBarCostOnly && state.menuBarRatioLabels.contains(.budget) {
+          state.menuBarRatioLabels = RatioTextSelection.toggled(.budget, in: state.menuBarRatioLabels)
+        } else {
+          state.menuBarCostOnly = true
+          state.menuBarRatioLabels = RatioTextSelection.normalized(state.menuBarRatioLabels + [.budget])
+        }
+      }) {
         updateStatusTitle(budgetStatusText)
       }
     }
@@ -61,6 +78,34 @@ extension MenuBarDelegate {
       }
       let window = RateLimitDisplayFormatting.entry(for: id, in: latestRateLimits).window
       return .rateLimit(fraction: RateLimitDisplayFormatting.pieFraction(window))
+    }
+  }
+
+  func statusEntries() -> [MenuBarStatusEntry] {
+    let pies = menuBarPieSelection()
+    let ratios = menuBarRatioSelection()
+    let pieByID = Dictionary(uniqueKeysWithValues: zip(pies, pieEntries()))
+    return PieChartID.allCases.compactMap { id in
+      var ratio: String?
+      if ratios.contains(id) {
+        if id == .budget {
+          if currentState?.menuBarCostOnly != true, let value = latestSnapshot?.budget.usagePercentage {
+            let formatter = NumberFormatter()
+            formatter.maximumFractionDigits = 1
+            ratio = "\(formatter.string(from: value as NSDecimalNumber) ?? String(describing: value))%"
+          }
+        } else {
+          ratio = RateLimitDisplayFormatting.ratioLabel(for: id, in: latestRateLimits)
+        }
+      }
+      guard let pie = pieByID[id] else {
+        return ratio.map {
+          let fraction = RateLimitDisplayFormatting.entry(for: id, in: latestRateLimits).window?.pieFraction
+          let indicator: MenuBarPieEntry? = id == .budget ? nil : .rateLimit(fraction: fraction)
+          return MenuBarStatusEntry(chart: id, pie: indicator, ratio: $0)
+        }
+      }
+      return MenuBarStatusEntry(chart: id, pie: pie, ratio: ratio)
     }
   }
 

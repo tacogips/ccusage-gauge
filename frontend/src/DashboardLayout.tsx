@@ -1,6 +1,12 @@
 import type { JSX } from "solid-js";
 import type { ColorScheme } from "./colorScheme";
 
+export function FoldIcon(props: { collapsed: boolean; horizontal?: boolean }) {
+  return <svg classList={{ "fold-chevron": true, collapsed: props.collapsed, horizontal: props.horizontal }} viewBox="0 0 16 16" aria-hidden="true">
+    <path d="m4 6 4 4 4-4" />
+  </svg>;
+}
+
 export function PaneFoldBar(props: {
   collapsed: boolean;
   onToggle: () => void;
@@ -14,10 +20,10 @@ export function PaneFoldBar(props: {
         aria-expanded={!props.collapsed ? "true" : "false"}
         aria-controls="usage-filters-content"
         aria-label={props.collapsed ? "Expand filters" : "Collapse filters"}
+        title={props.collapsed ? "Expand filters" : "Collapse filters"}
         onClick={props.onToggle}
       >
-        <span class="fold-icon" aria-hidden="true">{props.collapsed ? "\u00bb" : "\u00ab"}</span>
-        <span class="fold-label">{props.collapsed ? "Expand" : "Collapse"}</span>
+        <FoldIcon collapsed={props.collapsed} horizontal />
       </button>
       <span class="pane-fold-summary">{props.summary}</span>
     </div>
@@ -40,8 +46,9 @@ export function HeaderFoldBar(props: {
         aria-expanded={!props.collapsed ? "true" : "false"}
         aria-controls="dashboard-header-content"
         aria-label={props.collapsed ? "Expand header" : "Collapse header"}
+        title={props.collapsed ? "Expand header" : "Collapse header"}
         onClick={props.onToggle}
-      >{props.collapsed ? "Expand" : "Collapse"}</button>
+      ><FoldIcon collapsed={props.collapsed} /></button>
     </div>
   );
 }

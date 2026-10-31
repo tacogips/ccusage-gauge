@@ -16,6 +16,8 @@ import Testing
       try JSONDecoder().decode(AppState.self, from: Data((#"{"resetCycle":{"type":"weekly"}"# + suffix + "}").utf8))
     }
     #expect(try decode("").menuBarRatioLabels == [.budget])
+    #expect(try decode("").menuBarCostOnly == false)
+    #expect(try decode(#", "menuBarCostOnly":true"#).menuBarCostOnly == true)
     #expect(try decode(#", "menuBarRatioLabels":[]"#).menuBarRatioLabels == [])
     #expect(try decode(#", "menuBarRatioLabels":["bogus"]"#).menuBarRatioLabels == [])
     #expect(try decode(#", "menuBarRatioLabels":["codexWeekly","claudeWeekly","codexWeekly"]"#).menuBarRatioLabels == [.claudeWeekly, .codexWeekly])
@@ -24,8 +26,9 @@ import Testing
   @Test func appStateRoundTrip() async throws {
     let file = try temporaryDirectory().appendingPathComponent("state.json")
     let store = StateStore(fileURL: file)
-    try await store.save(AppState(menuBarRatioLabels: []))
+    try await store.save(AppState(menuBarRatioLabels: [], menuBarCostOnly: true))
     #expect(try await store.load().menuBarRatioLabels == [])
+    #expect(try await store.load().menuBarCostOnly == true)
     let object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
     #expect(object["menuBarRatioLabels"] as? [String] == [])
   }
@@ -65,18 +68,18 @@ import Testing
       #expect(RateLimitDisplayFormatting.statusTitle(selection: [.budget], budgetText: text, response: nil) == text)
     }
     #expect(RateLimitDisplayFormatting.statusTitle(selection: [], budgetText: "$1", response: response) == "")
-    #expect(RateLimitDisplayFormatting.statusTitle(selection: [.codexWeekly, .claudeWeekly], budgetText: "$1", response: response) == "Claude W 59% · Codex W 83%")
-    #expect(RateLimitDisplayFormatting.statusTitle(selection: [.claude5h], budgetText: "$1", response: nil) == "Claude 5h --")
+    #expect(RateLimitDisplayFormatting.statusTitle(selection: [.codexWeekly, .claudeWeekly], budgetText: "$1", response: response) == "59% · 83%")
+    #expect(RateLimitDisplayFormatting.statusTitle(selection: [.claude5h], budgetText: "$1", response: nil) == "--")
     let unauthorized = RateLimitsResponse(generatedAt: now, providers: [provider(.claude, .unauthorized, nil, nil)])
-    #expect(RateLimitDisplayFormatting.statusTitle(selection: [.claude5h], budgetText: "$1", response: unauthorized) == "Claude 5h --")
-    #expect(RateLimitDisplayFormatting.statusTitle(selection: [.budget, .codex5h], budgetText: "$12.34 · 45%", response: response) == "$12.34 · 45% · Codex 5h 12%")
+    #expect(RateLimitDisplayFormatting.statusTitle(selection: [.claude5h], budgetText: "$1", response: unauthorized) == "--")
+    #expect(RateLimitDisplayFormatting.statusTitle(selection: [.budget, .codex5h], budgetText: "$12.34 · 45%", response: response) == "$12.34 · 45% · 12%")
     #expect(RateLimitDisplayFormatting.ratioLabel(for: .budget, in: response) == "")
-    #expect(RateLimitDisplayFormatting.ratioLabel(for: .claude5h, in: response) == "Claude 5h 59%")
-    #expect(RateLimitDisplayFormatting.ratioLabel(for: .claudeWeekly, in: response) == "Claude W 59%")
-    #expect(RateLimitDisplayFormatting.ratioLabel(for: .codex5h, in: response) == "Codex 5h 12%")
-    #expect(RateLimitDisplayFormatting.ratioLabel(for: .codexWeekly, in: response) == "Codex W 83%")
+    #expect(RateLimitDisplayFormatting.ratioLabel(for: .claude5h, in: response) == "59%")
+    #expect(RateLimitDisplayFormatting.ratioLabel(for: .claudeWeekly, in: response) == "59%")
+    #expect(RateLimitDisplayFormatting.ratioLabel(for: .codex5h, in: response) == "12%")
+    #expect(RateLimitDisplayFormatting.ratioLabel(for: .codexWeekly, in: response) == "83%")
     let clamped = RateLimitsResponse(generatedAt: now, providers: [provider(.codex, .ok, nil, try window(120))])
-    #expect(RateLimitDisplayFormatting.ratioLabel(for: .codexWeekly, in: clamped) == "Codex W 100%")
+    #expect(RateLimitDisplayFormatting.ratioLabel(for: .codexWeekly, in: clamped) == "100%")
   }
 
   private func dashboard(hidden: [PieChartID]) -> DashboardUIState {

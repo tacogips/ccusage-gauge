@@ -50,7 +50,7 @@ struct CCUsageGaugeMenuBarApp {
 @MainActor
 final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private struct StatusIconState: Equatable {
-    let entries: [MenuBarPieEntry]
+    let entries: [MenuBarStatusEntry]
     let accessibility: String
   }
 
@@ -442,7 +442,10 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       submenu.addItem(error)
     }
     submenu.addItem(PieChartMenu.item(selection: menuBarPieSelection(), target: self, action: #selector(togglePieChart(_:))))
-    submenu.addItem(PieChartMenu.ratioTextItem(selection: menuBarRatioSelection(), target: self, action: #selector(toggleRatioLabel(_:))))
+    submenu.addItem(PieChartMenu.ratioTextItem(
+      selection: menuBarRatioSelection(), costOnly: currentState?.menuBarCostOnly ?? false,
+      target: self, action: #selector(toggleRatioLabel(_:)), costAction: #selector(toggleCostOnly)
+    ))
     root.submenu = submenu
     return root
   }
@@ -737,9 +740,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private static func statusTitle(_ snapshot: CostSnapshot) -> String {
-    let cost = formatUSDCurrency(snapshot.costSinceResetUSD)
-    guard let usagePercentage = snapshot.budget.usagePercentage else { return cost }
-    return "\(cost) · \(formatPercentage(usagePercentage))"
+    formatUSDCurrency(snapshot.costSinceResetUSD)
   }
 
   private func configureStatusButton() {
@@ -753,19 +754,24 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   func updateStatusIcon() {
     let hasWarning = isUsageUnavailable || !collectionWarnings.isEmpty
-    let iconState = StatusIconState(entries: pieEntries(), accessibility: pieAccessibilityDescription())
+    let iconState = StatusIconState(entries: statusEntries(), accessibility: pieAccessibilityDescription())
     // Regenerating and reassigning the pie image every poll is what makes the
     // icon flicker, so skip it unless the rendered inputs changed.
     if appliedIconState != iconState {
       appliedIconState = iconState
-      statusItem.button?.image = MenuBarPieStrip.image(
+      statusItem.button?.image = MenuBarStatusImage.image(
         entries: iconState.entries, accessibilityDescription: iconState.accessibility
       )
       e2eIconView?.image = statusItem.button?.image
     }
+    let ratioDescription = iconState.entries.compactMap { entry in
+      entry.ratio.map { "\(RateLimitDisplayFormatting.title(for: entry.chart)) \($0)" }
+    }.joined(separator: ", ")
+    statusItem.button?.setAccessibilityValue([ratioDescription, appliedTitle ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
     let label = hasWarning ? "Warning: machine usage collection failed" : "ccusage-gauge cost in selected period"
     statusItem.button?.setAccessibilityLabel(label)
-    statusItem.button?.toolTip = hasWarning ? errorMessage : "ccusage-gauge — cost in selected period"
+    statusItem.button?.toolTip = hasWarning ? errorMessage
+      : ["ccusage-gauge", iconState.accessibility, ratioDescription, appliedTitle ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
   }
 
   private func openE2EWindowIfNeeded() {

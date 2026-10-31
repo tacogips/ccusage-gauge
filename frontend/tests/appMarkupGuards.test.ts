@@ -10,15 +10,14 @@ const layout = readFileSync(join(import.meta.dir, "../src/DashboardLayout.tsx"),
 const html = readFileSync(join(import.meta.dir, "../index.html"), "utf8");
 
 describe("dashboard app markup contract", () => {
-  test("wires per-pie ratio text visibility", () => {
-    expect(piePanel).toContain("<Show when={ratioVisible()}><span>{detail()}</span></Show>");
-    expect(piePanel).toContain("aria-pressed={ratioVisible()}");
-    expect(piePanel).toContain("Show ratio text for ");
-    expect(piePanel).toContain("props.onToggleRatio(id)");
-    expect(piePanel).toContain("props.hiddenRatios()");
+  test("always displays pie ratios and puts subscriptions above cost", () => {
+    expect(piePanel).toContain("<span>{detail()}</span>");
+    expect(piePanel).not.toContain("onToggleRatio");
+    expect(piePanel).not.toContain(">Ratio</button>");
     expect(piePanel).toContain('aria-label={`${labels[id]}: ${detail()}`}');
-    expect(app).toContain("setHiddenPieRatios(normalizeHiddenPieRatios(state.hiddenPieRatios))");
-    expect(app).toContain("hiddenPieRatios: hiddenPieRatios(),");
+    expect(app).toContain("hiddenPieRatios: [],");
+    expect(app.indexOf("<PieChartPanel")).toBeLessThan(app.indexOf('id="current-view"'));
+    expect(piePanel).toContain('title="Subscription usage"');
     expect(app).toContain("Menu budget: ");
   });
 
