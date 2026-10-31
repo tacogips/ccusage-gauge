@@ -41,6 +41,29 @@ production construction sites (`Sources/AppCLI/Runtime.swift`,
 `Sources/CCUsageGaugeMenuBar/MenuBarApp.swift`) or regenerates the tracked
 dashboard assets (`Sources/AppCore/Resources/Web`).
 
+## Continuation Run (2026-10-31)
+
+Plans rl-01 to rl-08 are implemented in the working tree and not yet
+committed. They are the baseline for this run. The original combined rl-09
+was split so that each part can be verified on its own:
+
+| Wave | Plan ID | File | Depends on |
+| --- | --- | --- | --- |
+| 1 | rl-09 | `rl-09-integration-wiring.md` (factory, Runtime wiring, integration test) | - |
+| 1 | rl-11 | `rl-11-codex-window-validation-repair.md` (repair of rl-06) | - |
+| 2 | rl-10 | `rl-10-menubar-wiring.md` | rl-09 |
+| 3 | rl-12 | `rl-12-asset-rebuild-full-gate.md` (asset rebuild, full gate) | rl-09, rl-10, rl-11 |
+
+- Only rl-12 runs `mise run build` and owns `Sources/AppCore/Resources/Web`.
+- rl-12 declares `.build`, `frontend/dist`, `frontend/node_modules` and `tmp`
+  as artifact roots, under the operator's authorization (QA decision 8).
+- Earlier plans may run `swift build` and `swift test`. Their writes to
+  `.build/` are authorized command side effects.
+- A defect that a later review finds in an rl-01 to rl-08 file is fixed by a
+  targeted repair plan or a checkpoint amendment that names that file.
+- The single local commit is made at workflow finalization. It excludes
+  `.riela/` and `tmp/`, and nothing is pushed.
+
 ## Pinned JSON Contract (`GET /api/rate-limits`)
 
 Dates are ISO 8601 without fractional seconds. Optional fields are encoded as
@@ -75,11 +98,11 @@ Keys are sorted.
    content you do not own.
 4. **Sibling build breaks.** If `swift build` fails only because of a file
    outside your `writePaths` (a sibling still in progress), do not fix it.
-   Record the failure in your Progress Log, wait, and re-run. Final gates are
-   run by rl-09.
-5. **Commands to avoid before rl-09.** Do not run `mise run build`,
-   `mise run frontend:build`, or `bun run build` before rl-09. They rewrite
-   the tracked `Sources/AppCore/Resources/Web` assets, which only rl-09 owns.
+   Record the failure in your Progress Log, wait, and re-run. rl-12 runs the
+   final gates.
+5. **Commands to avoid before rl-12.** Do not run `mise run build`,
+   `mise run frontend:build`, or `bun run build` before rl-12. They rewrite
+   the tracked `Sources/AppCore/Resources/Web` assets, which only rl-12 owns.
 6. **Git.** No git commits, branches, worktrees, stashes, or resets from
    workers.
 7. **Progress Log.** Update only your own plan file's Progress Log section.
@@ -89,6 +112,8 @@ Keys are sorted.
 
 ## Completion
 
-All nine plans are marked Completed, and rl-09's full gate passes:
-`mise run build`, `mise run test`, `mise run lint`, `mise run frontend:check`,
-and `mise run frontend:test`.
+The work is complete when all of these hold:
+
+- every plan from rl-01 to rl-12 is marked Completed;
+- rl-12's full gate passes: `mise run build`, `mise run test`,
+  `mise run lint`, `mise run frontend:check`, and `mise run frontend:test`.

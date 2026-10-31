@@ -2,11 +2,17 @@
 
 ## Status
 
-Proposed (2026-10-31). Source: workflow request "Add Claude Code and Codex
+Accepted (2026-10-31). Source: workflow request "Add Claude Code and Codex
 5h/weekly subscription rate-limit module with selectable multi-pie charts
 (dashboard + menu bar)". There is no GitHub issue number. Default decisions and
 open questions are recorded in
 `design-docs/user-qa/2026-10-31-subscription-rate-limit-decisions.md`.
+
+Implementation state (2026-10-31): plans rl-01 to rl-08 are implemented in the
+working tree but not committed. rl-09 (production factory, process wiring,
+menu-bar hook-in, integration test, asset rebuild, full gate) is not started.
+The section "Integration Wiring and Rollout" below is the contract for the
+remaining work.
 
 ## Scope
 
@@ -141,14 +147,19 @@ The pie fraction is `min(usedPercent, 100) / 100`. The filled wedge means
 
 ### Status rules
 
-| Live result | Fallback available | Status | errorCode |
-| --- | --- | --- | --- |
-| HTTP 200, decodable | - | `ok` | `null` |
-| Claude `expiresAt <= now` (no request sent) | Claude: none | `unauthorized` | `token_expired` |
-| HTTP 401 or 403 | Codex JSONL or last-good | `stale` | `unauthorized` |
-| HTTP 401 or 403 | none | `unauthorized` | `unauthorized` |
-| Any other failure | Last-good or Codex JSONL | `stale` | the failure code |
-| Any other failure | none | `unavailable` | the failure code |
+| Provider | Live result | Fallback available | Status | errorCode |
+| --- | --- | --- | --- | --- |
+| both | HTTP 200, decodable | - | `ok` | `null` |
+| Claude | `expiresAt <= now` (no request sent) | ignored | `unauthorized` | `token_expired` |
+| Claude | HTTP 401 or 403 | ignored, even with last-good | `unauthorized` | `unauthorized` |
+| Codex | HTTP 401 or 403 | Codex JSONL or last-good | `stale` | `unauthorized` |
+| Codex | HTTP 401 or 403 | none | `unauthorized` | `unauthorized` |
+| both | Any other failure | Last-good or Codex JSONL (Codex only) | `stale` | the failure code |
+| both | Any other failure | none | `unavailable` | the failure code |
+
+The per-provider rows above match the Status Algorithm in
+`impl-plans/active/rl-01-core-contracts-service.md`, which is authoritative
+for edge cases.
 
 Fallback rules:
 
@@ -319,10 +330,67 @@ The dashboard and the menu bar keep separate selections (QA decision 1):
   - `PieChartMenu.swift` for the submenu;
   - `RateLimitMenuView.swift` for the dropdown rows;
   - `MenuBarPieStrip.swift` for composing the glyph, which reuses the
-    `MenuBarPieIcon` drawing.
+    `MenuBarPieIcon` drawing;
+  - `MenuBarApp+PieCharts.swift` for the hook-in methods (polling helper,
+    toggle action, glyph entries, dropdown rows).
 
-  `MenuBarApp.swift` (945 lines) gets only the hook-in and must stay below
-  1000 lines.
+  `MenuBarApp.swift` (945 lines) gets only the minimal hook-in calls and must
+  stay below 1000 lines.
+
+## Integration Wiring and Rollout
+
+This section pins the rl-09 boundary against the code present on 2026-10-31.
+
+- **Production factory.** `RateLimitUsageService.production(environment:)`
+  in `Sources/AppCore/RateLimitUsageProduction.swift` composes the existing
+  types and adds nothing else:
+  - `ClaudeRateLimitFetcher(credentials: ClaudeCredentialProvider(environment:), transport:)`;
+  - `CodexRateLimitFetcher(credentials: CodexCredentialProvider(environment:), transport:)`;
+  - one `URLSessionRateLimitTransport()` shared by both fetchers;
+  - `CodexRateLimitSessionFallback(sessionsRoot: CodexHome.url(environment:)/sessions)`;
+  - the default 60-second interval and the system clock.
+
+  Construction performs no file, Keychain, process, or network I/O. All of
+  that happens only inside `current()`.
+- **One instance per process.**
+  - `Sources/AppCLI/Runtime.swift`: create the service once and pass it as
+    `rateLimitService:` to the single `MachineDashboardRouter` (currently at
+    line 129). That router serves both the desktop window and
+    `DashboardRouter(machineRouter:)` (line 156), so `serve` and the desktop
+    window share one throttle.
+  - `Sources/CCUsageGaugeMenuBar/MenuBarApp.swift`: a stored service created
+    with the app, passed to the `MachineDashboardRouter` built in bootstrap
+    (currently at line 256) and used by the menu-bar pies.
+- **Menu-bar refresh ordering.**
+  - `refreshRateLimitsIfNeeded()` runs on every `refresh()`. It must not sit
+    behind the early returns at `MenuBarApp.swift:331-334` (no snapshot store)
+    or :341-342 (nil snapshot, generation changed).
+  - It reads the selection from `currentState` (set at bootstrap line 129, by
+    `refresh()`, and by `mutateState`), defaulting to `[budget]`. It calls
+    `current()` only when a non-budget chart is selected, stores the result,
+    and then calls `updateStatusIcon()`.
+  - `togglePieChart` persists through `mutateState` and calls
+    `updateStatusIcon()`. It schedules no extra refresh, because `mutateState`
+    already does (`MenuBarApp.swift:576`).
+  - If bootstrap fails, there is no poll loop and no snapshot service. The
+    rate-limit pies then show the no-data ring. This is accepted; it is the
+    same state as a ccusage failure today.
+- **Dashboard assets.** `Sources/AppCore/Resources/Web` is regenerated only by
+  `mise run build` (through `scripts/sync-frontend-assets.sh`, which deletes
+  stale hashed files). The result is committed exactly as generated.
+- **Build side effects.** `.build/`, `frontend/dist/`,
+  `frontend/node_modules/`, and `tmp/` are git-ignored side effects of the
+  gate commands. The plan that runs the full gate declares them in its
+  dispatch-manifest `artifactRoots` and `writePaths`. This explicit operator
+  authorization overrides the manifest's `evidenceLayout` text that forbids
+  listing build caches.
+- **Repairs.** rl-01 to rl-08 are the baseline. Defects found in review are
+  fixed by targeted repair plans whose `writePaths` name the exact files they
+  touch, with no overlap between plans that run in parallel.
+- **Commit.** One focused local commit on `main` covers rl-01 to rl-09, the
+  repairs, plan progress logs, and the README. Files are staged by explicit
+  path. `.riela/` (including `.riela/retention/`, which `.gitignore` does not
+  cover) and `tmp/` are never staged. Nothing is pushed, merged, or rebased.
 
 ## Security and Privacy
 
@@ -374,12 +442,41 @@ state decoding tests:
    the body. A `nil` service returns 503, and a non-GET method returns 405.
 8. `AppState` and `DashboardUIState` decode without the new field to
    `[budget]`, and normalization drops unknown and duplicate values.
+9. `Tests/AppCoreTests/RateLimitUsageIntegrationTests.swift` composes the
+   real Claude and Codex fetchers with fake credential providers holding the
+   sentinels `test-claude-access-token`, `test-codex-access-token`, and
+   `test-codex-account-id`, and a recording transport returning the exact
+   samples. Through both `DashboardRouter` and `MachineDashboardRouter`:
+   - no sentinel appears in the body;
+   - Claude `fiveHour.remainingPercent == 100` and
+     `weekly.remainingPercent == 47`;
+   - Codex `weekly.usedPercent == 82` and `fiveHour == null`;
+   - the transport saw exactly two URLs, none containing `token` or
+     `refresh`.
+
+   `production(environment: ["HOME": <temp dir>])` is constructed without
+   calling `current()`, because that would reach the network.
 
 Frontend tests in `frontend/tests/` cover response parsing, reset-time
 formatting, pie selection normalization and persistence, and panel status
 labels.
 
 The gate is `mise run build`, `mise run test`, `mise run lint`,
-`mise run frontend:check`, and `mise run frontend:test`. An optional manual
-smoke test runs `swift run ccusage-gauge serve` and curls
-`/api/rate-limits`, then confirms that no token or account ID appears.
+`mise run frontend:check`, and `mise run frontend:test`. Each runs in the
+foreground with `set -o pipefail` and its output teed to a `tmp/` log, and its
+exit code and log path are recorded. The gate also checks:
+
+- every Swift file is under 1000 lines (`wc -l`);
+- `grep -rn "refresh_token\|refreshToken\|oauth/token" Sources/AppCore Sources/CCUsageGaugeMenuBar Sources/AppCLI`
+  finds no match;
+- `git status --short` shows only feature files plus `.riela/retention/`,
+  which stays unstaged.
+
+Two checks are optional and are recorded as skipped, with the reason, when
+the runner cannot do them:
+
+- a live smoke test, only under an explicitly owned service lifecycle: run
+  `swift run ccusage-gauge serve`, curl `/api/rate-limits`, filter the body
+  through `grep -c`, and record only the count and the status values;
+- a manual menu-bar check that the glyph updates right after a rate-limit pie
+  is toggled, which needs an interactive GUI session.

@@ -44,6 +44,15 @@ changing the rest of the design.
 7. A rate-limit pie fills its used share, the same way the budget pie does.
    The menu-bar status title text does not change.
 
+## Operator decisions (continuation run, 2026-10-31)
+
+8. The plan that runs the full gate may declare `.build/`, `frontend/dist/`,
+   `frontend/node_modules/`, and `tmp/` in its dispatch-manifest
+   `artifactRoots` and `writePaths`. This overrides the manifest's
+   `evidenceLayout` text. These paths stay git-ignored and uncommitted.
+9. The run is local-only. All feature work goes into one local commit on
+   `main`, without `.riela/` or `tmp/`, and nothing is pushed.
+
 ## Open questions
 
 None block implementation.
