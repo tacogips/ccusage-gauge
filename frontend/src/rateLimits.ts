@@ -44,18 +44,11 @@ export function rateLimitStatusLabel(provider: ProviderRateLimits | undefined, _
 }
 export function pieFraction(window: RateLimitWindow): number { return Math.min(Math.max(window.usedPercent, 0), 100) / 100; }
 
-export function formatResetDate(resetsAt: string | null | undefined): string {
-  if (resetsAt == null || !Number.isFinite(Date.parse(resetsAt))) return "Reset date unavailable";
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-    hour12: false, timeZoneName: "short",
-  }).format(new Date(resetsAt));
-}
-
-export function formatResetHours(resetsAt: string | null | undefined, now: Date): string {
-  if (resetsAt == null || !Number.isFinite(Date.parse(resetsAt))) return "Time remaining unavailable";
+export function formatResetCompact(resetsAt: string | null | undefined, now: Date): string {
+  if (resetsAt == null || !Number.isFinite(Date.parse(resetsAt))) return "reset unknown";
   const seconds = (Date.parse(resetsAt) - now.getTime()) / 1000;
-  if (seconds <= 0) return "Reset due";
-  const minutes = Math.ceil(seconds / 60);
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m remaining`;
+  if (seconds <= 0) return "reset due";
+  if (seconds >= 86400) return `reset in ${Math.floor(seconds / 86400)}d`;
+  if (seconds >= 3600) return `reset in ${Math.floor(seconds / 3600)}h`;
+  return `reset in ${Math.max(1, Math.ceil(seconds / 60))}m`;
 }

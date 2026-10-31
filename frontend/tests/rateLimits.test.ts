@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ProviderRateLimits, RateLimitsResponse, RateLimitWindow } from "../src/api";
-import { formatResetDate, formatResetHours, formatResetIn, normalizeHiddenPieRatios, normalizePieCharts, pieFraction, rateLimitStatusLabel, rateLimitWindowFor, toggleHiddenPieRatio, togglePieChart } from "../src/rateLimits";
+import { formatResetCompact, formatResetIn, normalizeHiddenPieRatios, normalizePieCharts, pieFraction, rateLimitStatusLabel, rateLimitWindowFor, toggleHiddenPieRatio, togglePieChart } from "../src/rateLimits";
 const window: RateLimitWindow = { kind: "weekly", windowSeconds: 604800, usedPercent: 47, remainingPercent: 53 };
 const provider: ProviderRateLimits = { provider: "codex", status: "ok", stale: false, weekly: window, otherWindows: [] };
 const sample: RateLimitsResponse = { generatedAt: "2026-10-31T12:00:00Z", scope: "local", providers: [provider] };
@@ -36,15 +36,12 @@ describe("rate limits", () => {
     expect(formatResetIn("bad", now)).toBe("reset time unknown");
     expect(formatResetIn("2026-10-31T11:59:00Z", now)).toBe("reset due");
   });
-  test("shows reset dates and total hours, including multi-day windows", () => {
-    expect(formatResetHours("2026-11-03T16:00:00Z", now)).toBe("76h 0m remaining");
-    expect(formatResetHours("2026-10-31T14:13:00Z", now)).toBe("2h 13m remaining");
-    expect(formatResetHours("2026-10-31T12:00:01Z", now)).toBe("0h 1m remaining");
-    expect(formatResetHours("2026-10-31T11:00:00Z", now)).toBe("Reset due");
-    expect(formatResetHours("bad", now)).toBe("Time remaining unavailable");
-    expect(formatResetDate("2026-11-03T16:00:00Z")).toContain("2026");
-    expect(formatResetDate(null)).toBe("Reset date unavailable");
-    expect(formatResetDate("bad")).toBe("Reset date unavailable");
+  test("uses compact days or hours until reset", () => {
+    expect(formatResetCompact("2026-11-03T16:00:00Z", now)).toBe("reset in 3d");
+    expect(formatResetCompact("2026-10-31T14:13:00Z", now)).toBe("reset in 2h");
+    expect(formatResetCompact("2026-10-31T12:00:01Z", now)).toBe("reset in 1m");
+    expect(formatResetCompact("2026-10-31T11:00:00Z", now)).toBe("reset due");
+    expect(formatResetCompact("bad", now)).toBe("reset unknown");
   });
   test("labels each status", () => {
     expect(rateLimitStatusLabel(provider, now)).toBe("");

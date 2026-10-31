@@ -388,9 +388,9 @@ their ratios, select only those two items under both **Usage icons** and
 percentage (`59%` and `83%`), with no budget pie or cost text.
 
 The dashboard puts **Subscription usage** above the cost summaries, with chart
-selection buttons at the upper right. Percentages are always visible. Each
-subscription window shows its reset date and local time zone, plus the hours
-and minutes remaining. Subscription data refreshes every minute independently
+selection buttons at the upper right. Percentages are always visible. Each provider has one compact summary line with the enabled
+weekly/5-hour percentages and reset countdowns in days, hours, or minutes.
+Disabling a window also hides its summary text. Subscription data refreshes every minute independently
 of cost-history loading; countdowns update every 30 seconds.
 
 Use the compact chevron buttons to collapse dashboard sections and individual

@@ -1219,7 +1219,7 @@ export default function App() {
         </header>
 
         <PieChartPanel selection={pieCharts} onToggle={(id) => setPieCharts(togglePieChart(id, pieCharts()))} budget={budget} response={rateLimits}>
-          <RateLimitPanel response={rateLimits} error={rateLimits.error != null} />
+          <RateLimitPanel response={rateLimits} error={rateLimits.error != null} selection={pieCharts} />
         </PieChartPanel>
 
         <Show when={!errorMessage()} fallback={<section class="error"><span>{errorMessage()}</span><button onClick={refresh}>Retry</button></section>}>
