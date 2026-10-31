@@ -5,7 +5,10 @@ import Testing
 @Suite("UsageEventLogReaderTests") struct UsageEventLogReaderTests {
   @Test func reverseReaderYieldsEveryLineNewestFirstForAnyWindowSize() throws {
     let lines = (0..<120).map { index -> String in
-      String(repeating: Character(UnicodeScalar(UInt8(97 + index % 26))), count: (index * 37) % 301 + 1) + "#\(index)"
+      let byte = UInt8(97 + index % 26)
+      let character = Character(UnicodeScalar(byte))
+      let count = (index * 37) % 301 + 1
+      return String(repeating: character, count: count) + "#\(index)"
     }
     var content = ""
     for (index, line) in lines.enumerated() {
