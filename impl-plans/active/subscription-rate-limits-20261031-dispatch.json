@@ -1,0 +1,380 @@
+{
+  "taskId": "subscription-rate-limits-20261031",
+  "workflowMode": "issue-resolution",
+  "implementationBranch": "main",
+  "baseBranch": "main",
+  "remote": "origin",
+  "originalHead": "b754cd2ab09b23f8bbdd70c228ce53459b13b231",
+  "designDocPaths": [
+    "design-docs/specs/design-subscription-rate-limits.md",
+    "design-docs/user-qa/2026-10-31-subscription-rate-limit-decisions.md",
+    "design-docs/specs/architecture.md"
+  ],
+  "overviewPlanPath": "impl-plans/active/subscription-rate-limits-overview.md",
+  "evidenceRoot": "tmp/subscription-rate-limits-20261031",
+  "evidenceLayout": "Dispatcher evidence goes under evidenceRoot/<planId>/attempt-<n>/ (untracked; tmp/ is git-ignored and excluded by .swiftlint.yml). Plan verification commands write complete logs to evidenceRoot/<planId>/<step>.log; copy or reference those logs from the per-attempt directory. evidenceRoot and git-ignored build caches (.build, frontend/node_modules, frontend/dist) are never listed in writePaths, sharedPaths, or artifactRoots; they are created only as command side effects. Only rl-09 runs mise run build / frontend:build, which regenerates the tracked Sources/AppCore/Resources/Web assets it owns.",
+  "reviewContext": {
+    "issueReference": "none (no GitHub issue supplied); workflow execution opus-terra-design-and-implement-review-loop-session-567; accepted plan review communication comm-010887 (step5-impl-plan-review, reviewDecision accept)",
+    "userProblem": "ccusage-gauge shows only a single cost-budget pie and has no visibility into Claude Code and Codex subscription rate limits (5-hour and weekly windows). The user wants current utilization, percent remaining, and time to reset for both providers on the web dashboard and as pie charts, and wants to choose which pies (budget, Claude 5h, Claude weekly, Codex 5h, Codex weekly) are shown, several at once, on both the dashboard and the macOS menu bar.",
+    "requiredOutcomes": [
+      "AppCore rate-limit module returns claude and codex entries with fiveHour/weekly windows (usedPercent, remainingPercent = clamp(100 - used, 0, 100), resetsAt), status ok/stale/unauthorized/unavailable, and a fixed-text errorCode/message; unit tests cover the exact Claude and Codex sample payloads, Codex window classification by limit_window_seconds including weekly-only primary with null secondary, JSONL fallback, expired-token handling, and per-provider isolation.",
+      "GET /api/rate-limits served identically by DashboardRouter and MachineDashboardRouter before snapshot loading and machine parsing; 405 for non-GET, 503 when no service; body contains only derived numbers, status, planType, and timestamps.",
+      "Dashboard rate-limit panel with remaining percent and time-to-reset for Claude Code and Codex 5h/weekly, plus a multi-pie panel with five aria-pressed toggles persisted as DashboardUIState.pieCharts (default [budget]).",
+      "Menu-bar Settings > Pie charts multi-select persisted as AppState.menuBarPieCharts (default [budget]); multi-pie template glyph and dropdown rate-limit rows; default glyph byte-identical to today; no rate-limit fetch while only budget is selected.",
+      "One shared RateLimitUsageService.production() per process wired in Sources/AppCLI/Runtime.swift and MenuBarApp.swift; tracked dashboard assets regenerated.",
+      "README section documenting feature, data sources, privacy, statuses, pie selection, and an API example.",
+      "Gate: mise run build, mise run test, mise run lint, mise run frontend:check, mise run frontend:test all exit 0."
+    ],
+    "nonGoals": [
+      "Remote-machine rate limits (scope is always local).",
+      "Token refresh, any write to the Keychain, ~/.claude, or ~/.codex, new configuration keys, CLI client subcommands.",
+      "Claude per-model sub-limits (seven_day_opus, seven_day_sonnet) and rendering of Codex otherWindows in the UI.",
+      "Changes to cost, budget, aggregation, or cache behavior beyond making the budget pie one selectable chart.",
+      "Changing the menu-bar status title text or the budget pie drawing.",
+      "Commits, pushes, branches, worktrees, or stashes by workers."
+    ],
+    "constraints": [
+      "Never log, print, persist, commit, or expose OAuth access/refresh tokens or account IDs; tests use sentinels test-claude-access-token, test-codex-access-token, test-codex-account-id.",
+      "Credentials read-only, fresh per attempt, held only inside one fetch via RedactedSecret; Claude Keychain read only through /usr/bin/security find-generic-password -s 'Claude Code-credentials' -w with a 10s timeout, never SecItemCopyMatching.",
+      "In-memory cache with a 60-second minimum interval per provider (failures throttled too), single-flight fetches, per-provider failure isolation.",
+      "Backward-compatible decoding: state.json and dashboard state without the new fields decode to [budget]; decode [String] and normalize, never [PieChartID].",
+      "Swift 6 language mode, every Swift file under 1000 lines (MenuBarApp.swift is 945, HTTPService.swift 693, MachineDashboardRouter.swift 753), swiftlint clean, no emojis, English only.",
+      "frontend/src/App.tsx grows by roughly 40 lines at most; the rate-limit resource is read only through shieldResource(rateLimitsResource) and never feeds errorMessage, hasFailedRequest, or isFetching.",
+      "Single shared working tree on main; each worker edits only its plan's writePaths and its own Progress Log; no mise run build / frontend:build / bun run build before rl-09.",
+      "No AI tool attribution or co-authorship in commit messages."
+    ],
+    "designDecisionsAndRationale": [
+      "Separate dashboard (DashboardUIState.pieCharts via /api/dashboard-state SQLite) and menu-bar (AppState.menuBarPieCharts in state.json) selections, avoiding a new HTTP mutation path into state.json (QA decision 1).",
+      "Keychain read via /usr/bin/security because the item's ACL already trusts that tool; a Security-framework read would prompt for each unsigned build (QA decision 2).",
+      "Codex windows classified by limit_window_seconds (18000 fiveHour, 604800 weekly, else other), never by primary/secondary position; first window of each kind wins the slot.",
+      "Stale fallback: newest of last-good observation and (Codex only) newest session JSONL token_count rate_limits event; expired windows dropped; Claude tokenExpired/unauthorized always reports unauthorized even with a last-good result (rl-01 Status Algorithm is authoritative, QA decision 6).",
+      "Redirects refused by the transport so a bearer token is never forwarded; ephemeral URLSession with no cache or cookies.",
+      "Rate-limit pies fill their used share like the budget pie; default single-budget glyph is returned unchanged from MenuBarPieIcon.image (QA decision 7).",
+      "Menu bar fetches only while a rate-limit pie is selected; refreshRateLimitsIfNeeded() runs on every refresh() regardless of snapshot early returns and is followed by updateStatusIcon() (PR-M2, QA decision 5)."
+    ],
+    "intentionalTradeoffs": [
+      "Opening the dashboard always triggers rate-limit fetches because the panel is always shown; bounded by the 60s server throttle.",
+      "Wave-mates share one working tree, so swift build may break transiently while a sibling is mid-edit; overview protocol rule 4 applies and rl-09 re-runs the full gate.",
+      "refreshRateLimitsIfNeeded() at the top of refresh() may read currentState from before this tick's reload, lagging at most one tick.",
+      "Interactive glyph-update check and the live curl smoke may be recorded as skipped without a GUI session or an owned service lifecycle; non-disclosure is proven by RateLimitUsageIntegrationTests.",
+      "The design-doc status table reads ambiguously for Claude 401 with a last-good result; rl-01's Status Algorithm is authoritative.",
+      "Upstream endpoint drift and Keychain prompt variance are accepted risks; failures degrade to unavailable."
+    ],
+    "supportedEdgeCases": [
+      "Any Claude window null or missing utilization; unknown response keys ignored; resets_at with 6 fractional digits and +00:00 offset.",
+      "Codex weekly-only primary with null secondary; swapped primary/secondary lengths; generic lengths into otherWindows; missing rate_limit; reset_at absent but reset_after_seconds present.",
+      "Claude expiresAt in the past: tokenExpired with zero transport calls; 401/403 unauthorized; 429 rate_limited; 3xx and other statuses http_error.",
+      "Missing, unreadable, or API-key-only credential files map to credentials_missing or credentials_unreadable.",
+      "JSONL fallback skips null rate_limits lines, malformed lines, and unreadable files; re-sorted by modification time; maxFiles bound.",
+      "Concurrent current() calls share one in-flight fetch; failures cached for the throttle interval.",
+      "Legacy state files without pie fields decode to [budget]; unknown and duplicate pie IDs dropped; the last selected pie cannot be deselected.",
+      "/api/rate-limits with machine query parameters returns the same body; snapshot failure does not affect the route; a failed /api/rate-limits request does not affect the rest of the dashboard."
+    ],
+    "outOfScopeEdgeCases": [
+      "Rate limits for remote machines or extra per-machine Codex session directories (QA decision 4).",
+      "Refreshing expired tokens on behalf of the CLIs.",
+      "Syncing the dashboard and menu-bar pie selections.",
+      "Showing Codex otherWindows or Claude per-model weekly limits in the UI."
+    ],
+    "sourcePaths": [
+      "design-docs/specs/design-subscription-rate-limits.md",
+      "design-docs/user-qa/2026-10-31-subscription-rate-limit-decisions.md",
+      "design-docs/specs/architecture.md",
+      "impl-plans/active/subscription-rate-limits-overview.md",
+      "Sources/AppCore/State.swift",
+      "Sources/AppCore/DashboardStateStore.swift",
+      "Sources/AppCore/HTTPService.swift",
+      "Sources/AppCore/MachineDashboardRouter.swift",
+      "Sources/AppCore/CodexUsageEvents.swift",
+      "Sources/AppCore/UsageEventLogReader.swift",
+      "Sources/AppCore/CCUsageCommandRunner.swift",
+      "Sources/AppCLI/Runtime.swift",
+      "Sources/CCUsageGaugeMenuBar/MenuBarApp.swift",
+      "Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift",
+      "frontend/src/App.tsx",
+      "frontend/src/api.ts",
+      "frontend/src/dashboardLoadingState.ts",
+      "frontend/tests/appMarkupGuards.test.ts",
+      "README.md"
+    ]
+  },
+  "plans": [
+    {
+      "planId": "rl-01",
+      "planPath": "impl-plans/active/rl-01-core-contracts-service.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "Sources/AppCore/RateLimitUsageModels.swift",
+        "Sources/AppCore/RateLimitUsageProtocols.swift",
+        "Sources/AppCore/RateLimitUsageTransport.swift",
+        "Sources/AppCore/RateLimitUsageService.swift",
+        "Tests/AppCoreTests/RateLimitUsageTestSupport.swift",
+        "Tests/AppCoreTests/RateLimitUsageModelsTests.swift",
+        "Tests/AppCoreTests/RateLimitUsageServiceTests.swift",
+        "impl-plans/active/rl-01-core-contracts-service.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "All contract symbols in rl-01 exist with exact names and signatures (RateLimitProvider, RateLimitStatus, RateLimitErrorCode, RateLimitWindowKind, RateLimitWindow, RateLimitObservation, ProviderRateLimits.slots, RateLimitsResponse, RedactedSecret, credential structs and protocols, URLSessionRateLimitTransport, RateLimitUsageService).",
+        "Optionals encode as explicit null; RedactedSecret prints <redacted> and is not Codable or Hashable.",
+        "Service implements the Status Algorithm exactly: 60s throttle for every status, single flight, last-good and Codex fallback candidates, window expiry, Claude auth failure always unauthorized.",
+        "Every listed model and service test exists and passes; no token-refresh code; owned files under 1000 lines; verification recorded in the Progress Log with exit codes."
+      ],
+      "verification": [
+        "mkdir -p tmp/subscription-rate-limits-20261031/rl-01 && swift build > tmp/subscription-rate-limits-20261031/rl-01/build.log 2>&1",
+        "swift test --filter RateLimitUsageModelsTests > tmp/subscription-rate-limits-20261031/rl-01/models-tests.log 2>&1",
+        "swift test --filter RateLimitUsageServiceTests > tmp/subscription-rate-limits-20261031/rl-01/service-tests.log 2>&1",
+        "swiftlint lint Sources/AppCore/RateLimitUsageModels.swift Sources/AppCore/RateLimitUsageProtocols.swift Sources/AppCore/RateLimitUsageTransport.swift Sources/AppCore/RateLimitUsageService.swift Tests/AppCoreTests/RateLimitUsageTestSupport.swift Tests/AppCoreTests/RateLimitUsageModelsTests.swift Tests/AppCoreTests/RateLimitUsageServiceTests.swift > tmp/subscription-rate-limits-20261031/rl-01/swiftlint.log 2>&1",
+        "wc -l Sources/AppCore/RateLimitUsageModels.swift Sources/AppCore/RateLimitUsageProtocols.swift Sources/AppCore/RateLimitUsageTransport.swift Sources/AppCore/RateLimitUsageService.swift Tests/AppCoreTests/RateLimitUsageTestSupport.swift Tests/AppCoreTests/RateLimitUsageModelsTests.swift Tests/AppCoreTests/RateLimitUsageServiceTests.swift > tmp/subscription-rate-limits-20261031/rl-01/wc.log 2>&1",
+        "! grep -rn 'refresh_token\\|refreshToken\\|oauth/token' Sources/AppCore/RateLimitUsageModels.swift Sources/AppCore/RateLimitUsageProtocols.swift Sources/AppCore/RateLimitUsageTransport.swift Sources/AppCore/RateLimitUsageService.swift"
+      ]
+    },
+    {
+      "planId": "rl-02",
+      "planPath": "impl-plans/active/rl-02-pie-selection-state.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "Sources/AppCore/PieChartSelection.swift",
+        "Sources/AppCore/State.swift",
+        "Sources/AppCore/DashboardStateStore.swift",
+        "Tests/AppCoreTests/PieChartSelectionTests.swift",
+        "impl-plans/active/rl-02-pie-selection-state.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "PieChartID and PieChartSelection (defaultSelection, normalized(rawValues:), normalized(_:), toggled(_:in:)) exist exactly as named.",
+        "AppState.menuBarPieCharts and DashboardUIState.pieCharts added last with [budget] defaults, decoded via decodeIfPresent([String]) plus normalization; existing CodingKeys and resetCycle decoding unchanged; validate() bounds pieCharts.",
+        "Legacy JSON decodes to [budget] in both stores with budget and cycle preserved; round trips through StateStore and DashboardStateStore persist the field.",
+        "PieChartSelectionTests pass; DashboardUIStateFoldEffortTests and StoreTests still pass; verification recorded in the Progress Log."
+      ],
+      "verification": [
+        "mkdir -p tmp/subscription-rate-limits-20261031/rl-02 && swift build > tmp/subscription-rate-limits-20261031/rl-02/build.log 2>&1",
+        "swift test --filter PieChartSelectionTests > tmp/subscription-rate-limits-20261031/rl-02/pie-selection-tests.log 2>&1",
+        "swift test --filter DashboardUIStateFoldEffortTests > tmp/subscription-rate-limits-20261031/rl-02/fold-effort-tests.log 2>&1",
+        "swift test --filter StoreTests > tmp/subscription-rate-limits-20261031/rl-02/store-tests.log 2>&1",
+        "swiftlint lint Sources/AppCore/PieChartSelection.swift Sources/AppCore/State.swift Sources/AppCore/DashboardStateStore.swift Tests/AppCoreTests/PieChartSelectionTests.swift > tmp/subscription-rate-limits-20261031/rl-02/swiftlint.log 2>&1"
+      ]
+    },
+    {
+      "planId": "rl-03",
+      "planPath": "impl-plans/active/rl-03-frontend-dashboard.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "frontend/src/api.ts",
+        "frontend/src/rateLimits.ts",
+        "frontend/src/RateLimitPanel.tsx",
+        "frontend/src/PieChartPanel.tsx",
+        "frontend/src/App.tsx",
+        "frontend/src/styles.css",
+        "frontend/tests/rateLimits.test.ts",
+        "impl-plans/active/rl-03-frontend-dashboard.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "api.ts types (PieChartID, RateLimitWindow, ProviderRateLimits, RateLimitsResponse, DashboardUIState.pieCharts) and rateLimits.ts helpers (pieChartIds, normalizePieCharts, togglePieChart, rateLimitWindowFor, formatResetIn, rateLimitStatusLabel, pieFraction) exist with exact names.",
+        "RateLimitPanel and PieChartPanel render as specified with flat SVG and five aria-pressed toggles; the last selected toggle is disabled; selection persists through the existing dashboard-state save path.",
+        "App.tsx reads rate limits only through shieldResource(rateLimitsResource), refetches via Promise.resolve(refreshRateLimits()).catch(() => undefined), and never feeds errorMessage, hasFailedRequest, or isFetching; the source-guard test passes.",
+        "frontend:check and frontend:test exit 0 including appMarkupGuards; App.tsx at most about 1375 lines; Sources/AppCore/Resources/Web untouched; verification recorded in the Progress Log."
+      ],
+      "verification": [
+        "mkdir -p tmp/subscription-rate-limits-20261031/rl-03 && mise run frontend:check > tmp/subscription-rate-limits-20261031/rl-03/frontend-check.log 2>&1",
+        "mise run frontend:test > tmp/subscription-rate-limits-20261031/rl-03/frontend-test.log 2>&1",
+        "test \"$(wc -l < frontend/src/App.tsx)\" -le 1375",
+        "test -z \"$(git status --short Sources/AppCore/Resources/Web)\""
+      ]
+    },
+    {
+      "planId": "rl-04",
+      "planPath": "impl-plans/active/rl-04-readme.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "README.md",
+        "impl-plans/active/rl-04-readme.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "README has exactly one '## Subscription rate limits and pie charts' section placed before '## Remote machines' covering what it shows, data sources, privacy, statuses, pie chart selection, and a secret-free API example.",
+        "README mentions /api/rate-limits, menuBarPieCharts, Claude Code-credentials, and CODEX_HOME; no real tokens, account IDs, or user paths beyond ~; no emojis; no remote-machine support claim.",
+        "Verification recorded in the Progress Log."
+      ],
+      "verification": [
+        "mkdir -p tmp/subscription-rate-limits-20261031/rl-04 && test \"$(grep -c '^## Subscription rate limits and pie charts' README.md)\" -eq 1",
+        "grep -q '/api/rate-limits' README.md && grep -q 'menuBarPieCharts' README.md && grep -q 'Claude Code-credentials' README.md && grep -q 'CODEX_HOME' README.md",
+        "git diff --stat README.md > tmp/subscription-rate-limits-20261031/rl-04/diff-stat.log 2>&1"
+      ]
+    },
+    {
+      "planId": "rl-05",
+      "planPath": "impl-plans/active/rl-05-claude-fetcher.md",
+      "wave": 2,
+      "dependsOn": [
+        "rl-01"
+      ],
+      "writePaths": [
+        "Sources/AppCore/RateLimitUsageClaude.swift",
+        "Sources/AppCore/RateLimitUsageClaudeCredentials.swift",
+        "Tests/AppCoreTests/RateLimitUsageClaudeTests.swift",
+        "impl-plans/active/rl-05-claude-fetcher.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "ClaudeCredentialProvider and ClaudeRateLimitFetcher exist exactly as named; Keychain via /usr/bin/security with fixed arguments and 10s timeout, file fallback honoring CLAUDE_CONFIG_DIR; decoding structs never declare refreshToken.",
+        "Expired token throws tokenExpired with zero transport calls; status mapping 200/401/403/429/other; exact sample body decodes to fiveHour used 0 remaining 100 and weekly used 53 remaining 47 with microsecond +00:00 resets_at parsed.",
+        "Exactly three request headers; only /api/oauth/usage URLs recorded; no thrown error description contains the sentinel.",
+        "All listed tests pass; no refreshToken, refresh_token, or SecItem in owned sources; verification recorded in the Progress Log."
+      ],
+      "verification": [
+        "mkdir -p tmp/subscription-rate-limits-20261031/rl-05 && swift build > tmp/subscription-rate-limits-20261031/rl-05/build.log 2>&1",
+        "swift test --filter RateLimitUsageClaudeTests > tmp/subscription-rate-limits-20261031/rl-05/claude-tests.log 2>&1",
+        "swiftlint lint Sources/AppCore/RateLimitUsageClaude.swift Sources/AppCore/RateLimitUsageClaudeCredentials.swift Tests/AppCoreTests/RateLimitUsageClaudeTests.swift > tmp/subscription-rate-limits-20261031/rl-05/swiftlint.log 2>&1",
+        "! grep -n 'refreshToken\\|refresh_token\\|SecItem' Sources/AppCore/RateLimitUsageClaude.swift Sources/AppCore/RateLimitUsageClaudeCredentials.swift"
+      ]
+    },
+    {
+      "planId": "rl-06",
+      "planPath": "impl-plans/active/rl-06-codex-fetcher.md",
+      "wave": 2,
+      "dependsOn": [
+        "rl-01"
+      ],
+      "writePaths": [
+        "Sources/AppCore/RateLimitUsageCodex.swift",
+        "Sources/AppCore/RateLimitUsageCodexSessionFallback.swift",
+        "Tests/AppCoreTests/RateLimitUsageCodexTests.swift",
+        "Tests/AppCoreTests/RateLimitUsageCodexFallbackTests.swift",
+        "impl-plans/active/rl-06-codex-fetcher.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "CodexHome, CodexCredentialProvider, CodexRateLimitFetcher, and CodexRateLimitSessionFallback exist exactly as named; CODEX_HOME honored; decoding structs never declare refresh_token, id_token, or OPENAI_API_KEY.",
+        "Exact Codex sample yields planType pro and one weekly window used 82 remaining 18 resetsAt epoch 1793774131 with fiveHour nil via slots; classification is position-independent; 3600s lands in other.",
+        "Fallback returns the newest usable token_count rate_limits event by modification time, skips null and malformed lines, respects maxFiles, and never throws.",
+        "All listed tests pass; CodexUsageEvents.swift and UsageEventLogReader.swift unchanged; verification recorded in the Progress Log."
+      ],
+      "verification": [
+        "mkdir -p tmp/subscription-rate-limits-20261031/rl-06 && swift build > tmp/subscription-rate-limits-20261031/rl-06/build.log 2>&1",
+        "swift test --filter RateLimitUsageCodexTests > tmp/subscription-rate-limits-20261031/rl-06/codex-tests.log 2>&1",
+        "swift test --filter RateLimitUsageCodexFallbackTests > tmp/subscription-rate-limits-20261031/rl-06/codex-fallback-tests.log 2>&1",
+        "swiftlint lint Sources/AppCore/RateLimitUsageCodex.swift Sources/AppCore/RateLimitUsageCodexSessionFallback.swift Tests/AppCoreTests/RateLimitUsageCodexTests.swift Tests/AppCoreTests/RateLimitUsageCodexFallbackTests.swift > tmp/subscription-rate-limits-20261031/rl-06/swiftlint.log 2>&1",
+        "! grep -n 'refresh_token\\|id_token\\|OPENAI_API_KEY' Sources/AppCore/RateLimitUsageCodex.swift Sources/AppCore/RateLimitUsageCodexSessionFallback.swift",
+        "git diff --quiet -- Sources/AppCore/CodexUsageEvents.swift Sources/AppCore/UsageEventLogReader.swift"
+      ]
+    },
+    {
+      "planId": "rl-07",
+      "planPath": "impl-plans/active/rl-07-http-routes.md",
+      "wave": 2,
+      "dependsOn": [
+        "rl-01"
+      ],
+      "writePaths": [
+        "Sources/AppCore/HTTPService+RateLimits.swift",
+        "Sources/AppCore/HTTPService.swift",
+        "Sources/AppCore/MachineDashboardRouter.swift",
+        "Tests/AppCoreTests/RateLimitRoutesTests.swift",
+        "impl-plans/active/rl-07-http-routes.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "rateLimitsHTTPResponse(service:method:) helper returns 200 sorted-key ISO 8601 JSON, 405 method_not_allowed, 503 rate_limits_unavailable, or 500 encoding_failed.",
+        "DashboardRouter and MachineDashboardRouter take a defaulted trailing rateLimitService parameter and serve /api/rate-limits before snapshot loading, directory mutation, queryRoute, and the generic GET guard; query parameters ignored.",
+        "Tests cover both routers and the delegating DashboardRouter(machineRouter:), structural equality, key allowlist, 405, 503, and independence from snapshot failure; DashboardTests and DesktopDashboardTests still pass.",
+        "HTTPService.swift and MachineDashboardRouter.swift stay under 1000 lines; verification recorded in the Progress Log."
+      ],
+      "verification": [
+        "mkdir -p tmp/subscription-rate-limits-20261031/rl-07 && swift build > tmp/subscription-rate-limits-20261031/rl-07/build.log 2>&1",
+        "swift test --filter RateLimitRoutesTests > tmp/subscription-rate-limits-20261031/rl-07/routes-tests.log 2>&1",
+        "swift test --filter DashboardTests > tmp/subscription-rate-limits-20261031/rl-07/dashboard-tests.log 2>&1",
+        "swift test --filter DesktopDashboardTests > tmp/subscription-rate-limits-20261031/rl-07/desktop-dashboard-tests.log 2>&1",
+        "swiftlint lint Sources/AppCore/HTTPService+RateLimits.swift Sources/AppCore/HTTPService.swift Sources/AppCore/MachineDashboardRouter.swift Tests/AppCoreTests/RateLimitRoutesTests.swift > tmp/subscription-rate-limits-20261031/rl-07/swiftlint.log 2>&1",
+        "test \"$(wc -l < Sources/AppCore/HTTPService.swift)\" -lt 1000 && test \"$(wc -l < Sources/AppCore/MachineDashboardRouter.swift)\" -lt 1000"
+      ]
+    },
+    {
+      "planId": "rl-08",
+      "planPath": "impl-plans/active/rl-08-menubar-views.md",
+      "wave": 2,
+      "dependsOn": [
+        "rl-01",
+        "rl-02"
+      ],
+      "writePaths": [
+        "Sources/CCUsageGaugeMenuBar/MenuBarPieStrip.swift",
+        "Sources/CCUsageGaugeMenuBar/PieChartMenu.swift",
+        "Sources/CCUsageGaugeMenuBar/RateLimitMenuView.swift",
+        "Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift",
+        "Sources/AppCore/RateLimitDisplayFormatting.swift",
+        "Tests/AppCoreTests/RateLimitDisplayFormattingTests.swift",
+        "impl-plans/active/rl-08-menubar-views.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "RateLimitDisplayFormatting (entry, title, resetText, menuLine, pieFraction), MenuBarPieEntry with the pinned cases, MenuBarPieStrip.image, PieChartMenu.item, and RateLimitMenuView.items exist exactly as named.",
+        "Single .budget entry returns MenuBarPieIcon.image unchanged; multi-entry strip is an 18 pt per pie, 2 pt gap template image reusing existing drawing helpers.",
+        "MenuBarPieIcon.swift diff only relaxes private static to internal static; MenuBarApp.swift untouched.",
+        "RateLimitDisplayFormattingTests pass; verification recorded in the Progress Log."
+      ],
+      "verification": [
+        "mkdir -p tmp/subscription-rate-limits-20261031/rl-08 && swift build > tmp/subscription-rate-limits-20261031/rl-08/build.log 2>&1",
+        "swift test --filter RateLimitDisplayFormattingTests > tmp/subscription-rate-limits-20261031/rl-08/formatting-tests.log 2>&1",
+        "swiftlint lint Sources/CCUsageGaugeMenuBar/MenuBarPieStrip.swift Sources/CCUsageGaugeMenuBar/PieChartMenu.swift Sources/CCUsageGaugeMenuBar/RateLimitMenuView.swift Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift Sources/AppCore/RateLimitDisplayFormatting.swift Tests/AppCoreTests/RateLimitDisplayFormattingTests.swift > tmp/subscription-rate-limits-20261031/rl-08/swiftlint.log 2>&1",
+        "git diff Sources/CCUsageGaugeMenuBar/MenuBarPieIcon.swift > tmp/subscription-rate-limits-20261031/rl-08/menubar-pie-icon.diff 2>&1",
+        "git diff --quiet -- Sources/CCUsageGaugeMenuBar/MenuBarApp.swift"
+      ]
+    },
+    {
+      "planId": "rl-09",
+      "planPath": "impl-plans/active/rl-09-integration-wiring.md",
+      "wave": 3,
+      "dependsOn": [
+        "rl-02",
+        "rl-03",
+        "rl-05",
+        "rl-06",
+        "rl-07",
+        "rl-08"
+      ],
+      "writePaths": [
+        "Sources/AppCore/RateLimitUsageProduction.swift",
+        "Sources/AppCLI/Runtime.swift",
+        "Sources/CCUsageGaugeMenuBar/MenuBarApp.swift",
+        "Sources/CCUsageGaugeMenuBar/MenuBarApp+PieCharts.swift",
+        "Tests/AppCoreTests/RateLimitUsageIntegrationTests.swift",
+        "Sources/AppCore/Resources/Web",
+        "impl-plans/active/rl-09-integration-wiring.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [],
+      "acceptanceCriteria": [
+        "RateLimitUsageService.production(environment:) composes the Claude and Codex fetchers, one URLSessionRateLimitTransport, and the Codex session fallback without I/O at construction.",
+        "Runtime.swift and MenuBarApp.swift each create one shared service and pass it to MachineDashboardRouter; MenuBarApp.swift stays under 1000 lines with new code in MenuBarApp+PieCharts.swift.",
+        "refreshRateLimitsIfNeeded() runs on every refresh() independent of the snapshot early returns, calls current() only when a non-budget pie is selected, stores latestRateLimits, then calls updateStatusIcon(); togglePieChart persists via mutateState with no extra refresh scheduling.",
+        "Glyph built from [MenuBarPieEntry] via MenuBarPieStrip with appliedIconState dedup; dropdown keeps the budget block only when budget is selected and appends RateLimitMenuView rows; default [budget] behavior unchanged.",
+        "RateLimitUsageIntegrationTests pass through both routers with no sentinel in the body and no token or refresh URL recorded; Sources/AppCore/Resources/Web regenerated by mise run build, not hand-edited.",
+        "Full gate mise run build, mise run test, mise run lint, mise run frontend:check, mise run frontend:test exits 0 with logs; no refresh-token path in sources; live smoke and interactive glyph check recorded or explicitly skipped with reason."
+      ],
+      "verification": [
+        "mkdir -p tmp/subscription-rate-limits-20261031/rl-09 && mise run build > tmp/subscription-rate-limits-20261031/rl-09/build.log 2>&1",
+        "mise run test > tmp/subscription-rate-limits-20261031/rl-09/test.log 2>&1",
+        "mise run lint > tmp/subscription-rate-limits-20261031/rl-09/lint.log 2>&1",
+        "mise run frontend:check > tmp/subscription-rate-limits-20261031/rl-09/frontend-check.log 2>&1",
+        "mise run frontend:test > tmp/subscription-rate-limits-20261031/rl-09/frontend-test.log 2>&1",
+        "for f in Sources/CCUsageGaugeMenuBar/MenuBarApp.swift Sources/CCUsageGaugeMenuBar/MenuBarApp+PieCharts.swift Sources/AppCore/HTTPService.swift Sources/AppCore/MachineDashboardRouter.swift Sources/AppCore/RateLimitUsage*.swift; do test \"$(wc -l < \"$f\")\" -lt 1000 || exit 1; done",
+        "! grep -rn 'refresh_token\\|refreshToken\\|oauth/token' Sources/AppCore Sources/CCUsageGaugeMenuBar Sources/AppCLI --include='*.swift'",
+        "git status --short > tmp/subscription-rate-limits-20261031/rl-09/git-status.log 2>&1"
+      ]
+    }
+  ]
+}

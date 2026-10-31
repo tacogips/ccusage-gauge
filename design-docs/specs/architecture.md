@@ -17,6 +17,9 @@ session detail for reconciliation across each materialized dashboard range, but
 do not replace aggregate costs or tokens. Per-machine source-root selection follows
 `design-machine-session-source-directories.md`. Static configuration and
 mutable user state have separate ownership and storage locations.
+Subscription rate limits for the local Claude Code and Codex accounts are a
+separate, cost-independent data source defined in
+`design-subscription-rate-limits.md`.
 
 ## Target Boundaries
 
@@ -152,7 +155,9 @@ The state store owns:
 - selected aggregation period: `hourly`, `daily`, `weekly`, `monthly`, or `customHours` with a
   positive hour count;
 - period baseline metadata, as defined below, which makes the selected effective
-  boundary explicit and stable across restarts.
+  boundary explicit and stable across restarts;
+- `menuBarPieCharts`, the menu-bar pie selection. It is decoded when present
+  and defaults to `[budget]`. See `design-subscription-rate-limits.md`.
 
 State changes use an atomic replacement in the same directory. Timestamps are
 encoded as ISO 8601 instants. Corrupt state is reported and must not be silently
@@ -660,7 +665,11 @@ fraction, followed by formatted USD cost in the selected period. Its menu expose
 - a budget editor persisted to the mutable state file;
 - aggregation-period choices, including hourly and a positive custom-hour value;
 - dashboard start, stop, and open actions;
-- a Settings submenu backed by `SMAppService.mainApp` for Launch at Login;
+- a Settings submenu backed by `SMAppService.mainApp` for Launch at Login, and
+  a "Pie charts" multi-select. The multi-select chooses which of the budget,
+  Claude 5h, Claude weekly, Codex 5h, and Codex weekly pies are rendered in the
+  glyph and the dropdown. The default is budget only. See
+  `design-subscription-rate-limits.md`;
 - a warning status icon and Error Details submenu when ccusage validation or
   collection fails, including the config path and a retry action;
 - current refresh or configuration errors and missing-`ccusage` guidance;
@@ -699,6 +708,11 @@ Version-one routes are:
   timestamps while daily uses exact daily agent/model breakdowns;
 - `GET /api/budget`: budget, selected-period cost, remaining amount, aggregation period,
   active boundary, and the effective menu-bar refresh interval.
+- `GET /api/rate-limits`: derived 5h and weekly subscription windows for the
+  local Claude Code and Codex accounts. Upstream calls are throttled to one
+  per provider every 60 seconds. The route is served on both routing surfaces,
+  ignores machine selection, and has no snapshot dependency. See
+  `design-subscription-rate-limits.md`.
 
 The dashboard defaults to a rolling last-12-hours hourly query. It requests only
 the selected period, so Today, Yesterday, This Week, This Month, and custom
@@ -910,6 +924,10 @@ first-class UI states, and does not invoke `ccusage` or access local files.
 The model-only stack remains the default, and responses without
 `effortBreakdown` are unchanged.
 
+`design-subscription-rate-limits.md` defines the rate-limit panel and the
+persisted `DashboardUIState.pieCharts` multi-select of pie charts. The
+selection defaults to the budget pie only.
+
 ## Security and Privacy Boundaries
 
 - The server is loopback-only. Registry create/replace/patch/delete, manual
@@ -923,6 +941,10 @@ The model-only stack remains the default, and responses without
 - Registry safety is mandatory rather than best-effort: unsafe ownership, file
   type, links, permissions, JSON, descriptors, or persistence paths fail startup.
   Other configuration and state files use user-only permissions when created.
+- Claude Code and Codex OAuth credentials are read-only and held in memory
+  for a single fetch. They are never refreshed, logged, persisted, or
+  returned. `/api/rate-limits` returns only derived numbers, as specified in
+  `design-subscription-rate-limits.md`.
 - The user-provided HEIC image is a visual reference only and must not be
   copied into the repository, build resources, release archives, or Git.
 
