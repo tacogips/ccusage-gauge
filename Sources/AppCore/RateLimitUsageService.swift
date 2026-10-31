@@ -7,6 +7,9 @@ public actor RateLimitUsageService {
     var lastGood: RateLimitObservation?
     var flight: Task<ProviderRateLimits, Never>?
     var generation: UInt64 = 0
+    var restored = false
+    var throttles = 0
+    var retryAt: Date?
   }
   private enum Outcome: Sendable {
     case success(RateLimitObservation)
@@ -16,6 +19,9 @@ public actor RateLimitUsageService {
   private let codex: any RateLimitLiveFetching
   private let fallback: (any CodexRateLimitFallbackReading)?
   private let minimumInterval: TimeInterval
+  private let claudeMinimumInterval: TimeInterval
+  private let maximumBackoff: TimeInterval
+  private let store: (any RateLimitObservationStoring)?
   private let now: @Sendable () -> Date
   private var states: [RateLimitProvider: State] = [:]
   private var waiterHook: (@Sendable (Bool) async -> Void)?
@@ -24,9 +30,14 @@ public actor RateLimitUsageService {
 
   public init(claude: any RateLimitLiveFetching, codex: any RateLimitLiveFetching,
               codexFallback: (any CodexRateLimitFallbackReading)?, minimumInterval: TimeInterval = 60,
-              now: @escaping @Sendable () -> Date = { Date() }) {
+              claudeMinimumInterval: TimeInterval? = nil, maximumBackoff: TimeInterval = 1800,
+              store: (any RateLimitObservationStoring)? = nil, now: @escaping @Sendable () -> Date = { Date() }) {
     self.claude = claude; self.codex = codex; self.fallback = codexFallback
-    self.minimumInterval = minimumInterval; self.now = now
+    self.minimumInterval = minimumInterval; self.claudeMinimumInterval = claudeMinimumInterval ?? minimumInterval
+    self.maximumBackoff = maximumBackoff; self.store = store; self.now = now
+  }
+  private func interval(for provider: RateLimitProvider) -> TimeInterval {
+    provider == .claude ? claudeMinimumInterval : minimumInterval
   }
   public func current() async -> RateLimitsResponse {
     async let claudeResult = entry(for: .claude)
@@ -37,6 +48,11 @@ public actor RateLimitUsageService {
   private func entry(for provider: RateLimitProvider) async -> ProviderRateLimits {
     var state = states[provider] ?? State()
     let attemptTime = now()
+    if !state.restored {
+      state.restored = true
+      if state.lastGood == nil { state.lastGood = store?.load(provider) }
+      states[provider] = state
+    }
     if let flight = state.flight {
       let hook = waiterHook
       await hook?(false)
@@ -44,8 +60,9 @@ public actor RateLimitUsageService {
       await hook?(true)
       return result
     }
-    if let cached = state.cached, let last = state.lastAttempt, attemptTime.timeIntervalSince(last) < minimumInterval {
-      return cached
+    if let cached = state.cached, let last = state.lastAttempt {
+      let nextAttempt = max(last.addingTimeInterval(interval(for: provider)), state.retryAt ?? .distantPast)
+      if attemptTime < nextAttempt { return cached }
     }
     let fetcher = provider == .claude ? claude : codex
     let fallback = provider == .codex ? self.fallback : nil
@@ -68,8 +85,16 @@ public actor RateLimitUsageService {
     switch outcome {
     case .success(let observation):
       state.lastGood = observation
+      state.throttles = 0; state.retryAt = nil
+      store?.save(observation, for: provider)
       result = makeEntry(provider: provider, status: .ok, code: nil, observation: observation)
     case .failure(let code, let fallback):
+      if code == .rateLimited {
+        // Back off exponentially so repeated polling does not keep the usage API throttled.
+        state.throttles += 1
+        let delay = min(interval(for: provider) * pow(2, Double(state.throttles - 1)), max(maximumBackoff, interval(for: provider)))
+        state.retryAt = (state.lastAttempt ?? now()).addingTimeInterval(delay)
+      }
       if provider == .claude && (code == .unauthorized || code == .tokenExpired) {
         result = makeEntry(provider: provider, status: .unauthorized, code: code, observation: nil)
       } else {

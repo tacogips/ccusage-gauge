@@ -73,7 +73,8 @@ The SolidJS dashboard provides:
   countdowns; disabling Codex 5h, for example, hides it from both chart and text;
 - optional **Claude Code credit** and **Codex credit** charts for extended usage
   (Claude extra usage spend and Codex credit balance);
-- independent subscription refresh every 60 seconds and countdown updates every
+- independent subscription refresh (Codex every 60 seconds, Claude Code every
+  5 minutes) and countdown updates every
   30 seconds;
 - compact chevron controls for collapsing sections and individual metric cards,
   with section choices remembered locally;
@@ -342,8 +343,8 @@ not rewrite the static configuration. The **Refresh interval** submenu can set
 a persistent positive whole-number override in seconds or return to the
 `pollIntervalSeconds` configuration default. The dashboard automatically uses
 the same effective interval for cost data and adopts menu-bar interval changes
-after its next refresh. Subscription limits use a separate 60-second refresh
-cycle, so cost-history loading does not delay their updates.
+after its next refresh. Subscription limits use a separate refresh cycle, so
+cost-history loading does not delay their updates.
 
 ## Subscription usage and display controls
 
@@ -378,7 +379,14 @@ Credentials are read-only and held in memory only for a fetch attempt. Tokens
 are never refreshed, logged, stored, or returned by the app. The
 `GET /api/rate-limits` response contains derived usage numbers, statuses, plan
 types, and timestamps, not credentials or account IDs. Requests are limited to
-at most one attempt per provider every 60 seconds, including failures. Opening
+at most one attempt every 60 seconds for Codex and every 5 minutes for Claude
+Code, whose usage endpoint throttles frequent callers; both limits include
+failures. When a provider answers HTTP 429, the next attempt is delayed
+exponentially (one interval, then double, up to 30 minutes) and resets after a
+success. The last successful observation per provider is saved to
+`~/.local/ccusage-gauge/rate-limits.json` (derived numbers only, mode `0600`),
+so after a restart or while throttled the app shows that data as stale with its
+"as of" time instead of an error. Opening
 the dashboard triggers rate-limit requests; the menu bar requests them only when
 a subscription usage icon or subscription percentage is selected.
 
@@ -451,7 +459,7 @@ Codex        Weekly 34% used reset in 5d  Credit 62,500 credits left
 Only enabled windows appear: turning off **Codex 5h** removes both its chart and
 its 5-hour text while preserving the weekly display. Reset countdowns use days,
 hours, or minutes rather than a full date/time. Subscription data refreshes
-every minute independently of cost-history loading; countdowns update every
+independently of cost-history loading; countdowns update every
 30 seconds.
 
 Use the compact chevron buttons to collapse dashboard sections and individual

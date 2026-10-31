@@ -12,7 +12,7 @@ public enum RateLimitErrorCode: String, Codable, Sendable, Error {
     case .credentialsMissing: "CLI credentials were not found"
     case .credentialsUnreadable: "CLI credentials could not be read"
     case .tokenExpired, .unauthorized: "Sign in again with the CLI to refresh credentials"
-    case .rateLimited: "Rate limit request was throttled"
+    case .rateLimited: "Usage API is throttling requests; retrying later"
     case .httpError: "Rate limit request failed"
     case .networkError: "Rate limit network request failed"
     case .timeout: "Rate limit request timed out"
@@ -88,7 +88,7 @@ public struct RateLimitCredits: Codable, Equatable, Sendable {
     try container.encode(usedPercent, forKey: .usedPercent)
   }
 }
-public struct RateLimitObservation: Equatable, Sendable {
+public struct RateLimitObservation: Codable, Equatable, Sendable {
   public let planType: String?
   public let observedAt: Date
   public let windows: [RateLimitWindow]

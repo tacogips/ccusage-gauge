@@ -32,3 +32,8 @@ public protocol RateLimitHTTPTransport: Sendable {
 }
 public protocol RateLimitLiveFetching: Sendable { func fetchLive(now: Date) async throws -> RateLimitObservation }
 public protocol CodexRateLimitFallbackReading: Sendable { func latestObservation() async -> RateLimitObservation? }
+/// Keeps the last successful observation per provider so restarts and throttling can show stale data.
+public protocol RateLimitObservationStoring: Sendable {
+  func load(_ provider: RateLimitProvider) -> RateLimitObservation?
+  func save(_ observation: RateLimitObservation, for provider: RateLimitProvider)
+}
