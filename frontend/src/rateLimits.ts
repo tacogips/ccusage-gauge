@@ -11,6 +11,13 @@ export function togglePieChart(id: PieChartID, selection: PieChartID[]): PieChar
   if (current.includes(id) && current.length === 1) return current;
   return normalizePieCharts(current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
 }
+export function normalizeHiddenPieRatios(value: unknown): PieChartID[] {
+  const values = Array.isArray(value) ? value : [];
+  return pieChartIds.filter((id) => values.includes(id));
+}
+export function toggleHiddenPieRatio(id: PieChartID, hidden: PieChartID[]): PieChartID[] {
+  return normalizeHiddenPieRatios(hidden.includes(id) ? hidden.filter((item) => item !== id) : [...hidden, id]);
+}
 export function rateLimitWindowFor(id: PieChartID, response?: RateLimitsResponse): { provider?: ProviderRateLimits; window?: RateLimitWindow | null } {
   if (id === "budget") return {};
   const provider = response?.providers.find((item) => item.provider === (id.startsWith("claude") ? "claude" : "codex"));

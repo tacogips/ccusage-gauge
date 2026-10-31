@@ -8,7 +8,9 @@ ccusage-gauge supports ccusage 20.0.17 and later. It automatically uses the
 ccusage 20.1.0.
 
 The status item shows a budget-progress pie followed by cost in the selected
-aggregation period. Its menu supports budget editing, hourly/daily/weekly/
+aggregation period. The pies and the ratio text it shows are configurable; see
+[Subscription rate limits and pie charts](#subscription-rate-limits-and-pie-charts).
+Its menu supports budget editing, hourly/daily/weekly/
 monthly/custom-hour aggregation periods, Launch at Login, dashboard start/stop/open,
 refresh, and quit. Missing or invalid `ccusage` configuration changes the
 status icon to a warning and exposes diagnostics plus retry in an Error Details
@@ -341,7 +343,7 @@ are never refreshed, logged, stored, or returned by the app. The
 types, and timestamps, not credentials or account IDs. Requests are limited to
 at most one attempt per provider every 60 seconds, including failures. Opening
 the dashboard triggers rate-limit requests; the menu bar requests them only when
-a rate-limit pie is selected.
+a rate-limit pie or a rate-limit ratio text is selected.
 
 The status `ok` indicates a successful observation; `stale` shows a previous
 observation with its "as of" time; `unauthorized` indicates a login problem;
@@ -354,6 +356,35 @@ weekly. The selection is saved in dashboard state. In the menu bar, use
 **Settings > Pie charts**; its independent selection is saved as
 `menuBarPieCharts` in `~/.local/ccusage-gauge/state.json`. Both selections
 default to the budget pie only, and at least one pie remains selected.
+
+The ratio text is selected separately from the pies. In the menu bar, use
+**Settings > Ratio text**, which follows **Pie charts**, to choose which ratios
+appear as text in the status item. It offers the same five items, and each one
+toggles independently:
+
+- **Budget** shows the existing `<cost> · <budget %>` text, including its
+  warning marker.
+- Each rate-limit item shows a compact used-percent label: `Claude 5h n%`,
+  `Claude W n%`, `Codex 5h n%`, or `Codex W n%`. A window that is not available
+  shows `--`, for example `Codex W --`. A newly selected label shows `--` until
+  the next rate-limit fetch completes.
+
+Selected labels are joined with ` · ` in a fixed order. An empty selection
+leaves only the pie glyph. The selection is saved as `menuBarRatioLabels` in
+`state.json`. If the key is missing, it defaults to budget text only, which is
+the previous status title. When budget text is hidden, its warning marker is
+hidden too, but the warning remains in the tooltip, in the accessibility label,
+and on the budget pie when that pie is shown.
+
+For example, to show only the Claude Code weekly and Codex weekly pies with
+their ratios, select only those two items under both **Pie charts** and
+**Ratio text**. The status item then shows two pies followed by text such as
+`Claude W 59% · Codex W 83%`, with no budget pie or budget text.
+
+On the dashboard, each selected pie has a **Ratio** button that shows or hides
+its used-percent text. Hidden ratios are saved in dashboard state as
+`hiddenPieRatios`. By default every ratio is shown. The dashboard's **Menu
+budget** line is not affected.
 
 For example, request the local API:
 

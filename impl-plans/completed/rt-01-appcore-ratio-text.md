@@ -1,6 +1,6 @@
 # rt-01: AppCore Ratio-Text Selection, Persisted Fields, and Title Composition
 
-**Status**: Planned
+**Status**: Completed
 **Wave**: 1 (no dependencies)
 **Design Reference**: `design-docs/specs/design-subscription-rate-limits.md`,
 section "Configurable Ratio Text", subsections "Selection model (AppCore)",
@@ -209,13 +209,16 @@ Run from the repository root, in the foreground. Each command must exit 0.
 
 ## Done Criteria
 
-- [ ] `grep -n "public enum RatioTextSelection" Sources/AppCore/PieChartSelection.swift` matches.
-- [ ] `grep -n "menuBarRatioLabels" Sources/AppCore/State.swift` shows the property, the init parameter, the coding key, and the decode.
-- [ ] `grep -n "hiddenPieRatios" Sources/AppCore/DashboardStateStore.swift` shows the property, the init, the key, the decode, and the validate line.
-- [ ] `grep -n "func ratioLabel\|func statusTitle" Sources/AppCore/RateLimitDisplayFormatting.swift` gives 2 matches.
-- [ ] Verification steps 2 to 6 exit 0, and their logs are complete.
-- [ ] No file outside writePaths is modified (`git status --short`).
+- [x] `grep -n "public enum RatioTextSelection" Sources/AppCore/PieChartSelection.swift` matches.
+- [x] `grep -n "menuBarRatioLabels" Sources/AppCore/State.swift` shows the property, the init parameter, the coding key, and the decode.
+- [x] `grep -n "hiddenPieRatios" Sources/AppCore/DashboardStateStore.swift` shows the property, the init, the key, the decode, and the validate line.
+- [x] `grep -n "func ratioLabel\|func statusTitle" Sources/AppCore/RateLimitDisplayFormatting.swift` gives 2 matches.
+- [x] Verification steps 2 to 6 exit 0, and their logs are complete.
+- [x] No file outside writePaths is modified (`git status --short`).
 
 ## Progress Log
 
 - 2026-10-31: Plan created.
+- 2026-10-31: Implemented the AppCore selection, persisted fields, and title composition in the four owned source files; added `RatioTextTests.swift`. Per-edit SHA-256 and intentions are recorded in `tmp/ratio-text-20261031/rt-01/edit-intentions.log`.
+- 2026-10-31: Implementation criteria met: selection and fields exist, compatibility and persistence tests pass, title outputs are pinned, and all five owned Swift files are below 1000 lines. `swift build` passed; `RatioTextTests` passed 6 tests; the specified regression filter passed 46 tests; prescribed and strict selected-file SwiftLint passed with zero violations. Logs are in `tmp/ratio-text-20261031/rt-01/`. These checks ran on the shared working tree; final integration verification and formal review remain downstream.
+- 2026-10-31: Completed. Test-integrity review, adversarial review (needs_revision=false) and the integration review accepted rt-01. The rt-04 full gate exited 0 on the joined tree (`tmp/ratio-text-20261031/rt-04/test.log`: 357 tests passed, including `RatioTextTests`). The done-criteria greps were re-run at documentation refresh and matched (1, 5, 7, 2). Archived to `impl-plans/completed/rt-01-appcore-ratio-text.md`.

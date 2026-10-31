@@ -3,12 +3,25 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const app = readFileSync(join(import.meta.dir, "../src/App.tsx"), "utf8");
+const piePanel = readFileSync(join(import.meta.dir, "../src/PieChartPanel.tsx"), "utf8");
 const chart = readFileSync(join(import.meta.dir, "../src/UsageChart.tsx"), "utf8");
 const rangeControls = readFileSync(join(import.meta.dir, "../src/RangeControls.tsx"), "utf8");
 const layout = readFileSync(join(import.meta.dir, "../src/DashboardLayout.tsx"), "utf8");
 const html = readFileSync(join(import.meta.dir, "../index.html"), "utf8");
 
 describe("dashboard app markup contract", () => {
+  test("wires per-pie ratio text visibility", () => {
+    expect(piePanel).toContain("<Show when={ratioVisible()}><span>{detail()}</span></Show>");
+    expect(piePanel).toContain("aria-pressed={ratioVisible()}");
+    expect(piePanel).toContain("Show ratio text for ");
+    expect(piePanel).toContain("props.onToggleRatio(id)");
+    expect(piePanel).toContain("props.hiddenRatios()");
+    expect(piePanel).toContain('aria-label={`${labels[id]}: ${detail()}`}');
+    expect(app).toContain("setHiddenPieRatios(normalizeHiddenPieRatios(state.hiddenPieRatios))");
+    expect(app).toContain("hiddenPieRatios: hiddenPieRatios(),");
+    expect(app).toContain("Menu budget: ");
+  });
+
   test("uses square SVG rectangles", () => {
     const radii = [...chart.matchAll(/\brx="([^"]+)"/g)].map((match) => match[1]);
     expect(radii.length).toBeGreaterThan(0);

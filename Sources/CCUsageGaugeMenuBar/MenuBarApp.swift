@@ -54,9 +54,9 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let accessibility: String
   }
 
-  private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+  let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let menu = NSMenu()
-  private var appliedTitle: String?
+  var appliedTitle: String?
   private var appliedIconState: StatusIconState?
   private let launchAtLoginController: LaunchAtLoginControlling
   private var paths = AppPaths.production()
@@ -72,6 +72,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var pollingTask: Task<Void, Never>?
   let rateLimitService = RateLimitUsageService.production()
   var latestRateLimits: RateLimitsResponse?
+  var budgetStatusText = "$—"
   var latestSnapshot: CostSnapshot?
   var currentState: AppState?
   private var errorMessage: String?
@@ -441,6 +442,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       submenu.addItem(error)
     }
     submenu.addItem(PieChartMenu.item(selection: menuBarPieSelection(), target: self, action: #selector(togglePieChart(_:))))
+    submenu.addItem(PieChartMenu.ratioTextItem(selection: menuBarRatioSelection(), target: self, action: #selector(toggleRatioLabel(_:))))
     root.submenu = submenu
     return root
   }
@@ -746,17 +748,6 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     button.imageScaling = .scaleProportionallyDown
     button.toolTip = "ccusage-gauge — cost in selected period"
     button.setAccessibilityLabel("ccusage-gauge cost in selected period")
-    updateStatusIcon()
-  }
-
-  private func updateStatusTitle(_ title: String) {
-    // Only touch the button when the value actually changed; reassigning an
-    // identical title forces a redraw of the menu-bar item, which reads as a blink.
-    if appliedTitle != title {
-      appliedTitle = title
-      statusItem.button?.title = title
-      statusItem.button?.setAccessibilityValue(title)
-    }
     updateStatusIcon()
   }
 

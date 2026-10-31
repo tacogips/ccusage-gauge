@@ -26,6 +26,25 @@ public enum RateLimitDisplayFormatting {
     }
   }
 
+  public static func ratioLabel(for chart: PieChartID, in response: RateLimitsResponse?) -> String {
+    let name: String
+    switch chart {
+    case .budget: return ""
+    case .claude5h: name = "Claude 5h"
+    case .claudeWeekly: name = "Claude W"
+    case .codex5h: name = "Codex 5h"
+    case .codexWeekly: name = "Codex W"
+    }
+    guard let window = entry(for: chart, in: response).window else { return "\(name) --" }
+    return "\(name) \(Int((window.pieFraction * 100).rounded()))%"
+  }
+
+  public static func statusTitle(selection: [PieChartID], budgetText: String, response: RateLimitsResponse?) -> String {
+    RatioTextSelection.normalized(selection).map { chart in
+      chart == .budget ? budgetText : ratioLabel(for: chart, in: response)
+    }.joined(separator: " · ")
+  }
+
   public static func resetText(resetsAt: Date?, now: Date) -> String {
     guard let resetsAt else { return "reset time unknown" }
     let seconds = resetsAt.timeIntervalSince(now)

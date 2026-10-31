@@ -18,6 +18,7 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
   public let sidebarCollapsed: Bool
   public let headerCollapsed: Bool
   public let pieCharts: [PieChartID]
+  public let hiddenPieRatios: [PieChartID]
 
   public init(
     range: String,
@@ -31,7 +32,8 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
     stackBy: String = "model",
     sidebarCollapsed: Bool = false,
     headerCollapsed: Bool = false,
-    pieCharts: [PieChartID] = PieChartSelection.defaultSelection
+    pieCharts: [PieChartID] = PieChartSelection.defaultSelection,
+    hiddenPieRatios: [PieChartID] = []
   ) {
     self.range = range
     self.customStart = customStart
@@ -45,12 +47,14 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
     self.sidebarCollapsed = sidebarCollapsed
     self.headerCollapsed = headerCollapsed
     self.pieCharts = pieCharts
+    self.hiddenPieRatios = hiddenPieRatios
   }
 
   private enum CodingKeys: String, CodingKey {
     case range, customStart, customEnd, selectedModels, selectedAgents, selectedMachines
     case granularity, chartMetric, stackBy, sidebarCollapsed, headerCollapsed
     case pieCharts
+    case hiddenPieRatios
   }
 
   public init(from decoder: Decoder) throws {
@@ -70,6 +74,9 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
     pieCharts = PieChartSelection.normalized(
       rawValues: try container.decodeIfPresent([String].self, forKey: .pieCharts) ?? []
     )
+    hiddenPieRatios = RatioTextSelection.normalized(
+      rawValues: try container.decodeIfPresent([String].self, forKey: .hiddenPieRatios) ?? []
+    )
   }
 
   public func validate() throws {
@@ -82,6 +89,7 @@ public struct DashboardUIState: Codable, Equatable, Sendable {
           selectedAgents.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 100 }),
           selectedMachines.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 100 }),
           !pieCharts.isEmpty, pieCharts.count <= PieChartID.allCases.count,
+          hiddenPieRatios.count <= PieChartID.allCases.count,
           Self.allowedStackByValues.contains(stackBy) else {
       throw DashboardStateError.invalidState
     }

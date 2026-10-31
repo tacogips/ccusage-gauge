@@ -25,3 +25,26 @@ public enum PieChartSelection {
     return normalized(selected)
   }
 }
+
+public enum RatioTextSelection {
+  public static let defaultSelection: [PieChartID] = [.budget]
+
+  public static func normalized(rawValues: [String]) -> [PieChartID] {
+    normalized(rawValues.compactMap(PieChartID.init(rawValue:)))
+  }
+
+  public static func normalized(_ ids: [PieChartID]) -> [PieChartID] {
+    let selected = Set(ids)
+    return PieChartID.allCases.filter { selected.contains($0) }
+  }
+
+  public static func toggled(_ id: PieChartID, in selection: [PieChartID]) -> [PieChartID] {
+    var selected = normalized(selection)
+    if selected.contains(id) {
+      selected.removeAll { $0 == id }
+    } else {
+      selected.append(id)
+    }
+    return normalized(selected)
+  }
+}

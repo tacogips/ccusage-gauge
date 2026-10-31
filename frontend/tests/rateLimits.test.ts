@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ProviderRateLimits, RateLimitsResponse, RateLimitWindow } from "../src/api";
-import { formatResetIn, normalizePieCharts, pieFraction, rateLimitStatusLabel, rateLimitWindowFor, togglePieChart } from "../src/rateLimits";
+import { formatResetIn, normalizeHiddenPieRatios, normalizePieCharts, pieFraction, rateLimitStatusLabel, rateLimitWindowFor, toggleHiddenPieRatio, togglePieChart } from "../src/rateLimits";
 const window: RateLimitWindow = { kind: "weekly", windowSeconds: 604800, usedPercent: 47, remainingPercent: 53 };
 const provider: ProviderRateLimits = { provider: "codex", status: "ok", stale: false, weekly: window, otherWindows: [] };
 const sample: RateLimitsResponse = { generatedAt: "2026-10-31T12:00:00Z", scope: "local", providers: [provider] };
@@ -13,6 +13,15 @@ describe("rate limits", () => {
     expect(normalizePieCharts([])).toEqual(["budget"]);
     expect(togglePieChart("budget", ["budget"])).toEqual(["budget"]);
     expect(togglePieChart("codex5h", ["budget"])).toEqual(["budget", "codex5h"]);
+  });
+  test("normalizes and toggles hidden pie ratios", () => {
+    expect(normalizeHiddenPieRatios(undefined)).toEqual([]);
+    expect(normalizeHiddenPieRatios([])).toEqual([]);
+    expect(normalizeHiddenPieRatios(["codexWeekly", "x", "budget", "budget"])).toEqual(["budget", "codexWeekly"]);
+    expect(normalizeHiddenPieRatios("budget")).toEqual([]);
+    expect(toggleHiddenPieRatio("budget", [])).toEqual(["budget"]);
+    expect(toggleHiddenPieRatio("budget", ["budget"])).toEqual([]);
+    expect(toggleHiddenPieRatio("claude5h", ["codexWeekly"])).toEqual(["claude5h", "codexWeekly"]);
   });
   test("maps windows and clamps fractions", () => {
     expect(rateLimitWindowFor("codexWeekly", sample).window).toEqual(window);

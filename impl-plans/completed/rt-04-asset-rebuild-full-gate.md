@@ -1,6 +1,6 @@
 # rt-04: Dashboard Asset Rebuild and Full Verification Gate
 
-**Status**: Planned
+**Status**: Completed
 **Wave**: 3 (depends on rt-01, rt-02, rt-03)
 **Design Reference**: `design-docs/specs/design-subscription-rate-limits.md`,
 section "Configurable Ratio Text", subsections "Dashboard" (bundled assets),
@@ -105,13 +105,19 @@ the step says it is optional.
 
 ## Done Criteria
 
-- [ ] Steps 2 to 11 exit 0, and each has a complete log under
+- [x] Steps 2 to 11 exit 0, and each has a complete log under
   `tmp/ratio-text-20261031/rt-04/`.
-- [ ] The regenerated `Sources/AppCore/Resources/Web` contains the ratio
+- [x] The regenerated `Sources/AppCore/Resources/Web` contains the ratio
   toggle text (step 3).
-- [ ] Step 12 is recorded as done or skipped, with a reason.
-- [ ] The Progress Log records each command's exit code and log path.
+- [x] Step 12 is recorded as done or skipped, with a reason.
+- [x] The Progress Log records each command's exit code and log path.
 
 ## Progress Log
 
 - 2026-10-31: Plan created.
+
+- 2026-10-31: rt-04 integration gate completed on the joined tree. `mise run build` exited 0 and generated the Web bundle; `build.log`, `bundle-check.log`, `web-status.log`, and `index-check.log` record the build, ratio-toggle text, changed assets, and valid index references.
+- `mise run test` exited 0 (357 tests, 0 failures; `test.log`); `mise run lint` exited 0 (27 warnings, 0 serious; `lint.log`); `mise run frontend:check` exited 0 (`frontend-check.log`); `mise run frontend:test` exited 0 (138 tests, 0 failures; `frontend-test.log`). All logs are under `tmp/ratio-text-20261031/rt-04/`.
+- Line-count checks, refresh-token search, and git status exited 0; see `wc.log`, `line-check.log`, `all-swift-lines.log`, `token-check.log`, and `git-status.log`. No Swift files were edited by rt-04; `selected-lint.log` records the empty selected-file gate.
+- Manual GUI check skipped: this automated workflow has no established interactive GUI session; menu-bar behavior remains subject to downstream integration review. No source files were edited by rt-04. Formal reviews and final commit remain downstream.
+- 2026-10-31: Completed. Test-integrity review, adversarial review (needs_revision=false), branch evidence and the integration review accepted rt-04. Browser E2E was skipped because the repository has no browser E2E harness. Archived to `impl-plans/completed/rt-04-asset-rebuild-full-gate.md`. The local commit on `main` happens in the commit step. It must stage the deleted `index-C6kVNlJa.js` together with the new `index-CePPN1y5.js`.

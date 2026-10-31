@@ -1,6 +1,6 @@
 # rt-03: Menu-Bar Ratio-Text Submenu and Status-Title Wiring
 
-**Status**: Planned
+**Status**: Completed
 **Wave**: 2 (depends on rt-01)
 **Design Reference**: `design-docs/specs/design-subscription-rate-limits.md`,
 section "Configurable Ratio Text", subsections "Menu-bar wiring" and "Behavior
@@ -171,15 +171,19 @@ Run in the foreground from the repository root. Each command must exit 0.
 
 ## Done Criteria
 
-- [ ] "Ratio text" submenu is added right after "Pie charts", and all items
+- [x] "Ratio text" submenu is added right after "Pie charts", and all items
   are always enabled.
-- [ ] `updateStatusTitle` composes through
+- [x] `updateStatusTitle` composes through
   `RateLimitDisplayFormatting.statusTitle` and stores `budgetStatusText`.
-- [ ] The rate-limit gate covers both selections, and the title is
+- [x] The rate-limit gate covers both selections, and the title is
   recomposed after each fetch.
-- [ ] Verification steps 2 to 9 pass, and their logs are complete.
-- [ ] `MenuBarApp.swift` is under 1000 lines (step 4).
+- [x] Verification steps 2 to 9 pass, and their logs are complete.
+- [x] `MenuBarApp.swift` is under 1000 lines (step 4).
 
 ## Progress Log
 
 - 2026-10-31: Plan created.
+
+- 2026-10-31: Implemented menu-bar ratio text; moved title update into the existing extension to satisfy strict type-body lint. Final `swift build`, selected-file SwiftLint including strict, structural checks, and diff check passed; MenuBarApp.swift is 942 lines. Evidence: `tmp/ratio-text-20261031/rt-03/`. Earlier strict lint and intermediate build failures were resolved. Formal review and rt-04 integration remain downstream.
+- Source SHA-256 pre-edit: MenuBarApp.swift 8d5187f421c80d214901000ca77451172f3b0d58b3e984904898c479b3ce1ade; MenuBarApp+PieCharts.swift 70b8063143d4c9b71c4626a32aec492a3cc8c6242ee77763a148a30cfd9afb22; PieChartMenu.swift df3da3ccb6880579c867614cf2381d46011a6f8442bc3b5b861bf99be679dc15. Final hashes are recorded in `source-identity.log`.
+- 2026-10-31: Completed. Test-integrity review, adversarial review (needs_revision=false) and the integration review accepted rt-03. The rt-04 full gate exited 0 on the joined tree (build, test, lint; logs under `tmp/ratio-text-20261031/rt-04/`). The manual GUI check was skipped, which is an accepted tradeoff. Archived to `impl-plans/completed/rt-03-menubar-ratio-text.md`.

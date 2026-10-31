@@ -63,7 +63,7 @@ import { restoredFoldState } from "./dashboardLayoutState";
 
 import { RateLimitPanel } from "./RateLimitPanel";
 import { PieChartPanel } from "./PieChartPanel";
-import { normalizePieCharts, togglePieChart } from "./rateLimits";
+import { normalizeHiddenPieRatios, normalizePieCharts, toggleHiddenPieRatio, togglePieChart } from "./rateLimits";
 
 type Granularity = "15min" | "hourly" | "6hour" | "daily";
 
@@ -89,6 +89,7 @@ export default function App() {
   const initialCustomStart = daysAgo(6);
   const initialCustomEnd = localDate();
   const [pieCharts, setPieCharts] = createSignal<PieChartID[]>(["budget"]);
+  const [hiddenPieRatios, setHiddenPieRatios] = createSignal<PieChartID[]>([]);
   const [range, setRange] = createSignal<Range>("recent12h");
   const [customStart, setCustomStart] = createSignal(initialCustomStart);
   const [customEnd, setCustomEnd] = createSignal(initialCustomEnd);
@@ -803,6 +804,7 @@ export default function App() {
       load: () => getJSON<DashboardUIStateResponse>("/api/dashboard-state"),
       apply: (state) => {
         setPieCharts(normalizePieCharts(state.pieCharts));
+        setHiddenPieRatios(normalizeHiddenPieRatios(state.hiddenPieRatios));
         setRange(state.range);
         setCustomStart(state.customStart);
         setCustomEnd(state.customEnd);
@@ -839,6 +841,7 @@ export default function App() {
     if (!isDashboardStateLoaded() || !isDashboardStatePersistenceEnabled()) return;
     const state: DashboardUIState = {
       pieCharts: pieCharts(),
+      hiddenPieRatios: hiddenPieRatios(),
       range: range(),
       customStart: appliedCustomRange().start,
       customEnd: appliedCustomRange().end,
@@ -1331,7 +1334,7 @@ export default function App() {
             </div>
             </section>
 
-            <PieChartPanel selection={pieCharts} onToggle={(id) => setPieCharts(togglePieChart(id, pieCharts()))} budget={budget} response={rateLimits} />
+            <PieChartPanel selection={pieCharts} onToggle={(id) => setPieCharts(togglePieChart(id, pieCharts()))} hiddenRatios={hiddenPieRatios} onToggleRatio={(id) => setHiddenPieRatios(toggleHiddenPieRatio(id, hiddenPieRatios()))} budget={budget} response={rateLimits} />
             <RateLimitPanel response={rateLimits} error={rateLimits.error != null} now={() => new Date()} />
             <section class="budget-note">
               Menu budget: {currency.format(budget()?.spentUSD ?? 0)} in selected period · {budget()?.usagePercentage == null ? "No budget set" : `${percentage.format(budget()!.usagePercentage!)}% used`} · {budget()?.remainingUSD == null ? "No remaining amount" : `${currency.format(budget()!.remainingUSD!)} remaining`}

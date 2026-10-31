@@ -32,6 +32,7 @@ public struct AppState: Codable, Equatable, Sendable {
   public var baseline: ResetBaseline?
   public var refreshIntervalSeconds: Int?
   public var menuBarPieCharts: [PieChartID]
+  public var menuBarRatioLabels: [PieChartID]
 
   public init(
     budgetUSD: Decimal? = nil,
@@ -39,7 +40,8 @@ public struct AppState: Codable, Equatable, Sendable {
     resetCycle: ResetCycle = .daily,
     baseline: ResetBaseline? = nil,
     refreshIntervalSeconds: Int? = nil,
-    menuBarPieCharts: [PieChartID] = PieChartSelection.defaultSelection
+    menuBarPieCharts: [PieChartID] = PieChartSelection.defaultSelection,
+    menuBarRatioLabels: [PieChartID] = RatioTextSelection.defaultSelection
   ) {
     self.budgetUSD = budgetUSD
     self.budgetMachineIDs = budgetMachineIDs
@@ -47,11 +49,13 @@ public struct AppState: Codable, Equatable, Sendable {
     self.baseline = baseline
     self.refreshIntervalSeconds = refreshIntervalSeconds
     self.menuBarPieCharts = menuBarPieCharts
+    self.menuBarRatioLabels = menuBarRatioLabels
   }
 
   private enum CodingKeys: String, CodingKey {
     case budgetUSD, budgetMachineIDs, resetCycle, baseline, refreshIntervalSeconds
     case menuBarPieCharts
+    case menuBarRatioLabels
   }
 
   public init(from decoder: Decoder) throws {
@@ -64,6 +68,8 @@ public struct AppState: Codable, Equatable, Sendable {
     menuBarPieCharts = PieChartSelection.normalized(
       rawValues: try values.decodeIfPresent([String].self, forKey: .menuBarPieCharts) ?? []
     )
+    menuBarRatioLabels = try values.decodeIfPresent([String].self, forKey: .menuBarRatioLabels)
+      .map(RatioTextSelection.normalized(rawValues:)) ?? RatioTextSelection.defaultSelection
   }
 }
 

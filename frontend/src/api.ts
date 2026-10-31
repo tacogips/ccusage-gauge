@@ -106,6 +106,7 @@ export interface ProviderRateLimits {
 export interface RateLimitsResponse { generatedAt: string; scope: "local"; providers: ProviderRateLimits[] }
 export interface DashboardUIState {
   pieCharts?: PieChartID[];
+  hiddenPieRatios?: PieChartID[];
   range: "recent12h" | "today" | "yesterday" | "week" | "month" | "custom";
   customStart: string;
   customEnd: string;

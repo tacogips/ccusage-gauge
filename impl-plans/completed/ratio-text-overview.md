@@ -1,6 +1,6 @@
 # Configurable Ratio Text - Plan Overview
 
-**Status**: In Progress
+**Status**: Completed
 **Design Reference**: `design-docs/specs/design-subscription-rate-limits.md`,
 section "Configurable Ratio Text". The design review accepted it. Decisions
 are in `design-docs/user-qa/2026-10-31-ratio-text-decisions.md`.
@@ -90,3 +90,4 @@ The work is complete when all of these hold:
 ## Progress Log
 
 - 2026-10-31: Overview and plans rt-01 to rt-04 created.
+- 2026-10-31: Completed. rt-01 to rt-04 are marked Completed and were accepted by the test-integrity, adversarial and integration reviews. The rt-04 gate exited 0 for `mise run build`, `mise run test` (357 passed), `mise run lint` (0 serious), `mise run frontend:check` and `mise run frontend:test` (138 passed). The regenerated Web bundle contains the ratio toggle, and every Swift file is under 1000 lines. README.md documents the shipped behavior. The overview and the four plans were archived to `impl-plans/completed/`. The dispatch manifest `impl-plans/active/ratio-text-20261031-dispatch.json` stays in place as checkpoint provenance for the commit step.
