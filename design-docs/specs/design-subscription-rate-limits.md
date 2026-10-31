@@ -14,6 +14,11 @@ menu-bar hook-in, integration test, asset rebuild, full gate) is not started.
 The section "Integration Wiring and Rollout" below is the contract for the
 remaining work.
 
+Update (2026-10-31, later): the feature above is committed as `f5092bf`. The
+section "Configurable Ratio Text" adds a menu-bar ratio-text selection and a
+dashboard per-pie ratio visibility. Its decisions are recorded in
+`design-docs/user-qa/2026-10-31-ratio-text-decisions.md`.
+
 ## Scope
 
 In scope:
@@ -310,7 +315,9 @@ The dashboard and the menu bar keep separate selections (QA decision 1):
     triangle on ccusage failure.
   - A rate-limit pie fills its used fraction. When it has no window, it shows
     the rail with the existing center marker.
-  - The status title text, cost and budget percentage, is unchanged.
+  - The status title text is governed by the ratio-text selection described
+    in "Configurable Ratio Text". With the default selection it is today's
+    cost and budget percentage text, unchanged.
   - The accessibility description lists the selected charts and their values.
 - **Dropdown.** The existing budget view stays first whenever `budget` is
   selected. Each selected rate-limit pie adds one non-interactive row, for
@@ -391,6 +398,244 @@ This section pins the rl-09 boundary against the code present on 2026-10-31.
   repairs, plan progress logs, and the README. Files are staged by explicit
   path. `.riela/` (including `.riela/retention/`, which `.gitignore` does not
   cover) and `tmp/` are never staged. Nothing is pushed, merged, or rebased.
+
+## Configurable Ratio Text
+
+Source: workflow request "Configurable usage-ratio text for menu bar status
+item and dashboard pie panel" (no GitHub issue). Decisions:
+`design-docs/user-qa/2026-10-31-ratio-text-decisions.md`.
+
+The goal is to let the user show, for example, only the Claude Code weekly and
+Codex weekly pies with their ratios, and hide the budget pie and budget text.
+Ratio text is a separate selection from the pie selection. Selecting a pie
+does not select its text, and the reverse is also true.
+
+### Selection model (`AppCore`)
+
+- **`RatioTextSelection`** is a new enum in `PieChartSelection.swift`, next to
+  `PieChartSelection`. It does not reuse `PieChartSelection.normalized`, because
+  that function turns an empty result into `[budget]`.
+  - `defaultSelection` is `[budget]`.
+  - `normalized(rawValues:)` and `normalized(_:)`:
+    - drop unknown values;
+    - remove duplicates;
+    - sort into canonical `PieChartID.allCases` order.
+
+    An empty result stays empty.
+  - `toggled(_:in:)` adds or removes the id and then normalizes. There is no
+    last-item lock, so removing the only id gives `[]`.
+- **`AppState.menuBarRatioLabels: [PieChartID]`** is a new field in
+  `state.json`. The memberwise init defaults it to `[budget]`. Decoding works
+  as follows:
+  - Missing key: `[budget]`.
+  - Key present: `RatioTextSelection.normalized(rawValues:)` of the decoded
+    array. So `[]` stays `[]`, and an array of only unknown values becomes
+    `[]`.
+  - The field is added to `CodingKeys`, so it is also encoded. `StateStore.save`
+    adds no validation for it, because decoding already normalizes it.
+
+### Status title composition (`AppCore`)
+
+- **Budget segment.** The budget segment is the exact string that
+  `MenuBarApp` passes to `updateStatusTitle(_:)` today. That covers each of
+  these forms:
+  - `statusTitle(snapshot)`, which is `<cost> · <pct>`, or just `<cost>` when
+    no budget is set;
+  - `"$—"`;
+  - `"$!"`;
+  - `<statusTitle> !`.
+
+  It is not reformatted.
+- **Rate-limit label.** `RateLimitDisplayFormatting.ratioLabel(for:in:)`
+  returns `<short name> <n>%` or `<short name> --`.
+
+  | `PieChartID` | Short name |
+  | --- | --- |
+  | `claude5h` | `Claude 5h` |
+  | `claudeWeekly` | `Claude W` |
+  | `codex5h` | `Codex 5h` |
+  | `codexWeekly` | `Codex W` |
+
+  - `n` is `Int((pieFraction * 100).rounded())`, using the existing
+    `RateLimitWindow.pieFraction`. This is the same used-percent value as the
+    pie and its accessibility text, clamped to 0-100.
+  - The label is `--` when `entry(for:in:).window` is `nil`. That covers
+    these cases:
+    - no response yet;
+    - the provider is missing;
+    - the window is `null`;
+    - the provider is `unauthorized` or `unavailable`;
+    - a stale window whose reset time has passed and was dropped.
+
+    A stale window that is still valid shows its value without a marker. The
+    dropdown row already shows "(stale)".
+- **Composition.** `RateLimitDisplayFormatting.statusTitle(selection:budgetText:response:)`
+  is a pure function. It maps the normalized ratio selection, in canonical
+  order, to segments:
+  - `budget` maps to the budget segment;
+  - any other id maps to its rate-limit label.
+
+  The segments are joined with `" · "`.
+  - `[budget]` returns `budgetText` unchanged, byte for byte.
+  - `[]` returns `""`.
+  - `[claudeWeekly, codexWeekly]` returns, for example,
+    `Claude W 59% · Codex W 83%`.
+
+### Menu-bar wiring
+
+`MenuBarApp.swift` has 951 lines and must stay under 1000. It gets only these
+edits:
+
+1. **New stored property.** `budgetStatusText: String`, initialized to `"$—"`,
+   is internal so that extensions can read it.
+2. **`updateStatusTitle(_:)` changes.** It becomes internal and treats its
+   argument as the budget segment. It stores that segment in
+   `budgetStatusText`, then composes the title with `statusTitle(selection:
+   menuBarRatioSelection(), ...)` against `latestRateLimits`. The existing
+   `appliedTitle` deduplication, the `button.title` assignment, the
+   `setAccessibilityValue` call, and the `updateStatusIcon()` call then apply
+   to the composed string. No call site changes.
+3. **New Settings item.** One line adds the "Ratio text" item directly after
+   the existing "Pie charts" item in the Settings submenu.
+
+The remaining code goes in existing satellite files:
+
+- **`MenuBarApp+PieCharts.swift`.**
+  - `menuBarRatioSelection()` returns `RatioTextSelection.normalized` of
+    `currentState?.menuBarRatioLabels`, or `[budget]` when there is no state.
+  - `refreshRateLimitsIfNeeded()` now fetches when
+    `menuBarPieSelection() + menuBarRatioSelection()` contains a non-budget id.
+    After storing `latestRateLimits`, it calls
+    `updateStatusTitle(budgetStatusText)` instead of `updateStatusIcon()`. That
+    one call recomposes the title and refreshes the glyph, so a rate-limit
+    label never goes stale.
+  - `@objc toggleRatioLabel(_:)` persists
+    `RatioTextSelection.toggled(id, in: $0.menuBarRatioLabels)` through
+    `mutateState`. On success it calls `updateStatusTitle(budgetStatusText)`.
+    `mutateState` already schedules `refresh()`, so a newly needed fetch runs
+    there and is bounded by the service throttle. Until data arrives, the new
+    label shows `--`.
+- **`PieChartMenu.swift`.** It adds
+  `ratioTextItem(selection:target:action:)`, titled "Ratio text". The item has
+  five checkable children in canonical order, using the same titles as "Pie
+  charts" (`RateLimitDisplayFormatting.title(for:)`). All children are always
+  enabled.
+
+Behavior notes:
+
+- **Glyph-only title.** With `[]`, the title is `""`. The status item is
+  `variableLength` with `.imageLeading`, so it shrinks to the glyph. The
+  accessibility value becomes `""`. The pie image's accessibility description,
+  from `pieAccessibilityDescription()`, still lists every selected chart with
+  its value.
+- **Warning markers.** The `$!` and ` !` markers belong to the budget segment.
+  When `budget` is not in the ratio selection, they are hidden with it. The
+  warning is still shown by these existing channels, which this change leaves
+  alone:
+  - the status button tooltip;
+  - the accessibility label;
+  - the budget pie's warning triangle, when that pie is selected.
+
+  See QA decision R4.
+- **Unchanged behavior.**
+  - The pie strip, the dropdown rows, and the budget view all follow the pie
+    selection, as they do today.
+  - The fetch semantics, the throttle, credential handling, and the
+    `/api/rate-limits` payload are the same, apart from the wider gate. With
+    the default selections, `[budget]` pies and `[budget]` ratio text, there
+    are still no rate-limit fetches and no Keychain reads.
+
+### Dashboard
+
+- **`DashboardUIState.hiddenPieRatios: [PieChartID]`.** This is a hidden-set,
+  and its default is `[]`, which means every selected pie shows its ratio text.
+  That matches today's rendering.
+  - Decoding uses `decodeIfPresent`, then `RatioTextSelection.normalized(rawValues:)`.
+    A missing key or `[]` gives `[]`.
+  - `validate()` adds `hiddenPieRatios.count <= PieChartID.allCases.count`.
+    Old persisted state, which lacks the key, still loads and validates.
+  - The field persists through the existing `GET`/`PUT /api/dashboard-state`
+    and SQLite store. There is no new route.
+- **Hidden-set lifecycle.** The hidden-set is independent of
+  `DashboardUIState.pieCharts`. Deselecting a pie keeps its hidden entry, and
+  the entry takes effect again if the pie is reselected. Ids that are not
+  selected have no visible effect.
+- **`frontend/src/api.ts`.** Adds the optional field
+  `hiddenPieRatios?: PieChartID[]`.
+- **`frontend/src/rateLimits.ts`.** Adds two pure helpers:
+  - `normalizeHiddenPieRatios(value: unknown)` uses canonical order, drops
+    unknown values and duplicates, and allows an empty result;
+  - `toggleHiddenPieRatio(id, hidden)` has no lock.
+- **`frontend/src/App.tsx`.** Changes are limited to threading:
+  - a `hiddenPieRatios` signal, default `[]`;
+  - one line in the dashboard-state `apply` that normalizes the loaded value;
+  - one field in the save-state object;
+  - two props on `<PieChartPanel>`.
+
+  There is no new logic.
+- **`frontend/src/PieChartPanel.tsx`.** Each `pie-item` gets a toggle button.
+  - Its `aria-pressed` is `true` when the ratio is visible.
+  - Its accessible name is `Show ratio text for <label>`.
+  - When the ratio is hidden, the item omits its detail `<span>`. That span
+    holds the `n% used` text or the status text, such as "No budget set".
+
+  The SVG `aria-label` keeps the full detail, so screen-reader output does not
+  change. The pie toggles and the "Menu budget" summary line do not change.
+- **Bundled assets.** `Sources/AppCore/Resources/Web` is regenerated with
+  `mise run build` and committed exactly as generated.
+
+### Verification
+
+- **Swift tests (`Tests/AppCoreTests`).**
+  - `RatioTextSelection` normalizes and toggles, including toggling off the
+    last id to get `[]`.
+  - `AppState` decoding:
+    - missing key gives `[budget]`;
+    - explicit `[]` gives `[]`, and it round-trips through `StateStore` as
+      `[]`;
+    - unknown and duplicate values are dropped.
+  - `DashboardUIState` decoding:
+    - missing key gives `[]`, and the state validates;
+    - unknown and duplicate values are dropped;
+    - the field round-trips.
+  - `statusTitle(selection:budgetText:response:)` covers these cases:
+    - `[budget]` returns `budgetText` unchanged for `"$12.34 · 45%"`, `"$!"`,
+      and `"$12.34 · 45% !"`;
+    - `[]` returns `""`;
+    - `[claudeWeekly, codexWeekly]` returns `Claude W 59% · Codex W 83%`;
+    - `[claude5h]` with a `nil` window returns `Claude 5h --`, and the same
+      applies with a `nil` response;
+    - `[budget, codex5h]` returns `<budget> · Codex 5h <n>%`.
+  - The four short names are each pinned.
+- **Frontend tests (`frontend/tests/rateLimits.test.ts`).** They cover
+  `normalizeHiddenPieRatios` and `toggleHiddenPieRatio`. A source guard in
+  `appMarkupGuards.test.ts` checks two things:
+  - `PieChartPanel.tsx` renders the detail span conditionally and exposes the
+    per-pie ratio toggle;
+  - `App.tsx` includes `hiddenPieRatios` in the saved state.
+- **Gate.** `mise run build`, `mise run test`, `mise run lint`,
+  `mise run frontend:check`, and `mise run frontend:test` each exit 0. Every
+  Swift file is under 1000 lines (`wc -l`).
+- **Manual menu-bar check.** This check is optional and is recorded as
+  skipped when there is no GUI session. Set pies to
+  `[claudeWeekly, codexWeekly]` and ratio text to
+  `[claudeWeekly, codexWeekly]`. The status item should show two pies and
+  `Claude W n% · Codex W n%`, with no budget pie and no budget text.
+
+### Rollout constraints
+
+- Dispatch-manifest `artifactRoots` must never be the bare `tmp` directory.
+  Riela fanout evidence lives under `tmp/opus-terra-waves`. For this feature
+  only, this rule replaces the `tmp/` allowance in "Integration Wiring and
+  Rollout" and in QA decision 8. Declare only these roots, and list the same
+  paths in `writePaths`:
+  - `.build`;
+  - `frontend/dist`;
+  - `frontend/node_modules`;
+  - a plan-specific directory such as `tmp/ratio-text-20261031`.
+- The work is one local commit on `main`. Stage files by explicit path, and
+  never stage `.riela/` (including the pre-existing `.riela/retention/*`) or
+  `tmp/`. Nothing is pushed, merged, or rebased.
 
 ## Security and Privacy
 

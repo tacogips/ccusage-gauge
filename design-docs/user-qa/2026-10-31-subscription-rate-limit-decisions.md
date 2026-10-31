@@ -42,7 +42,9 @@ changing the rest of the design.
    exception and are always reported as `unauthorized`. Stale windows whose
    reset time has passed are dropped.
 7. A rate-limit pie fills its used share, the same way the budget pie does.
-   The menu-bar status title text does not change.
+   The menu-bar status title text does not change. (Superseded for the title
+   text by `2026-10-31-ratio-text-decisions.md`: the title follows the
+   ratio-text selection, and its default keeps today's text.)
 
 ## Operator decisions (continuation run, 2026-10-31)
 

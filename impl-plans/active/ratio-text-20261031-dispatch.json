@@ -1,0 +1,223 @@
+{
+  "taskId": "ratio-text-20261031",
+  "workflowMode": "issue-resolution",
+  "implementationBranch": "main",
+  "baseBranch": "main",
+  "remote": "origin",
+  "originalHead": "f5092bf3f1e235c5237a562d9e0e63d47e09b811",
+  "designDocPaths": [
+    "design-docs/specs/design-subscription-rate-limits.md",
+    "design-docs/user-qa/2026-10-31-ratio-text-decisions.md",
+    "design-docs/user-qa/2026-10-31-subscription-rate-limit-decisions.md"
+  ],
+  "overviewPlanPath": "impl-plans/active/ratio-text-overview.md",
+  "evidenceRoot": "tmp/ratio-text-20261031",
+  "evidenceLayout": "Each plan writes complete verification logs under tmp/ratio-text-20261031/<planId>/, declared as that plan's own writePath and artifactRoot. The bare tmp directory is never an artifactRoot (Riela fanout evidence lives in tmp/opus-terra-waves; QA decision R10). swift build/test writes to the git-ignored .build/ are authorized command side effects for every plan; only rt-04 runs mise run build / frontend:install and declares .build, frontend/dist and frontend/node_modules as artifactRoots.",
+  "reviewContext": {
+    "issueReference": "inline-request:configurable-ratio-text (no GitHub issue). Workflow execution opus-terra-design-and-implement-review-loop-session-574. Design accepted by step3-design-review (comm-011038, reviewDecision accept). Overview: impl-plans/active/ratio-text-overview.md.",
+    "userProblem": "The menu-bar status item always shows the budget text '<cost> · <pct>' and the Claude Code / Codex rate-limit pies have no ratio text. The user wants to show only the Claude weekly and Codex weekly pies with their ratios ('Claude W n% · Codex W n%') and hide the budget pie and budget text, and to toggle per-pie ratio text on the dashboard.",
+    "requiredOutcomes": [
+      "AppState.menuBarRatioLabels persists with missing key -> [budget] and explicit [] -> [] (rt-01).",
+      "RateLimitDisplayFormatting.statusTitle(selection:budgetText:response:) returns budgetText unchanged for [budget], '' for [], 'Claude W 59% · Codex W 83%' for [claudeWeekly, codexWeekly], '<short> --' for unavailable windows (rt-01).",
+      "DashboardUIState.hiddenPieRatios decodes missing -> [] and validates old state (rt-01).",
+      "Dashboard PieChartPanel per-pie ratio toggle persisted via hiddenPieRatios; default shows every ratio (rt-02).",
+      "Menu-bar Settings 'Ratio text' submenu after 'Pie charts'; status title follows it; rate limits fetched when a non-budget pie or ratio label is selected; title recomposed after each fetch (rt-03).",
+      "Sources/AppCore/Resources/Web regenerated; mise run build, test, lint, frontend:check and frontend:test all exit 0 (rt-04)."
+    ],
+    "nonGoals": [
+      "No change to rate-limit fetching semantics beyond the widened gate, credentials handling, /api/rate-limits payload, pie strip rendering, dropdown rows or the dashboard 'Menu budget' line.",
+      "No new routes, modules or abstraction layers; no CSS changes.",
+      "No commits, pushes, branches, worktrees, stashes or resets by workers; never commit .riela/ or tmp/."
+    ],
+    "constraints": [
+      "Default (no new key) status title and dashboard ratio rendering are byte-for-byte unchanged.",
+      "Swift 6, every Swift file under 1000 lines (MenuBarApp.swift starts at 951), swiftlint clean, existing style, no emojis (AGENTS.md, .codex/skills/swift-coding-agent/SKILL.md).",
+      "artifactRoots never include the bare tmp directory.",
+      "Only rt-04 runs mise run build / frontend:install and owns Sources/AppCore/Resources/Web.",
+      "No AI tool attribution or co-authorship in commit messages."
+    ],
+    "designDecisionsAndRationale": [
+      "RatioTextSelection is separate from PieChartSelection because the latter coerces [] to [budget] (R1).",
+      "The budget segment is the exact string passed to updateStatusTitle today, so warning markers move with budget text (R4) and the default is byte-identical.",
+      "Composition is a pure AppCore function so it is unit-testable; the menu-bar target has no test target.",
+      "The dashboard stores a hidden-set (default []) so old state renders and validates unchanged (R7)."
+    ],
+    "intentionalTradeoffs": [
+      "The menu-bar wiring (rt-03) is verified by compilation, lint, line count and grep checks; the GUI check is optional and may be recorded as skipped.",
+      "Hiding budget text also hides the '$!' / ' !' markers; the warning remains in the tooltip, accessibility label and budget-pie triangle (R4)."
+    ],
+    "supportedEdgeCases": [
+      "Empty ratio selection gives a glyph-only title; accessibility value is '' while the pie image description still lists values.",
+      "A newly toggled rate-limit label shows '--' until the next fetch completes.",
+      "A key holding only unknown values in state.json decodes to []."
+    ],
+    "outOfScopeEdgeCases": [
+      "Showing ratio text for Codex otherWindows or Claude per-model sub-limits.",
+      "Sharing the ratio selection between the menu bar and the dashboard."
+    ],
+    "sourcePaths": [
+      "Sources/AppCore/PieChartSelection.swift",
+      "Sources/AppCore/State.swift",
+      "Sources/AppCore/DashboardStateStore.swift",
+      "Sources/AppCore/RateLimitDisplayFormatting.swift",
+      "Sources/CCUsageGaugeMenuBar/MenuBarApp.swift",
+      "Sources/CCUsageGaugeMenuBar/MenuBarApp+PieCharts.swift",
+      "Sources/CCUsageGaugeMenuBar/PieChartMenu.swift",
+      "frontend/src/api.ts",
+      "frontend/src/rateLimits.ts",
+      "frontend/src/PieChartPanel.tsx",
+      "frontend/src/App.tsx"
+    ]
+  },
+  "plans": [
+    {
+      "planId": "rt-01",
+      "planPath": "impl-plans/active/rt-01-appcore-ratio-text.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "Sources/AppCore/PieChartSelection.swift",
+        "Sources/AppCore/State.swift",
+        "Sources/AppCore/DashboardStateStore.swift",
+        "Sources/AppCore/RateLimitDisplayFormatting.swift",
+        "Tests/AppCoreTests/RatioTextTests.swift",
+        "tmp/ratio-text-20261031/rt-01",
+        "impl-plans/active/rt-01-appcore-ratio-text.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [
+        "tmp/ratio-text-20261031/rt-01"
+      ],
+      "acceptanceCriteria": [
+        "RatioTextSelection (defaultSelection [budget], normalized allowing empty, toggled without lock) exists in PieChartSelection.swift.",
+        "AppState.menuBarRatioLabels: missing key -> [budget], [] -> [], unknown-only -> []; round-trips [] through StateStore.",
+        "DashboardUIState.hiddenPieRatios: missing -> [], normalized, validate caps count at 5; legacy state validates.",
+        "RateLimitDisplayFormatting.ratioLabel(for:in:) and statusTitle(selection:budgetText:response:) match the pinned outputs, including byte-identical budgetText for [budget].",
+        "RatioTextTests and the existing PieChartSelection/RateLimitDisplayFormatting/DashboardUIStateFoldEffort/Store suites pass; swiftlint clean on owned files."
+      ],
+      "verification": [
+        "mkdir -p tmp/ratio-text-20261031/rt-01",
+        "set -o pipefail; swift build 2>&1 | tee tmp/ratio-text-20261031/rt-01/build.log",
+        "set -o pipefail; swift test --filter RatioTextTests 2>&1 | tee tmp/ratio-text-20261031/rt-01/ratio-tests.log",
+        "set -o pipefail; swift test --filter 'PieChartSelectionTests|RateLimitDisplayFormattingTests|DashboardUIStateFoldEffortTests|StoreTests' 2>&1 | tee tmp/ratio-text-20261031/rt-01/regression.log",
+        "set -o pipefail; swiftlint lint Sources/AppCore/PieChartSelection.swift Sources/AppCore/State.swift Sources/AppCore/DashboardStateStore.swift Sources/AppCore/RateLimitDisplayFormatting.swift Tests/AppCoreTests/RatioTextTests.swift 2>&1 | tee tmp/ratio-text-20261031/rt-01/swiftlint.log",
+        "wc -l Sources/AppCore/PieChartSelection.swift Sources/AppCore/State.swift Sources/AppCore/DashboardStateStore.swift Sources/AppCore/RateLimitDisplayFormatting.swift Tests/AppCoreTests/RatioTextTests.swift | tee tmp/ratio-text-20261031/rt-01/wc.log"
+      ]
+    },
+    {
+      "planId": "rt-02",
+      "planPath": "impl-plans/active/rt-02-frontend-ratio-visibility.md",
+      "wave": 1,
+      "dependsOn": [],
+      "writePaths": [
+        "frontend/src/api.ts",
+        "frontend/src/rateLimits.ts",
+        "frontend/src/PieChartPanel.tsx",
+        "frontend/src/App.tsx",
+        "frontend/tests/rateLimits.test.ts",
+        "frontend/tests/appMarkupGuards.test.ts",
+        "tmp/ratio-text-20261031/rt-02",
+        "impl-plans/active/rt-02-frontend-ratio-visibility.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [
+        "tmp/ratio-text-20261031/rt-02"
+      ],
+      "acceptanceCriteria": [
+        "api.ts DashboardUIState has optional hiddenPieRatios?: PieChartID[].",
+        "rateLimits.ts exports normalizeHiddenPieRatios (empty allowed, canonical order) and toggleHiddenPieRatio (no lock).",
+        "PieChartPanel renders the detail span only when the pie's ratio is visible, adds a per-pie 'Show ratio text for <label>' aria-pressed toggle, keeps the SVG aria-label detail.",
+        "App.tsx only threads the signal, apply line, save field and two props; 'Menu budget' line unchanged.",
+        "bun run check and bun test pass with the new tests."
+      ],
+      "verification": [
+        "mkdir -p tmp/ratio-text-20261031/rt-02",
+        "set -o pipefail; (cd frontend && bun run check) 2>&1 | tee tmp/ratio-text-20261031/rt-02/check.log",
+        "set -o pipefail; (cd frontend && bun test) 2>&1 | tee tmp/ratio-text-20261031/rt-02/test.log",
+        "grep -n 'hiddenPieRatios' frontend/src/App.tsx | tee tmp/ratio-text-20261031/rt-02/app-threading.log"
+      ]
+    },
+    {
+      "planId": "rt-03",
+      "planPath": "impl-plans/active/rt-03-menubar-ratio-text.md",
+      "wave": 2,
+      "dependsOn": [
+        "rt-01"
+      ],
+      "writePaths": [
+        "Sources/CCUsageGaugeMenuBar/MenuBarApp.swift",
+        "Sources/CCUsageGaugeMenuBar/MenuBarApp+PieCharts.swift",
+        "Sources/CCUsageGaugeMenuBar/PieChartMenu.swift",
+        "tmp/ratio-text-20261031/rt-03",
+        "impl-plans/active/rt-03-menubar-ratio-text.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [
+        "tmp/ratio-text-20261031/rt-03"
+      ],
+      "acceptanceCriteria": [
+        "Settings has a 'Ratio text' submenu directly after 'Pie charts' with five always-enabled checkable items.",
+        "updateStatusTitle(_:) stores budgetStatusText and applies RateLimitDisplayFormatting.statusTitle(selection: menuBarRatioSelection(), budgetText:, response: latestRateLimits); default [budget] output identical.",
+        "refreshRateLimitsIfNeeded fetches when either selection has a non-budget id (no await otherwise) and then calls updateStatusTitle(budgetStatusText).",
+        "toggleRatioLabel persists RatioTextSelection.toggled via mutateState and recomposes the title without scheduling an extra refresh.",
+        "MenuBarApp.swift stays under 1000 lines; swift build and swiftlint pass; only the three owned Swift files change."
+      ],
+      "verification": [
+        "mkdir -p tmp/ratio-text-20261031/rt-03",
+        "set -o pipefail; swift build 2>&1 | tee tmp/ratio-text-20261031/rt-03/build.log",
+        "set -o pipefail; swiftlint lint Sources/CCUsageGaugeMenuBar/MenuBarApp.swift Sources/CCUsageGaugeMenuBar/MenuBarApp+PieCharts.swift Sources/CCUsageGaugeMenuBar/PieChartMenu.swift 2>&1 | tee tmp/ratio-text-20261031/rt-03/swiftlint.log",
+        "test \"$(wc -l < Sources/CCUsageGaugeMenuBar/MenuBarApp.swift)\" -lt 1000",
+        "grep -n 'toggleRatioLabel' Sources/CCUsageGaugeMenuBar/MenuBarApp.swift Sources/CCUsageGaugeMenuBar/MenuBarApp+PieCharts.swift | tee tmp/ratio-text-20261031/rt-03/selector.log",
+        "test \"$(grep -c 'updateStatusTitle(budgetStatusText)' Sources/CCUsageGaugeMenuBar/MenuBarApp+PieCharts.swift)\" -ge 2",
+        "! grep -n 'PieChartSelection.normalized(currentState?.menuBarRatioLabels' Sources/CCUsageGaugeMenuBar/*.swift",
+        "git diff --stat -- Sources/CCUsageGaugeMenuBar | tee tmp/ratio-text-20261031/rt-03/diffstat.log"
+      ]
+    },
+    {
+      "planId": "rt-04",
+      "planPath": "impl-plans/active/rt-04-asset-rebuild-full-gate.md",
+      "wave": 3,
+      "dependsOn": [
+        "rt-01",
+        "rt-02",
+        "rt-03"
+      ],
+      "writePaths": [
+        "Sources/AppCore/Resources/Web",
+        ".build",
+        "frontend/dist",
+        "frontend/node_modules",
+        "tmp/ratio-text-20261031/rt-04",
+        "impl-plans/active/rt-04-asset-rebuild-full-gate.md"
+      ],
+      "sharedPaths": [],
+      "artifactRoots": [
+        ".build",
+        "frontend/dist",
+        "frontend/node_modules",
+        "tmp/ratio-text-20261031/rt-04"
+      ],
+      "acceptanceCriteria": [
+        "Sources/AppCore/Resources/Web regenerated by mise run build (exit 0), not hand-edited, and contains 'Show ratio text for'.",
+        "mise run test, mise run lint, mise run frontend:check and mise run frontend:test exit 0 with complete logs; RatioTextTests passes.",
+        "Every Swift file under 1000 lines; no refresh-token code in sources.",
+        "git status shows only rt-01..rt-03 owned files, Sources/AppCore/Resources/Web, feature design/plan documents and untracked .riela/retention/.",
+        "Manual GUI check recorded or skipped with reason; no source edits by this plan."
+      ],
+      "verification": [
+        "mkdir -p tmp/ratio-text-20261031/rt-04",
+        "set -o pipefail; mise run build 2>&1 | tee tmp/ratio-text-20261031/rt-04/build.log",
+        "grep -l 'Show ratio text for' Sources/AppCore/Resources/Web/assets/*.js | tee tmp/ratio-text-20261031/rt-04/bundle-check.log",
+        "git status --short -- Sources/AppCore/Resources/Web | tee tmp/ratio-text-20261031/rt-04/web-status.log",
+        "set -o pipefail; mise run test 2>&1 | tee tmp/ratio-text-20261031/rt-04/test.log",
+        "set -o pipefail; mise run lint 2>&1 | tee tmp/ratio-text-20261031/rt-04/lint.log",
+        "set -o pipefail; mise run frontend:check 2>&1 | tee tmp/ratio-text-20261031/rt-04/frontend-check.log",
+        "set -o pipefail; mise run frontend:test 2>&1 | tee tmp/ratio-text-20261031/rt-04/frontend-test.log",
+        "wc -l Sources/CCUsageGaugeMenuBar/*.swift Sources/AppCore/*.swift | tee tmp/ratio-text-20261031/rt-04/wc.log",
+        "! awk '$2 != \"total\" && $1 >= 1000' tmp/ratio-text-20261031/rt-04/wc.log | grep .",
+        "! grep -rn 'refresh_token\\|refreshToken\\|oauth/token' Sources/AppCore Sources/CCUsageGaugeMenuBar Sources/AppCLI --include='*.swift'",
+        "git status --short | tee tmp/ratio-text-20261031/rt-04/git-status.log"
+      ]
+    }
+  ]
+}
