@@ -124,3 +124,16 @@ behavior is preserved and no existing budget, cycle, or baseline value is lost.
 ## Progress Log
 
 - 2026-10-31: Plan created.
+- 2026-10-31: Implemented the selection contract and independent persisted fields;
+  legacy decoding, normalization, toggle behavior, validation bounds, and both
+  store round trips are covered. Implementation done criteria are satisfied;
+  formal reviews and workflow finalization remain downstream.
+- Verification on the shared working tree: `swift build` exit 0;
+  `swift test --filter PieChartSelectionTests` exit 0 (5 tests);
+  `swift test --filter DashboardUIStateFoldEffortTests` exit 0 (5 tests);
+  `swift test --filter StoreTests` exit 0 (34 tests);
+  plan-scoped `swiftlint lint` exit 0 and strict selected-file SwiftLint exit 0.
+  Complete final logs and edit intentions are in
+  `tmp/subscription-rate-limits-20261031/rl-02/`. The first focused test run
+  failed because its legacy fixture used a string for resetCycle; correcting
+  the fixture to the existing object encoding resolved it.

@@ -37,7 +37,63 @@ The dashboard has no pie chart today; the budget appears only as text in
 - `frontend/src/App.tsx`
 - `frontend/src/styles.css`
 - `frontend/tests/rateLimits.test.ts` (new)
+- `frontend/src/machineAdminControls.ts` (new; checkpoint amendment 1)
+- `frontend/src/MachineAdminPanel.tsx` (checkpoint amendment 1; import change
+  only)
+- `frontend/tests/machineAdminPanel.test.ts` (checkpoint amendment 1; import
+  specifier only)
 - `impl-plans/active/rl-03-frontend-dashboard.md` (Progress Log only)
+
+## Checkpoint Amendment 1: Pre-Existing frontend:test Failure (IR-M1)
+
+**Context.** `mise run frontend:test` exits 1 with or without this plan's
+changes. The one failure is `frontend/tests/machineAdminPanel.test.ts`, which
+fails to load with
+`SyntaxError: Export named 'jsxDEV' not found in module .../solid-js/dist/solid.js`.
+
+- Baseline evidence: the failure reproduces at checkpoint a2f1a92
+  (`tmp/subscription-rate-limits-20261031/reconcile-wave-001/baseline-frontend-test.log`,
+  line 7) and on the combined tree
+  (`tmp/subscription-rate-limits-20261031/reconcile-wave-001/frontend-test.log`).
+- Cause: the test imports the pure function `machineControlsDisabled` from the
+  `.tsx` module `frontend/src/MachineAdminPanel.tsx`. Under the bun 1.4.4 pin
+  from b754cd2, bun transpiles that module with a dev JSX runtime that
+  solid-js does not provide. This cause is inferred, not proven.
+
+The integration review assigned this fix to rl-03. Without it, the required
+`frontend:test` gate can never pass.
+
+**Changes (smallest behavior-preserving fix):**
+
+1. Create `frontend/src/machineAdminControls.ts`, a plain `.ts` file with no
+   JSX. Move the existing
+   `export function machineControlsDisabled(inFlight: Record<string, boolean>, machineID: string)`
+   into it with an identical signature and body.
+2. In `frontend/src/MachineAdminPanel.tsx`, delete the moved function and
+   import it from `./machineAdminControls`. Re-export it
+   (`export { machineControlsDisabled } from "./machineAdminControls";`) so any
+   existing import path keeps compiling. The rendered markup and button
+   `disabled` bindings stay unchanged.
+3. In `frontend/tests/machineAdminPanel.test.ts`, change only the import
+   specifier, from `../src/MachineAdminPanel` to `../src/machineAdminControls`.
+   Leave every `describe`, `test` and `expect` line byte-identical.
+
+**Invariants and forbidden changes:**
+
+- Do not delete, skip, or weaken any machineAdminPanel assertion.
+- Do not change `mise.toml` or the bun pin, and do not add `bunfig.toml` or
+  other JSX/test configuration.
+- Do not touch any other test file or any file owned by another plan.
+- If the test still fails after the import change, record the exact error in
+  the Progress Log. Do not guess at configuration changes.
+
+**Verification (this amendment):**
+
+- `git diff a2f1a92 -- frontend/tests/machineAdminPanel.test.ts > tmp/subscription-rate-limits-20261031/rl-03/machine-admin-test-diff.log 2>&1`
+  must show exactly one changed line: the import specifier.
+- `mise run frontend:test` must exit 0, the machineAdminPanel test must pass,
+  the total test count must be at least 136, and there must be 0 failures and
+  0 errors.
 
 ## Contract and File-Level Changes
 
@@ -197,7 +253,15 @@ Minimal flat classes for the two panels and the toggle buttons.
 - [ ] The rate-limit resource is read only through
   `shieldResource(rateLimitsResource)`, and the source-guard test passes.
 - [ ] Verification 1-4 recorded in the Progress Log with exit codes.
+- [ ] Amendment 1: `mise run frontend:test` exits 0 with 0 failures.
+  `machine-admin-test-diff.log` shows only the import specifier changed.
+  `machineControlsDisabled` lives in `frontend/src/machineAdminControls.ts`.
+- [ ] The branch output includes `checkpointProvenance` and `evidencePaths`
+  (RF-3).
 
 ## Progress Log
 
 - 2026-10-31: Plan created.
+
+- 2026-10-31: Implemented dashboard contracts, normalization helpers, local rate-limit panel, selectable flat pies, shielded fetch and state persistence. Design alignment and no dependencies confirmed.
+- Verification on the moving shared tree: `mise run frontend:check` exit 0; `cd frontend && bun test tests/rateLimits.test.ts tests/appMarkupGuards.test.ts` exit 0 (8 passed); `mise run frontend:test` exit 1 (135 passed, 1 failed: `tests/machineAdminPanel.test.ts` cannot import `jsxDEV` from Solid); App.tsx 1344 lines, limit check exit 0; generated Web status check exit 0. Logs: `tmp/subscription-rate-limits-20261031/rl-03/`. The aggregate failure concerns an existing test and component outside this plan's write paths; serial owner must investigate and rerun the aggregate. Formal reviews and final integration remain downstream.

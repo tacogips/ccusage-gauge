@@ -90,3 +90,10 @@ contains the following.
 ## Progress Log
 
 - 2026-10-31: Plan created.
+- 2026-10-31: Implemented section items 1-6 in README, including a synthetic
+  API response. Both done criteria are satisfied. Verified the unique heading,
+  required terms, and README diff stat with exit status 0; complete logs are
+  `tmp/subscription-rate-limits-20261031/rl-04/check-01.log` through
+  `check-03.log`. Also checked diff whitespace and parsed the sample JSON and
+  section placement successfully (logs `check-04.log` and `check-05.log`).
+  Formal review and integration remain downstream.

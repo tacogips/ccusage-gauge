@@ -14,7 +14,7 @@
   "evidenceRoot": "tmp/subscription-rate-limits-20261031",
   "evidenceLayout": "Dispatcher evidence goes under evidenceRoot/<planId>/attempt-<n>/ (untracked; tmp/ is git-ignored and excluded by .swiftlint.yml). Plan verification commands write complete logs to evidenceRoot/<planId>/<step>.log; copy or reference those logs from the per-attempt directory. evidenceRoot and git-ignored build caches (.build, frontend/node_modules, frontend/dist) are never listed in writePaths, sharedPaths, or artifactRoots; they are created only as command side effects. Only rl-09 runs mise run build / frontend:build, which regenerates the tracked Sources/AppCore/Resources/Web assets it owns.",
   "reviewContext": {
-    "issueReference": "none (no GitHub issue supplied); workflow execution opus-terra-design-and-implement-review-loop-session-567; accepted plan review communication comm-010887 (step5-impl-plan-review, reviewDecision accept)",
+    "issueReference": "none (no GitHub issue supplied); workflow execution opus-terra-design-and-implement-review-loop-session-567; accepted plan review communication comm-010887 (step5-impl-plan-review, reviewDecision accept); checkpoint amendment accepted in comm-010912 (integration-review findings IR-H1, IR-M1)",
     "userProblem": "ccusage-gauge shows only a single cost-budget pie and has no visibility into Claude Code and Codex subscription rate limits (5-hour and weekly windows). The user wants current utilization, percent remaining, and time to reset for both providers on the web dashboard and as pie charts, and wants to choose which pies (budget, Claude 5h, Claude weekly, Codex 5h, Codex weekly) are shown, several at once, on both the dashboard and the macOS menu bar.",
     "requiredOutcomes": [
       "AppCore rate-limit module returns claude and codex entries with fiveHour/weekly windows (usedPercent, remainingPercent = clamp(100 - used, 0, 100), resetsAt), status ok/stale/unauthorized/unavailable, and a fixed-text errorCode/message; unit tests cover the exact Claude and Codex sample payloads, Codex window classification by limit_window_seconds including weekly-only primary with null secondary, JSONL fallback, expired-token handling, and per-provider isolation.",
@@ -98,6 +98,35 @@
       "README.md"
     ]
   },
+  "checkpointAmendment": {
+    "amendmentRound": 0,
+    "maxAmendmentRounds": 2,
+    "previousCheckpointCommit": "a2f1a92d9aaf87c9b6804525de8e0af28448482f",
+    "reason": "integration-paths-outside-writePaths",
+    "resolvedUnmatchedPaths": [
+      "frontend/tests/machineAdminPanel.test.ts"
+    ],
+    "findings": [
+      "IR-M1: frontend/tests/machineAdminPanel.test.ts, frontend/src/MachineAdminPanel.tsx and new frontend/src/machineAdminControls.ts assigned to rl-03 to clear the pre-existing jsxDEV frontend:test failure (baseline tmp/subscription-rate-limits-20261031/reconcile-wave-001/baseline-frontend-test.log).",
+      "IR-H1: rl-01 plan clarifies that empty artifactRoots does not forbid swift build or swift test; git-ignored build caches are command side effects.",
+      "RF-3: rl-03 Done Criteria require checkpointProvenance and evidencePaths in branch output."
+    ],
+    "reviewCommunication": "comm-010912 (step5-impl-plan-review, reviewDecision accept-checkpoint-amendment)"
+  },
+  "acceptedDependencies": [
+    {
+      "planId": "rl-02",
+      "planPath": "impl-plans/active/rl-02-pie-selection-state.md",
+      "commit": "a2f1a92d9aaf87c9b6804525de8e0af28448482f",
+      "provides": "PieChartID and PieChartSelection (defaultSelection, normalized(rawValues:), normalized(_:), toggled(_:in:)) in Sources/AppCore/PieChartSelection.swift; AppState.menuBarPieCharts and DashboardUIState.pieCharts with [budget] defaults and backward-compatible decoding. Accepted by step7 adversarial review comm-010903; implementation files (Sources/AppCore/PieChartSelection.swift, Sources/AppCore/State.swift, Sources/AppCore/DashboardStateStore.swift, Tests/AppCoreTests/PieChartSelectionTests.swift) remain uncommitted in the shared working tree and must not be edited by remaining plans."
+    },
+    {
+      "planId": "rl-04",
+      "planPath": "impl-plans/active/rl-04-readme.md",
+      "commit": "a2f1a92d9aaf87c9b6804525de8e0af28448482f",
+      "provides": "README '## Subscription rate limits and pie charts' section (data sources, privacy, statuses, pie selection, synthetic /api/rate-limits example). Accepted by step7 adversarial review comm-010902; README.md remains uncommitted in the shared working tree and must not be edited by remaining plans. rl-09 integration review re-checks README accuracy against the combined tree."
+    }
+  ],
   "plans": [
     {
       "planId": "rl-01",
@@ -132,34 +161,6 @@
       ]
     },
     {
-      "planId": "rl-02",
-      "planPath": "impl-plans/active/rl-02-pie-selection-state.md",
-      "wave": 1,
-      "dependsOn": [],
-      "writePaths": [
-        "Sources/AppCore/PieChartSelection.swift",
-        "Sources/AppCore/State.swift",
-        "Sources/AppCore/DashboardStateStore.swift",
-        "Tests/AppCoreTests/PieChartSelectionTests.swift",
-        "impl-plans/active/rl-02-pie-selection-state.md"
-      ],
-      "sharedPaths": [],
-      "artifactRoots": [],
-      "acceptanceCriteria": [
-        "PieChartID and PieChartSelection (defaultSelection, normalized(rawValues:), normalized(_:), toggled(_:in:)) exist exactly as named.",
-        "AppState.menuBarPieCharts and DashboardUIState.pieCharts added last with [budget] defaults, decoded via decodeIfPresent([String]) plus normalization; existing CodingKeys and resetCycle decoding unchanged; validate() bounds pieCharts.",
-        "Legacy JSON decodes to [budget] in both stores with budget and cycle preserved; round trips through StateStore and DashboardStateStore persist the field.",
-        "PieChartSelectionTests pass; DashboardUIStateFoldEffortTests and StoreTests still pass; verification recorded in the Progress Log."
-      ],
-      "verification": [
-        "mkdir -p tmp/subscription-rate-limits-20261031/rl-02 && swift build > tmp/subscription-rate-limits-20261031/rl-02/build.log 2>&1",
-        "swift test --filter PieChartSelectionTests > tmp/subscription-rate-limits-20261031/rl-02/pie-selection-tests.log 2>&1",
-        "swift test --filter DashboardUIStateFoldEffortTests > tmp/subscription-rate-limits-20261031/rl-02/fold-effort-tests.log 2>&1",
-        "swift test --filter StoreTests > tmp/subscription-rate-limits-20261031/rl-02/store-tests.log 2>&1",
-        "swiftlint lint Sources/AppCore/PieChartSelection.swift Sources/AppCore/State.swift Sources/AppCore/DashboardStateStore.swift Tests/AppCoreTests/PieChartSelectionTests.swift > tmp/subscription-rate-limits-20261031/rl-02/swiftlint.log 2>&1"
-      ]
-    },
-    {
       "planId": "rl-03",
       "planPath": "impl-plans/active/rl-03-frontend-dashboard.md",
       "wave": 1,
@@ -172,6 +173,9 @@
         "frontend/src/App.tsx",
         "frontend/src/styles.css",
         "frontend/tests/rateLimits.test.ts",
+        "frontend/src/machineAdminControls.ts",
+        "frontend/src/MachineAdminPanel.tsx",
+        "frontend/tests/machineAdminPanel.test.ts",
         "impl-plans/active/rl-03-frontend-dashboard.md"
       ],
       "sharedPaths": [],
@@ -180,35 +184,15 @@
         "api.ts types (PieChartID, RateLimitWindow, ProviderRateLimits, RateLimitsResponse, DashboardUIState.pieCharts) and rateLimits.ts helpers (pieChartIds, normalizePieCharts, togglePieChart, rateLimitWindowFor, formatResetIn, rateLimitStatusLabel, pieFraction) exist with exact names.",
         "RateLimitPanel and PieChartPanel render as specified with flat SVG and five aria-pressed toggles; the last selected toggle is disabled; selection persists through the existing dashboard-state save path.",
         "App.tsx reads rate limits only through shieldResource(rateLimitsResource), refetches via Promise.resolve(refreshRateLimits()).catch(() => undefined), and never feeds errorMessage, hasFailedRequest, or isFetching; the source-guard test passes.",
-        "frontend:check and frontend:test exit 0 including appMarkupGuards; App.tsx at most about 1375 lines; Sources/AppCore/Resources/Web untouched; verification recorded in the Progress Log."
+        "frontend:check and frontend:test exit 0 including appMarkupGuards; App.tsx at most about 1375 lines; Sources/AppCore/Resources/Web untouched; verification recorded in the Progress Log.",
+        "Checkpoint amendment 1 (IR-M1): machineControlsDisabled moves unchanged into the new non-JSX module frontend/src/machineAdminControls.ts; MachineAdminPanel.tsx imports it from there with rendered behavior unchanged; frontend/tests/machineAdminPanel.test.ts changes only its import specifier with assertions untouched; the pre-existing jsxDEV load failure is gone and mise run frontend:test exits 0 with 0 failures."
       ],
       "verification": [
         "mkdir -p tmp/subscription-rate-limits-20261031/rl-03 && mise run frontend:check > tmp/subscription-rate-limits-20261031/rl-03/frontend-check.log 2>&1",
         "mise run frontend:test > tmp/subscription-rate-limits-20261031/rl-03/frontend-test.log 2>&1",
         "test \"$(wc -l < frontend/src/App.tsx)\" -le 1375",
-        "test -z \"$(git status --short Sources/AppCore/Resources/Web)\""
-      ]
-    },
-    {
-      "planId": "rl-04",
-      "planPath": "impl-plans/active/rl-04-readme.md",
-      "wave": 1,
-      "dependsOn": [],
-      "writePaths": [
-        "README.md",
-        "impl-plans/active/rl-04-readme.md"
-      ],
-      "sharedPaths": [],
-      "artifactRoots": [],
-      "acceptanceCriteria": [
-        "README has exactly one '## Subscription rate limits and pie charts' section placed before '## Remote machines' covering what it shows, data sources, privacy, statuses, pie chart selection, and a secret-free API example.",
-        "README mentions /api/rate-limits, menuBarPieCharts, Claude Code-credentials, and CODEX_HOME; no real tokens, account IDs, or user paths beyond ~; no emojis; no remote-machine support claim.",
-        "Verification recorded in the Progress Log."
-      ],
-      "verification": [
-        "mkdir -p tmp/subscription-rate-limits-20261031/rl-04 && test \"$(grep -c '^## Subscription rate limits and pie charts' README.md)\" -eq 1",
-        "grep -q '/api/rate-limits' README.md && grep -q 'menuBarPieCharts' README.md && grep -q 'Claude Code-credentials' README.md && grep -q 'CODEX_HOME' README.md",
-        "git diff --stat README.md > tmp/subscription-rate-limits-20261031/rl-04/diff-stat.log 2>&1"
+        "test -z \"$(git status --short Sources/AppCore/Resources/Web)\"",
+        "git diff a2f1a92 -- frontend/tests/machineAdminPanel.test.ts > tmp/subscription-rate-limits-20261031/rl-03/machine-admin-test-diff.log 2>&1"
       ]
     },
     {

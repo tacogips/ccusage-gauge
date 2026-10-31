@@ -30,6 +30,16 @@ rl-05 (Claude) and rl-06 (Codex).
 - No logging (do not use `BootstrapLogger`).
 - No token refresh code of any kind.
 
+## Build Outputs (clarification after IR-H1)
+
+An empty `artifactRoots` does NOT forbid running `swift build` or
+`swift test`. The committed manifest's `evidenceLayout` says the git-ignored
+build caches (`.build`, `frontend/node_modules`, `frontend/dist`) are never
+listed in `artifactRoots` and are created only as command side effects.
+Run the Verification commands as written, write logs under
+`tmp/subscription-rate-limits-20261031/rl-01/`, and do not block or ask for
+a checkpoint amendment for build outputs.
+
 ## writePaths
 
 - `Sources/AppCore/RateLimitUsageModels.swift` (new)
