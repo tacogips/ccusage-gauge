@@ -129,6 +129,30 @@ assert_child_path() {
   fi
 }
 
+expected_arch_for_target() {
+  case "$1" in
+    darwin-arm64) printf '%s\n' "arm64" ;;
+    darwin-x64) printf '%s\n' "x86_64" ;;
+  esac
+}
+
+# Executing a build for the other architecture would launch it under Rosetta,
+# which macOS is phasing out (https://support.apple.com/102527) and which makes
+# macOS warn about an Intel app. Only run native builds; otherwise check the
+# slice and the version compiled in from Sources/AppCore/Version.swift.
+verify_staged_binary() {
+  local binary="$1" target="$2" expected_version="$3"
+  if [[ "$(lipo -archs "$binary")" != "$(expected_arch_for_target "$target")" ]]; then
+    printf 'staged binary is not %s: %s\n' "$target" "$binary" >&2
+    return 1
+  fi
+  if [[ "$target" == "$(detect_target)" ]]; then
+    [[ "$("$binary" --version)" == "$expected_version" ]] || return 1
+  else
+    grep -Fq "public static let current = \"$expected_version\"" "$repo_root/Sources/AppCore/Version.swift" || return 1
+  fi
+}
+
 swift_triple_for_target() {
   case "$1" in
     darwin-arm64) printf '%s\n' "arm64-apple-macosx" ;;
@@ -266,7 +290,7 @@ build_target() {
   bin_path="$(swift_release_bin_path "$target" | tail -n 1)"
   mkdir -p "$staged_binary/Contents/MacOS" "$staged_binary/Contents/Resources/Web"
   cp "$bin_path/$product" "$bin_path/ccusage-gauge-menubar" "$staged_binary/Contents/MacOS/"
-  test "$("$staged_binary/Contents/MacOS/$product" --version)" = "$version"
+  verify_staged_binary "$staged_binary/Contents/MacOS/$product" "$target" "$version"
   cp "$repo_root/Resources/AppIcon.icns" "$staged_binary/Contents/Resources/"
   cp -R "$repo_root/frontend/dist/." "$staged_binary/Contents/Resources/Web/"
   cp "$repo_root/Resources/MenuBarInfo.plist" "$staged_binary/Contents/Info.plist"
