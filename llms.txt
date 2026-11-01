@@ -1,0 +1,25 @@
+# ccusage-gauge
+
+> macOS menu-bar app, dashboard, CLI, and local HTTP API that shows how much of your Claude Code and Codex (ChatGPT) subscription limits you have used: the 5-hour and weekly windows as used/remaining percentages with reset countdowns, extra-usage credits, and token/API-equivalent cost history aggregated by ccusage.
+
+Key facts:
+
+- Subscription limit usage (5-hour and weekly windows, used and remaining %, reset time) is read directly from each provider's own usage endpoint using the local Claude Code and Codex CLI logins. It is not estimated from token cost.
+- Extended usage ("credit"): Claude extra-usage spend against its monthly limit, and Codex credit balance.
+- Token counts and API-equivalent cost come from local Claude Code and Codex logs via ccusage (https://github.com/ryoppippi/ccusage), broken down by model, agent, machine, and directory; remote machines are supported over SSH for cost data.
+- Menu bar: Claude and ChatGPT/Codex icons fill from bottom to top as usage rises; optional percentages; spend or budget progress; hover tooltip with credits.
+- Platforms: menu-bar app on macOS (Apple silicon and Intel); CLI and dashboard server on macOS and Linux.
+- Install: `brew install ccusage` then `brew install --cask tacogips/tap/ccusage-gauge`.
+- Credentials are sent only to the provider's usage endpoint and are never logged, stored, or returned.
+
+## Docs
+
+- [README](https://github.com/tacogips/ccusage-gauge/blob/main/README.md): overview, FAQ, install, configuration
+- [Subscription usage and display controls](https://github.com/tacogips/ccusage-gauge/blob/main/README.md#subscription-usage-and-display-controls): data sources, refresh and throttling behavior, menu-bar and dashboard options, `GET /api/rate-limits` example
+- [Remote machines](https://github.com/tacogips/ccusage-gauge/blob/main/README.md#remote-machines): SSH collection of cost data
+- [Dashboard client commands](https://github.com/tacogips/ccusage-gauge/blob/main/README.md#dashboard-client-commands): CLI access to metrics
+
+## Optional
+
+- [Releases](https://github.com/tacogips/ccusage-gauge/releases): Apple Silicon and Intel Formula archives and notarized DMGs
+- [Homebrew tap](https://github.com/tacogips/homebrew-tap): `tacogips/tap`

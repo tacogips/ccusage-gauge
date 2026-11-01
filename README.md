@@ -1,8 +1,54 @@
 # ccusage-gauge
 
-A cross-platform local dashboard and CLI, plus a macOS menu-bar cost gauge,
-with usage costs from `ccusage --json` and subscription limits from the local
-Claude Code and Codex accounts.
+**ccusage-gauge shows how much of your Claude Code and Codex (ChatGPT)
+subscription limits you have used — the 5-hour and weekly windows as used and
+remaining percentages with reset countdowns, plus extra-usage credits — together
+with token counts and API-equivalent cost history.** It runs as a macOS menu-bar
+app, a native or browser dashboard, a CLI, and a local HTTP API.
+
+## What it shows
+
+ccusage-gauge displays two different kinds of information and keeps them apart:
+
+| Information | Meaning | Source |
+| --- | --- | --- |
+| Subscription limit usage: used/remaining % of the 5-hour and weekly windows, reset time | How much of your plan's allowance is left right now | Read directly from the providers' own usage endpoints with your local Claude Code and Codex CLI logins |
+| Extended usage ("credit") | Claude extra-usage spend against its monthly limit; Codex credit balance | Same usage endpoints |
+| Token counts and API-equivalent cost | What you have consumed, priced at API rates | Local Claude Code and Codex logs aggregated by [`ccusage`](https://github.com/ryoppippi/ccusage) |
+
+Subscription percentages are **not** estimated from token cost; they are the
+values the providers report for your account.
+
+Where it appears:
+
+- **macOS menu bar**: Claude and ChatGPT/Codex icons that fill from bottom to
+  top as subscription usage rises, optional percentages, spend or budget
+  progress, and a hover tooltip with credits.
+- **Dashboard** (native window or `ccusage-gauge serve` in a browser): a
+  Subscription usage panel with per-window pies, used %, reset countdowns, and
+  credit charts above token and cost charts by model, agent, machine, and
+  directory.
+- **CLI and HTTP API**: `GET /api/rate-limits` returns the subscription windows
+  and credits as JSON; other endpoints return token and cost metrics.
+
+## FAQ
+
+- **Does it show remaining subscription percentage for Claude Code and Codex?**
+  Yes. Both providers' 5-hour and weekly windows are shown as used and
+  remaining percentages with reset countdowns.
+- **Does it support Codex / ChatGPT plans?** Yes, alongside Claude Code
+  subscriptions. Codex credits and Claude extra usage are shown as "credit".
+- **Is the remaining percentage derived from ccusage cost?** No. Cost and tokens
+  come from ccusage; limits come from the providers' usage endpoints.
+- **Which platforms?** The menu-bar app is macOS (Apple silicon and Intel). The
+  CLI and dashboard server also run on Linux.
+- **How do I install it?** `brew install --cask tacogips/tap/ccusage-gauge`
+  (see [Install with Homebrew](#install-with-homebrew)).
+- **Does it send my credentials anywhere?** Only to the provider's own usage
+  endpoint. Tokens are never logged, stored, or returned; see
+  [Subscription usage and display controls](#subscription-usage-and-display-controls).
+
+## Overview
 
 ccusage-gauge supports ccusage 20.0.17 and later. It automatically uses the
 20.0.17 `--by-agent` daily report and the flag-free daily report introduced by
