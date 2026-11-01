@@ -65,7 +65,7 @@ main() {
   mkdir -p "$(dirname "$output")"
   cat > "$output" <<EOF
 class CcusageGauge < Formula
-  desc "Native dashboard and CLI for AI coding-agent usage costs"
+  desc "Dashboard and CLI for Claude Code and Codex subscription limits and usage costs"
   homepage "https://github.com/tacogips/ccusage-gauge"
   license "MIT"
 
